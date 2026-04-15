@@ -1,57 +1,111 @@
-import sys
-import os
+import json
+from pathlib import Path
 
-# FIX IMPORT PATH (IMPORTANT)
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from core.llm import chat
 
-import tkinter as tk
-from tools.fetch_page import fetch_page
-from core.llm import ask_ai
-from memory.memory import load_memory, save_memory
 
-history = load_memory()
+MEMORY_FILE = Path("memory/extracted_memory.json")
 
-def send_message():
-    user = entry.get().strip()
-    if not user:
-        return
 
-    chat.insert(tk.END, f"You: {user}\n\n")
-    entry.delete(0, tk.END)
+def load_memory():
+    if not MEMORY_FILE.exists():
+        return []
 
-    history.append({"role": "user", "content": user})
+    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
 
-    reply = ask_ai(history)
+    return data.get("memory_items", [])
 
-    if reply.startswith("TOOL:fetch"):
-        url = reply.replace("TOOL:fetch", "").strip()
-        page = fetch_page(url)
 
-        history.append({"role": "assistant", "content": reply})
-        history.append({"role": "user", "content": f"CONTENT FROM {url}:\n\n{page}"})
+def score_memory(memory, user_input):
+    score = 0
 
-        final_reply = ask_ai(history)
-        history.append({"role": "assistant", "content": final_reply})
+    value = memory.get("value", "").lower()
+    category = memory.get("category", "")
+    confidence = memory.get("confidence", 0.5)
 
-        chat.insert(tk.END, f"AI: {final_reply}\n\n")
-    else:
-        history.append({"role": "assistant", "content": reply})
-        chat.insert(tk.END, f"AI: {reply}\n\n")
+    user_input = user_input.lower()
 
-    save_memory(history)
-    chat.see(tk.END)
+    # keyword overlap
+    for word in value.split():
+        if word in user_input:
+            score += 1
 
-root = tk.Tk()
-root.title("AI Agent")
+    # boost by confidence
+    score += confidence
 
-chat = tk.Text(root, wrap=tk.WORD, height=20, width=60)
-chat.pack(padx=10, pady=10)
+    # category boost
+    if category == "goal":
+        score += 0.5
+    if category == "project":
+        score += 0.4
 
-entry = tk.Entry(root, width=50)
-entry.pack(padx=10, pady=(0, 10))
-entry.bind("<Return>", lambda event: send_message())
+    return score
 
-send_btn = tk.Button(root, text="Send", command=send_message)
-send_btn.pack(pady=(0, 10))
 
-root.mainloop()
+def retrieve_relevant_memory(user_input, top_k=5):
+    memory_items = load_memory()
+
+    if not memory_items:
+        return []
+
+    scored = []
+
+    for mem in memory_items:
+        score = score_memory(mem, user_input)
+        if score > 0:
+            scored.append((score, mem))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    return [m for _, m in scored[:top_k]]
+
+
+def format_memory_context(memories):
+    if not memories:
+        return ""
+
+    lines = []
+    for mem in memories:
+        lines.append(f"- ({mem['category']}) {mem['value']}")
+
+    return "\n".join(lines)
+
+
+def build_prompt(user_input):
+    memories = retrieve_relevant_memory(user_input)
+
+    memory_block = format_memory_context(memories)
+
+    system_prompt = "You are a helpful AI assistant."
+
+    if memory_block:
+        system_prompt += "\n\nRelevant known user context:\n"
+        system_prompt += memory_block
+
+    return system_prompt, user_input
+
+
+def main():
+    print("Agent ready")
+
+    while True:
+        user_input = input("You: ").strip()
+
+        if user_input.lower() in {"exit", "quit"}:
+            break
+
+        system_prompt, user_message = build_prompt(user_input)
+
+        response = chat(
+            system_prompt=system_prompt,
+            user_message=user_message
+        )
+
+        print("\nAI:\n")
+        print(response)
+        print()
+
+
+if __name__ == "__main__":
+    main()
