@@ -1,0 +1,177 @@
+{
+  "meta": {
+    "schema_version": "1.0",
+    "extractor_version": "AI-1.4",
+    "source": "imported.json"
+  },
+  "memory_items": [
+    {
+      "memory_id": "mem_0006",
+      "category": "preference",
+      "value": "User is familiar with ChatGPT shared conversation links and their basic function.",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_6"
+      ]
+    },
+    {
+      "memory_id": "mem_0010",
+      "category": "preference",
+      "value": "Prefers to understand or engage with content personally rather than having it read aloud or interpreted by others.",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_10"
+      ]
+    },
+    {
+      "memory_id": "mem_0012",
+      "category": "problem",
+      "value": "My browsing tool doesn\u2019t load the actual chat transcript",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_12"
+      ]
+    },
+    {
+      "memory_id": "mem_0014",
+      "category": "preference",
+      "value": "Prefers simple options or solutions",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_14"
+      ]
+    },
+    {
+      "memory_id": "mem_0024",
+      "category": "preference",
+      "value": "Prefers a full picture explanation rather than bullet points.",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_24"
+      ]
+    },
+    {
+      "memory_id": "mem_0026",
+      "category": "preference",
+      "value": "User is attentive to details and nuances in technical settings, such as microphone configurations.",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_26"
+      ]
+    },
+    {
+      "memory_id": "mem_0028",
+      "category": "preference",
+      "value": "Thinks of explanations or concepts using analogies or comparisons, as indicated by 'Think of it like this:'",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_28"
+      ]
+    },
+    {
+      "memory_id": "mem_0030",
+      "category": "preference",
+      "value": "Enjoys fast-paced, conversational interactions",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_30"
+      ]
+    },
+    {
+      "memory_id": "mem_0032",
+      "category": "preference",
+      "value": "The system begins with your mic.",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_32"
+      ]
+    },
+    {
+      "memory_id": "mem_0036",
+      "category": "preference",
+      "value": "Interested in high-resolution audio or sound sampling, as indicated by the mention of 16,000 snapshots of sound per second",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_36"
+      ]
+    },
+    {
+      "memory_id": "mem_0040",
+      "category": "preference",
+      "value": "User prefers to discuss or focus on topics beyond just 'audio'.",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_40"
+      ]
+    },
+    {
+      "memory_id": "mem_0042",
+      "category": "preference",
+      "value": "Interested in time management techniques such as chunking or breaking time into pieces",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_42"
+      ]
+    },
+    {
+      "memory_id": "mem_0046",
+      "category": "project",
+      "value": "Processing tiny slices of sound approximately every 64 milliseconds",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_46"
+      ]
+    },
+    {
+      "memory_id": "mem_0048",
+      "category": "preference",
+      "value": "Wait \u2192 record \u2192 process",
+      "confidence": 0.9,
+      "importance": 0.8,
+      "stability": "medium",
+      "status": "active",
+      "source_refs": [
+        "msg_48"
+      ]
+    }
+  ]
+}
