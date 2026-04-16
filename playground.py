@@ -344,6 +344,84 @@ def detect_memory_intent(user_input):
     return "general"
 
 
+def estimate_memory_recency_bonus(mem):
+    bonus = 0.0
+
+    if mem.get("last_seen") == "runtime":
+        bonus += 0.08
+
+    if mem.get("trend") == "reinforced":
+        bonus += 0.07
+
+    return bonus
+
+
+def estimate_memory_staleness_penalty(mem):
+    """Score-only: downrank stale / weak evidence items without mutating stored memory."""
+    penalty = 0.0
+
+    if mem.get("last_seen") != "runtime":
+        penalty += 0.05
+
+    if mem.get("trend") == "new" and mem.get("evidence_count", 1) <= 1:
+        penalty += 0.04
+
+    if mem.get("memory_kind") == "tentative":
+        penalty += 0.03
+
+    return min(penalty, 0.12)
+
+
+def negation_signal_present(text_low):
+    """Lightweight cue for opposing statements (identity / goal conflict guard)."""
+    collapsed = re.sub(r"\s+", " ", text_low)
+    normalized = f" {collapsed} "
+    cues = (
+        " not ",
+        " never ",
+        " no longer ",
+        " don't ",
+        " dont ",
+        " nothing ",
+    )
+    return any(c in normalized for c in cues)
+
+
+def runtime_memory_write_conflicts_existing(category, value, memory_items):
+    """
+    Skip writes that contradict an existing identity/goal on the same topic
+    (negation mismatch + enough token overlap). Does not apply to preference/project.
+    """
+    if category not in {"identity", "goal"}:
+        return False
+
+    new_low = value.lower()
+    new_neg = negation_signal_present(new_low)
+    new_tok = tokenize_text(value)
+
+    for item in memory_items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("category") != category:
+            continue
+
+        old_val = item.get("value", "")
+        old_low = old_val.lower()
+        old_neg = negation_signal_present(old_low)
+        if old_neg == new_neg:
+            continue
+
+        old_tok = tokenize_text(old_val)
+        union = old_tok | new_tok
+        if not union:
+            continue
+        jaccard = len(old_tok & new_tok) / len(union)
+        if jaccard >= 0.35:
+            return True
+
+    return False
+
+
 def score_memory_item(mem, user_input):
     score = mem.get("confidence", 0) + mem.get("importance", 0)
 
@@ -378,6 +456,12 @@ def score_memory_item(mem, user_input):
     # If no lexical overlap and low confidence, downrank to reduce noisy retrieval.
     if not overlap and mem.get("confidence", 0) < 0.75:
         score -= 0.20
+
+    # Prefer recently reinforced memory when relevance is otherwise similar.
+    score += estimate_memory_recency_bonus(mem)
+
+    # Downrank items that look stale or weakly supported (retrieval only).
+    score -= estimate_memory_staleness_penalty(mem)
 
     return score
 
@@ -453,11 +537,33 @@ def classify_memory_kind(evidence_count):
 
 
 def build_memory_key(category, value):
+    canonical = canonicalize_memory_key_value(value)
+    return f"{category}::{canonical}"
+
+
+def canonicalize_memory_key_value(value):
+    if not isinstance(value, str):
+        return ""
     canonical = value.lower()
     canonical = re.sub(r"[-_]+", " ", canonical)
-    canonical = re.sub(r"[^\w\s]", "", canonical)
+    canonical = re.sub(r"[^\w\s]+", " ", canonical)
     canonical = re.sub(r"\s+", " ", canonical).strip()
-    return f"{category}::{canonical}"
+    return canonical
+
+
+def normalize_memory_display_value(value):
+    if not isinstance(value, str):
+        return ""
+
+    value = value.strip()
+
+    # Light normalization only (not full canonicalization)
+    value = re.sub(r"[-_]+", " ", value)
+
+    # Normalize common separator cases
+    value = re.sub(r"\s+", " ", value)
+
+    return value
 
 
 def dedupe_memory_items(memory_items):
@@ -498,9 +604,8 @@ def dedupe_memory_items(memory_items):
 
 
 def normalize_runtime_memory_value(value):
-    value = value.strip()
-    value = re.sub(r"\s+", " ", value)
-    return value
+    # Backward-compatible alias retained for existing callers.
+    return normalize_memory_display_value(value)
 
 
 def is_transient_identity_statement(low_text):
@@ -535,6 +640,32 @@ def is_transient_identity_statement(low_text):
     return False
 
 
+def has_uncertainty_signal(low_text):
+    uncertainty_phrases = [
+        "maybe ",
+        "i guess",
+        "not sure",
+        "for now",
+        "i think",
+    ]
+    normalized = re.sub(r"\s+", " ", low_text).strip()
+    return any(phrase in normalized for phrase in uncertainty_phrases)
+
+
+def allows_uncertain_runtime_memory(category):
+    """Project updates are allowed to stay tentative; other categories should be stated clearly."""
+    return category == "project"
+
+
+def make_runtime_memory_candidate(category, text, low):
+    if has_uncertainty_signal(low) and not allows_uncertain_runtime_memory(category):
+        return None
+    return {
+        "category": category,
+        "value": normalize_runtime_memory_value(text),
+    }
+
+
 def extract_runtime_memory_candidate(user_input):
     text = user_input.strip()
     low = text.lower()
@@ -546,35 +677,20 @@ def extract_runtime_memory_candidate(user_input):
         return None
 
     if low.startswith("i prefer "):
-        return {
-            "category": "preference",
-            "value": normalize_runtime_memory_value(text)
-        }
+        return make_runtime_memory_candidate("preference", text, low)
 
     if low.startswith("my goal is "):
-        return {
-            "category": "goal",
-            "value": normalize_runtime_memory_value(text)
-        }
+        return make_runtime_memory_candidate("goal", text, low)
 
     if low.startswith("i am working on ") or low.startswith("i'm working on "):
-        return {
-            "category": "project",
-            "value": normalize_runtime_memory_value(text)
-        }
+        return make_runtime_memory_candidate("project", text, low)
 
     if low.startswith("i am building ") or low.startswith("i'm building "):
-        return {
-            "category": "project",
-            "value": normalize_runtime_memory_value(text)
-        }
+        return make_runtime_memory_candidate("project", text, low)
 
     if low.startswith("i am ") or low.startswith("i'm "):
         if "working on" not in low and "building" not in low:
-            return {
-                "category": "identity",
-                "value": normalize_runtime_memory_value(text)
-            }
+            return make_runtime_memory_candidate("identity", text, low)
 
     return None
 
@@ -638,6 +754,9 @@ def write_runtime_memory(user_input):
 
     payload = load_memory_payload()
     memory_items = payload.get("memory_items", [])
+
+    if runtime_memory_write_conflicts_existing(category, value, memory_items):
+        return None
 
     memory_key = build_memory_key(category, value)
 

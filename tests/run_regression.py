@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -128,6 +129,200 @@ def test_memory_test():
     assert "Action type: test" in result, "Expected test action type"
     assert "Next step:" in result, "Missing Next step section"
     assert "Test memory retrieval with one known preference question" in result, "Expected memory retrieval next step"
+
+
+def test_memory_retrieval_prefers_recent_reinforced_item():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        payload = {
+            "meta": {},
+            "memory_items": [
+                {
+                    "memory_id": "mem_1",
+                    "category": "preference",
+                    "value": "I prefer step-by-step learning",
+                    "confidence": 0.75,
+                    "importance": 0.75,
+                    "memory_kind": "emerging",
+                    "evidence_count": 3,
+                    "last_seen": "runtime",
+                    "trend": "reinforced",
+                    "source_refs": ["runtime"],
+                },
+                {
+                    "memory_id": "mem_2",
+                    "category": "preference",
+                    "value": "I prefer step by step learning",
+                    "confidence": 0.75,
+                    "importance": 0.75,
+                    "memory_kind": "emerging",
+                    "evidence_count": 3,
+                    "last_seen": "msg_8",
+                    "trend": "new",
+                    "source_refs": ["msg_8"],
+                },
+            ],
+        }
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text(str(payload).replace("'", '"'), encoding="utf-8")
+
+        memories = playground.retrieve_relevant_memory("How do I prefer to learn?")
+        assert memories, "Expected at least one retrieved memory"
+        assert memories[0]["memory_id"] == "mem_1", "Recent reinforced memory should rank first"
+
+
+def test_memory_retrieval_keeps_intent_priority_with_recency_bonus():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        payload = {
+            "meta": {},
+            "memory_items": [
+                {
+                    "memory_id": "mem_pref",
+                    "category": "preference",
+                    "value": "I prefer step-by-step learning",
+                    "confidence": 0.60,
+                    "importance": 0.75,
+                    "memory_kind": "emerging",
+                    "evidence_count": 2,
+                    "last_seen": "msg_2",
+                    "trend": "new",
+                    "source_refs": ["msg_2"],
+                },
+                {
+                    "memory_id": "mem_proj",
+                    "category": "project",
+                    "value": "I am working on memory retrieval",
+                    "confidence": 0.85,
+                    "importance": 1.0,
+                    "memory_kind": "stable",
+                    "evidence_count": 4,
+                    "last_seen": "runtime",
+                    "trend": "reinforced",
+                    "source_refs": ["runtime"],
+                },
+            ],
+        }
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text(str(payload).replace("'", '"'), encoding="utf-8")
+
+        memories = playground.retrieve_relevant_memory("How do I prefer to learn?")
+        assert memories, "Expected retrieved memory results"
+        assert memories[0]["memory_id"] == "mem_pref", "Intent-aligned preference should rank above unrelated project memory"
+
+
+def test_memory_retrieval_prefers_fresh_over_stale_import():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        payload = {
+            "meta": {},
+            "memory_items": [
+                {
+                    "memory_id": "mem_fresh",
+                    "category": "preference",
+                    "value": "I prefer hands-on building with validation",
+                    "confidence": 0.75,
+                    "importance": 0.75,
+                    "memory_kind": "emerging",
+                    "evidence_count": 3,
+                    "last_seen": "runtime",
+                    "trend": "reinforced",
+                    "source_refs": ["runtime"],
+                },
+                {
+                    "memory_id": "mem_stale",
+                    "category": "preference",
+                    "value": "I prefer hands-on building with validation",
+                    "confidence": 0.75,
+                    "importance": 0.75,
+                    "memory_kind": "tentative",
+                    "evidence_count": 1,
+                    "last_seen": "msg_1",
+                    "trend": "new",
+                    "source_refs": ["msg_1"],
+                },
+            ],
+        }
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        memories = playground.retrieve_relevant_memory(
+            "How do I prefer to learn when building things?"
+        )
+        assert memories, "Expected retrieved memories"
+        assert memories[0]["memory_id"] == "mem_fresh", "Fresh runtime memory should rank above stale import"
+
+
+def test_runtime_memory_skips_conflicting_goal_write():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps(
+                {
+                    "meta": {},
+                    "memory_items": [
+                        {
+                            "memory_id": "mem_g1",
+                            "category": "goal",
+                            "value": "My goal is to ship stable memory",
+                            "confidence": 0.6,
+                            "importance": 0.95,
+                            "memory_kind": "emerging",
+                            "evidence_count": 2,
+                            "last_seen": "runtime",
+                            "trend": "reinforced",
+                            "source_refs": ["runtime"],
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = playground.write_runtime_memory(
+            "My goal is to never ship unstable memory"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result is None, "Conflicting goal should not be written"
+        assert len(items) == 1, "Conflicting goal should not add a second item"
+
+
+def test_runtime_memory_skips_conflicting_identity_write():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps(
+                {
+                    "meta": {},
+                    "memory_items": [
+                        {
+                            "memory_id": "mem_i1",
+                            "category": "identity",
+                            "value": "I am a backend engineer",
+                            "confidence": 0.6,
+                            "importance": 0.85,
+                            "memory_kind": "emerging",
+                            "evidence_count": 2,
+                            "last_seen": "runtime",
+                            "trend": "reinforced",
+                            "source_refs": ["runtime"],
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = playground.write_runtime_memory("I am not a backend engineer")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result is None, "Conflicting identity should not be written"
+        assert len(items) == 1, "Conflicting identity should not add a second item"
 
 
 def test_formatting_review():
@@ -343,6 +538,127 @@ def test_runtime_memory_skips_questions():
         assert len(items) == 0, "Question created memory unexpectedly"
 
 
+def test_runtime_memory_skips_uncertain_preference():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text('{"meta": {}, "memory_items": []}', encoding="utf-8")
+
+        result = playground.write_runtime_memory("Maybe I prefer step-by-step learning")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result is None, "Uncertain preference should not be stored as runtime memory"
+        assert len(items) == 0, "Uncertain preference created memory unexpectedly"
+
+
+def test_runtime_memory_skips_uncertain_identity():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text('{"meta": {}, "memory_items": []}', encoding="utf-8")
+
+        result = playground.write_runtime_memory("I guess I'm a backend engineer")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result is None, "Uncertain identity should not be stored as runtime memory"
+        assert len(items) == 0, "Uncertain identity created memory unexpectedly"
+
+
+def test_runtime_memory_stores_certain_preference_control():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text('{"meta": {}, "memory_items": []}', encoding="utf-8")
+
+        result = playground.write_runtime_memory("I prefer step-by-step learning")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result is not None, "Certain preference should be stored as runtime memory"
+        assert len(items) == 1, "Certain preference did not create memory as expected"
+        assert items[0]["category"] == "preference", "Certain preference stored with wrong category"
+
+
+def test_runtime_memory_allows_uncertain_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text('{"meta": {}, "memory_items": []}', encoding="utf-8")
+
+        result = playground.write_runtime_memory("I'm working on memory retrieval I guess")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result is not None, "Tentative project line should still be stored as runtime memory"
+        assert len(items) == 1, "Uncertain project phrase did not create memory as expected"
+        assert items[0]["category"] == "project", "Uncertain project stored with wrong category"
+
+
+def test_runtime_memory_skips_uncertain_goal():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text('{"meta": {}, "memory_items": []}', encoding="utf-8")
+
+        result = playground.write_runtime_memory("My goal is maybe to ship stable memory")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result is None, "Uncertain goal should not be stored as runtime memory"
+        assert len(items) == 0, "Uncertain goal created memory unexpectedly"
+
+
+def test_memory_key_punctuation_equivalence():
+    key_a = playground.build_memory_key("identity", "I'm detail-oriented")
+    key_b = playground.build_memory_key("identity", "I am detail oriented")
+    assert key_a != key_b, "Different semantic phrasing should not collapse to same key"
+
+    key_c = playground.build_memory_key("identity", "I'm detail-oriented")
+    key_d = playground.build_memory_key("identity", "I'm detail oriented")
+    assert key_c == key_d, "Hyphen punctuation variant should canonicalize to same key"
+
+
+def test_memory_key_repeated_punctuation_equivalence():
+    key_a = playground.build_memory_key("preference", "I prefer step...by...step learning!!!")
+    key_b = playground.build_memory_key("preference", "I prefer step by step learning")
+    assert key_a == key_b, "Repeated punctuation variant should canonicalize to same key"
+
+
+def test_runtime_memory_identity_edge_not_tired_anymore():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text('{"meta": {}, "memory_items": []}', encoding="utf-8")
+
+        result = playground.write_runtime_memory("I am not tired anymore")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result is None, "Negated transient identity should not be stored as memory"
+        assert len(items) == 0, "Negated transient identity created memory unexpectedly"
+
+
+def test_runtime_memory_mixed_clause_transient_and_identity():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text('{"meta": {}, "memory_items": []}', encoding="utf-8")
+
+        result = playground.write_runtime_memory("I am tired, but I am a backend engineer")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result is None, "Mixed clause with transient identity should be skipped for safety"
+        assert len(items) == 0, "Mixed clause created memory unexpectedly"
+def test_memory_display_normalization_separators():
+    raw = "  I prefer step---by___step learning  "
+    normalized = playground.normalize_memory_display_value(raw)
+    assert normalized == "I prefer step by step learning", (
+        f"Unexpected normalized value: {normalized}"
+    )
+
 def test_project_journal_records_events():
     reset_agent_state()
     with isolated_runtime_files():
@@ -425,6 +741,11 @@ def main():
         ("set_stage", test_set_stage),
         ("generic_next_step", test_generic_next_step),
         ("memory_test", test_memory_test),
+        ("memory_retrieval_prefers_recent_reinforced_item", test_memory_retrieval_prefers_recent_reinforced_item),
+        ("memory_retrieval_keeps_intent_priority_with_recency_bonus", test_memory_retrieval_keeps_intent_priority_with_recency_bonus),
+        ("memory_retrieval_prefers_fresh_over_stale_import", test_memory_retrieval_prefers_fresh_over_stale_import),
+        ("runtime_memory_skips_conflicting_goal_write", test_runtime_memory_skips_conflicting_goal_write),
+        ("runtime_memory_skips_conflicting_identity_write", test_runtime_memory_skips_conflicting_identity_write),
         ("formatting_review", test_formatting_review),
         ("state_command_test", test_state_command_test),
         ("direct_preference_answer", test_direct_preference_answer),
@@ -435,6 +756,16 @@ def main():
         ("memory_write_reinforcement", test_memory_write_reinforcement),
         ("runtime_memory_skips_transient_identity", test_runtime_memory_skips_transient_identity),
         ("runtime_memory_skips_questions", test_runtime_memory_skips_questions),
+        ("runtime_memory_skips_uncertain_preference", test_runtime_memory_skips_uncertain_preference),
+        ("runtime_memory_skips_uncertain_identity", test_runtime_memory_skips_uncertain_identity),
+        ("runtime_memory_stores_certain_preference_control", test_runtime_memory_stores_certain_preference_control),
+        ("runtime_memory_allows_uncertain_project", test_runtime_memory_allows_uncertain_project),
+        ("runtime_memory_skips_uncertain_goal", test_runtime_memory_skips_uncertain_goal),
+        ("memory_display_normalization_separators", test_memory_display_normalization_separators),
+        ("memory_key_punctuation_equivalence", test_memory_key_punctuation_equivalence),
+        ("memory_key_repeated_punctuation_equivalence", test_memory_key_repeated_punctuation_equivalence),
+        ("runtime_memory_identity_edge_not_tired_anymore", test_runtime_memory_identity_edge_not_tired_anymore),
+        ("runtime_memory_mixed_clause_transient_and_identity", test_runtime_memory_mixed_clause_transient_and_identity),
         ("project_journal_records_events", test_project_journal_records_events),
         ("project_journal_auto_compaction", test_project_journal_auto_compaction),
         ("project_journal_manual_flush_command", test_project_journal_manual_flush_command),
