@@ -301,6 +301,8 @@ def load_memory_payload():
 
     if "memory_items" not in data or not isinstance(data["memory_items"], list):
         data["memory_items"] = []
+    else:
+        data["memory_items"] = dedupe_memory_items(data["memory_items"])
 
     if "meta" not in data or not isinstance(data["meta"], dict):
         data["meta"] = default_memory_payload()["meta"]
@@ -451,7 +453,48 @@ def classify_memory_kind(evidence_count):
 
 
 def build_memory_key(category, value):
-    return f"{category}::{value.lower()}"
+    canonical = value.lower()
+    canonical = re.sub(r"[-_]+", " ", canonical)
+    canonical = re.sub(r"[^\w\s]", "", canonical)
+    canonical = re.sub(r"\s+", " ", canonical).strip()
+    return f"{category}::{canonical}"
+
+
+def dedupe_memory_items(memory_items):
+    deduped = {}
+    order = []
+
+    for item in memory_items:
+        if not isinstance(item, dict):
+            continue
+
+        category = item.get("category", "")
+        value = item.get("value", "")
+        if not category or not value:
+            continue
+
+        key = build_memory_key(category, value)
+        if key not in deduped:
+            deduped[key] = item.copy()
+            order.append(key)
+            continue
+
+        existing = deduped[key]
+        existing["evidence_count"] = existing.get("evidence_count", 1) + item.get("evidence_count", 1)
+        existing["confidence"] = max(existing.get("confidence", 0), item.get("confidence", 0))
+        existing["importance"] = max(existing.get("importance", 0), item.get("importance", 0))
+        existing["memory_kind"] = classify_memory_kind(existing["evidence_count"])
+        existing["trend"] = "reinforced"
+
+        source_refs = existing.get("source_refs", [])
+        incoming_refs = item.get("source_refs", [])
+        if not isinstance(source_refs, list):
+            source_refs = []
+        if not isinstance(incoming_refs, list):
+            incoming_refs = []
+        existing["source_refs"] = list(dict.fromkeys(source_refs + incoming_refs))
+
+    return [deduped[key] for key in order]
 
 
 def normalize_runtime_memory_value(value):
@@ -460,13 +503,7 @@ def normalize_runtime_memory_value(value):
     return value
 
 
-def extract_runtime_memory_candidate(user_input):
-    text = user_input.strip()
-    low = text.lower()
-
-    if not text or "?" in text:
-        return None
-
+def is_transient_identity_statement(low_text):
     transient_identity_phrases = [
         "i am good",
         "i am fine",
@@ -477,7 +514,35 @@ def extract_runtime_memory_candidate(user_input):
         "i am tired",
         "i'm tired",
     ]
-    if any(low.startswith(p) for p in transient_identity_phrases):
+    if any(low_text.startswith(p) for p in transient_identity_phrases):
+        return True
+
+    transient_state_terms = {
+        "tired", "stressed", "exhausted", "sleepy", "sick", "ill",
+        "hungry", "angry", "upset", "anxious", "burned out", "burnt out",
+    }
+    temporal_markers = {
+        "today", "tonight", "lately", "right now", "at the moment", "this week",
+    }
+
+    normalized = re.sub(r"\s+", " ", low_text).strip()
+    if normalized.startswith("i am ") or normalized.startswith("i'm "):
+        if any(term in normalized for term in transient_state_terms):
+            return True
+        if any(marker in normalized for marker in temporal_markers):
+            return True
+
+    return False
+
+
+def extract_runtime_memory_candidate(user_input):
+    text = user_input.strip()
+    low = text.lower()
+
+    if not text or "?" in text:
+        return None
+
+    if is_transient_identity_statement(low):
         return None
 
     if low.startswith("i prefer "):
