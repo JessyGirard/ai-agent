@@ -32,28 +32,44 @@ def reset_agent_state():
 def isolated_runtime_files():
     original_memory_file = playground.MEMORY_FILE
     original_state_file = playground.STATE_FILE
+    original_journal_file = playground.JOURNAL_FILE
+    original_journal_archive_file = playground.JOURNAL_ARCHIVE_FILE
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_memory_path = Path(temp_dir) / "extracted_memory.json"
         temp_state_path = Path(temp_dir) / "current_state.json"
+        temp_journal_path = Path(temp_dir) / "project_journal.jsonl"
+        temp_journal_archive_path = Path(temp_dir) / "project_journal_archive.jsonl"
         playground.MEMORY_FILE = temp_memory_path
         playground.STATE_FILE = temp_state_path
+        playground.JOURNAL_FILE = temp_journal_path
+        playground.JOURNAL_ARCHIVE_FILE = temp_journal_archive_path
         try:
-            yield temp_memory_path, temp_state_path
+            yield temp_memory_path, temp_state_path, temp_journal_path, temp_journal_archive_path
         finally:
             playground.MEMORY_FILE = original_memory_file
             playground.STATE_FILE = original_state_file
+            playground.JOURNAL_FILE = original_journal_file
+            playground.JOURNAL_ARCHIVE_FILE = original_journal_archive_file
 
 
 @contextmanager
 def isolated_state_file():
     original_state_file = playground.STATE_FILE
+    original_journal_file = playground.JOURNAL_FILE
+    original_journal_archive_file = playground.JOURNAL_ARCHIVE_FILE
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_state_path = Path(temp_dir) / "current_state.json"
+        temp_journal_path = Path(temp_dir) / "project_journal.jsonl"
+        temp_journal_archive_path = Path(temp_dir) / "project_journal_archive.jsonl"
         playground.STATE_FILE = temp_state_path
+        playground.JOURNAL_FILE = temp_journal_path
+        playground.JOURNAL_ARCHIVE_FILE = temp_journal_archive_path
         try:
             yield temp_state_path
         finally:
             playground.STATE_FILE = original_state_file
+            playground.JOURNAL_FILE = original_journal_file
+            playground.JOURNAL_ARCHIVE_FILE = original_journal_archive_file
 
 
 def test_blank_input():
@@ -252,7 +268,7 @@ def test_post_fetch_next_step_quality():
 
 def test_memory_write_creation():
     reset_agent_state()
-    with isolated_runtime_files() as (temp_memory_path, _):
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
         temp_memory_path.parent.mkdir(exist_ok=True)
         temp_memory_path.write_text('{"meta": {}, "memory_items": []}', encoding="utf-8")
 
@@ -268,7 +284,7 @@ def test_memory_write_creation():
 
 def test_memory_write_reinforcement():
     reset_agent_state()
-    with isolated_runtime_files() as (temp_memory_path, _):
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
         temp_memory_path.parent.mkdir(exist_ok=True)
         temp_memory_path.write_text('{"meta": {}, "memory_items": []}', encoding="utf-8")
 
@@ -299,6 +315,106 @@ def test_missing_llm_configuration_handling():
         playground.ask_ai = original_ask_ai
 
 
+def test_runtime_memory_skips_transient_identity():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text('{"meta": {}, "memory_items": []}', encoding="utf-8")
+
+        result = playground.write_runtime_memory("I am fine")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result is None, "Transient identity phrase should not be stored as memory"
+        assert len(items) == 0, "Transient identity phrase created memory unexpectedly"
+
+
+def test_runtime_memory_skips_questions():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text('{"meta": {}, "memory_items": []}', encoding="utf-8")
+
+        result = playground.write_runtime_memory("Am I doing this right?")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result is None, "Questions should not be stored as runtime memory"
+        assert len(items) == 0, "Question created memory unexpectedly"
+
+
+def test_project_journal_records_events():
+    reset_agent_state()
+    with isolated_runtime_files():
+        original_ask_ai = playground.ask_ai
+        try:
+            playground.ask_ai = lambda messages, system_prompt=None: (
+                "Answer:\n"
+                "Test memory retrieval now.\n\n"
+                "Current state:\n"
+                "Focus: ai-agent project\n"
+                "Stage: Phase 5 testing\n"
+                "Action type: test\n\n"
+                "Next step:\n"
+                "Test memory retrieval with one known preference question."
+            )
+
+            _ = playground.handle_user_input("set focus: memory reliability")
+            _ = playground.handle_user_input("How do I prefer to learn?")
+            entries = playground.load_project_journal()
+
+            assert len(entries) >= 2, "Journal did not record expected events"
+            assert any(e.get("entry_type") == "state_command" for e in entries), "Missing state_command journal entry"
+            assert any(e.get("entry_type") == "conversation" for e in entries), "Missing conversation journal entry"
+        finally:
+            playground.ask_ai = original_ask_ai
+
+
+def test_project_journal_auto_compaction():
+    reset_agent_state()
+    with isolated_runtime_files():
+        original_max = playground.JOURNAL_MAX_ACTIVE_ENTRIES
+        try:
+            playground.JOURNAL_MAX_ACTIVE_ENTRIES = 3
+            for i in range(5):
+                playground.append_project_journal(
+                    entry_type="conversation",
+                    user_input=f"msg {i}",
+                    response_text="ok",
+                    action_type="test",
+                )
+
+            active_entries = playground.load_project_journal()
+            assert len(active_entries) == 3, "Auto compaction did not keep expected active journal size"
+            assert playground.JOURNAL_ARCHIVE_FILE.exists(), "Archive file was not created on compaction"
+        finally:
+            playground.JOURNAL_MAX_ACTIVE_ENTRIES = original_max
+
+
+def test_project_journal_manual_flush_command():
+    reset_agent_state()
+    with isolated_runtime_files():
+        original_keep_recent = playground.JOURNAL_KEEP_RECENT_ON_MANUAL_FLUSH
+        try:
+            playground.JOURNAL_KEEP_RECENT_ON_MANUAL_FLUSH = 2
+            for i in range(4):
+                playground.append_project_journal(
+                    entry_type="conversation",
+                    user_input=f"manual msg {i}",
+                    response_text="ok",
+                    action_type="test",
+                )
+
+            result = playground.handle_user_input("flush journal")
+            active_entries = playground.load_project_journal()
+
+            assert result.startswith("✅ Journal flushed."), "Flush command did not return success"
+            assert len(active_entries) == 2, "Manual flush did not keep expected recent entries"
+            assert playground.JOURNAL_ARCHIVE_FILE.exists(), "Archive file missing after manual flush"
+        finally:
+            playground.JOURNAL_KEEP_RECENT_ON_MANUAL_FLUSH = original_keep_recent
+
+
 def main():
     print("Running regression tests...\n")
 
@@ -317,6 +433,11 @@ def main():
         ("post_fetch_next_step_quality", test_post_fetch_next_step_quality),
         ("memory_write_creation", test_memory_write_creation),
         ("memory_write_reinforcement", test_memory_write_reinforcement),
+        ("runtime_memory_skips_transient_identity", test_runtime_memory_skips_transient_identity),
+        ("runtime_memory_skips_questions", test_runtime_memory_skips_questions),
+        ("project_journal_records_events", test_project_journal_records_events),
+        ("project_journal_auto_compaction", test_project_journal_auto_compaction),
+        ("project_journal_manual_flush_command", test_project_journal_manual_flush_command),
         ("missing_llm_configuration_handling", test_missing_llm_configuration_handling),
     ]
 

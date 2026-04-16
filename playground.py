@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from core.llm import ask_ai, llm_preflight_check
@@ -7,6 +8,11 @@ from tools.fetch_page import fetch_page
 
 MEMORY_FILE = Path("memory/extracted_memory.json")
 STATE_FILE = Path("memory/current_state.json")
+JOURNAL_FILE = Path("memory/project_journal.jsonl")
+JOURNAL_ARCHIVE_FILE = Path("memory/project_journal_archive.jsonl")
+JOURNAL_MAX_ACTIVE_ENTRIES = 300
+JOURNAL_KEEP_RECENT_ON_MANUAL_FLUSH = 50
+JOURNAL_RETRIEVAL_WINDOW = 200
 
 DEFAULT_STATE = {
     "focus": "ai-agent project",
@@ -93,6 +99,178 @@ def get_current_stage():
     return current_state.get("stage", DEFAULT_STATE["stage"])
 
 
+# ---------- PROJECT JOURNAL ----------
+
+def load_project_journal(max_entries=None):
+    if not JOURNAL_FILE.exists():
+        return []
+
+    entries = []
+    try:
+        with open(JOURNAL_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(entry, dict):
+                    entries.append(entry)
+    except OSError:
+        return []
+
+    if max_entries is not None and max_entries > 0:
+        return entries[-max_entries:]
+    return entries
+
+
+def write_project_journal(entries):
+    JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(JOURNAL_FILE, "w", encoding="utf-8") as f:
+            for entry in entries:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        return
+
+
+def archive_project_journal_entries(entries, reason):
+    if not entries:
+        return
+
+    JOURNAL_ARCHIVE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    first_ts = entries[0].get("timestamp", "")
+    last_ts = entries[-1].get("timestamp", "")
+    by_type = {}
+
+    for entry in entries:
+        etype = entry.get("entry_type", "unknown")
+        by_type[etype] = by_type.get(etype, 0) + 1
+
+    summary = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "reason": reason,
+        "archived_count": len(entries),
+        "first_timestamp": first_ts,
+        "last_timestamp": last_ts,
+        "entry_type_counts": by_type,
+    }
+
+    try:
+        with open(JOURNAL_ARCHIVE_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(summary, ensure_ascii=False) + "\n")
+    except OSError:
+        return
+
+
+def flush_project_journal(keep_recent):
+    entries = load_project_journal()
+    if len(entries) <= keep_recent:
+        return 0
+
+    to_archive = entries[:-keep_recent]
+    remaining = entries[-keep_recent:]
+    archive_project_journal_entries(to_archive, reason="manual_flush")
+    write_project_journal(remaining)
+    return len(to_archive)
+
+
+def compact_project_journal_if_needed():
+    entries = load_project_journal()
+    if len(entries) <= JOURNAL_MAX_ACTIVE_ENTRIES:
+        return 0
+
+    to_archive = entries[:-JOURNAL_MAX_ACTIVE_ENTRIES]
+    remaining = entries[-JOURNAL_MAX_ACTIVE_ENTRIES:]
+    archive_project_journal_entries(to_archive, reason="auto_compaction")
+    write_project_journal(remaining)
+    return len(to_archive)
+
+
+def append_project_journal(entry_type, user_input, response_text, action_type):
+    JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    response_preview = (response_text or "").strip().replace("\n", " ")
+    response_preview = response_preview[:220]
+
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "entry_type": entry_type,
+        "focus": get_current_focus(),
+        "stage": get_current_stage(),
+        "action_type": action_type or "unknown",
+        "user_input": user_input,
+        "response_preview": response_preview,
+    }
+
+    try:
+        with open(JOURNAL_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        return
+
+    compact_project_journal_if_needed()
+
+
+def retrieve_relevant_journal_entries(user_input, limit=3):
+    entries = load_project_journal(max_entries=JOURNAL_RETRIEVAL_WINDOW)
+    if not entries:
+        return []
+
+    user_tokens = tokenize_text(user_input)
+    scored = []
+
+    for entry in entries:
+        haystack = " ".join(
+            str(entry.get(key, ""))
+            for key in ["entry_type", "focus", "stage", "action_type", "user_input", "response_preview"]
+        )
+        entry_tokens = tokenize_text(haystack)
+        overlap = len(user_tokens.intersection(entry_tokens))
+        recency_bonus = 0.02
+        score = overlap + recency_bonus
+        scored.append((score, entry))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [entry for score, entry in scored if score > 0][:limit]
+    if top:
+        return top
+    return [entries[-1]]
+
+
+def format_journal_block(entries):
+    if not entries:
+        return ""
+
+    lines = []
+    for entry in entries:
+        lines.append(
+            f"- [{entry.get('entry_type', 'event')}] "
+            f"focus={entry.get('focus', '')}, stage={entry.get('stage', '')}, "
+            f"user='{entry.get('user_input', '')}'"
+        )
+    return "\n".join(lines)
+
+
+def handle_project_journal_command(user_input):
+    text = user_input.strip().lower()
+    if text == "flush journal":
+        archived = flush_project_journal(JOURNAL_KEEP_RECENT_ON_MANUAL_FLUSH)
+        return f"✅ Journal flushed. Archived {archived} entries and kept the most recent {JOURNAL_KEEP_RECENT_ON_MANUAL_FLUSH}."
+
+    if text == "show journal stats":
+        active_entries = load_project_journal()
+        return (
+            "🧠 Journal stats:\n"
+            f"- Active entries: {len(active_entries)}\n"
+            f"- Max active entries: {JOURNAL_MAX_ACTIVE_ENTRIES}\n"
+            f"- Retrieval window: {JOURNAL_RETRIEVAL_WINDOW}"
+        )
+
+    return None
+
+
 # ---------- MEMORY ----------
 
 def default_memory_payload():
@@ -150,6 +328,20 @@ def tokenize_text(text):
     return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
+def detect_memory_intent(user_input):
+    text = user_input.lower()
+
+    if any(term in text for term in ["prefer", "preference", "learning style", "how do i prefer"]):
+        return "preference"
+    if any(term in text for term in ["goal", "goals", "my goal", "aim", "purpose"]):
+        return "goal"
+    if any(term in text for term in ["working on", "building", "project", "system"]):
+        return "project"
+    if any(term in text for term in ["who am i", "about me", "my identity"]):
+        return "identity"
+    return "general"
+
+
 def score_memory_item(mem, user_input):
     score = mem.get("confidence", 0) + mem.get("importance", 0)
 
@@ -174,6 +366,17 @@ def score_memory_item(mem, user_input):
     ):
         score += 0.30
 
+    intent = detect_memory_intent(user_input)
+    if intent != "general":
+        if category == intent:
+            score += 0.35
+        else:
+            score -= 0.10
+
+    # If no lexical overlap and low confidence, downrank to reduce noisy retrieval.
+    if not overlap and mem.get("confidence", 0) < 0.75:
+        score -= 0.20
+
     return score
 
 
@@ -189,8 +392,13 @@ def retrieve_relevant_memory(user_input):
         scored.append((score, mem))
 
     scored.sort(key=lambda x: x[0], reverse=True)
+    filtered = [m for score, m in scored if score >= 1.10]
 
-    return [m for _, m in scored[:3]]
+    if filtered:
+        return filtered[:3]
+
+    # Fallback: keep one strongest memory if everything scored low.
+    return [scored[0][1]] if scored else []
 
 
 def format_memory_block(memories):
@@ -255,6 +463,22 @@ def normalize_runtime_memory_value(value):
 def extract_runtime_memory_candidate(user_input):
     text = user_input.strip()
     low = text.lower()
+
+    if not text or "?" in text:
+        return None
+
+    transient_identity_phrases = [
+        "i am good",
+        "i am fine",
+        "i'm fine",
+        "i'm good",
+        "i am okay",
+        "i'm okay",
+        "i am tired",
+        "i'm tired",
+    ]
+    if any(low.startswith(p) for p in transient_identity_phrases):
+        return None
 
     if low.startswith("i prefer "):
         return {
@@ -759,6 +983,7 @@ Fetched content:
 
 def build_messages(user_input):
     memories = retrieve_relevant_memory(user_input)
+    journal_entries = retrieve_relevant_journal_entries(user_input)
 
     focus = get_current_focus()
     stage = get_current_stage()
@@ -856,6 +1081,10 @@ After answering, follow the exact output format above unless the TOOL RULE appli
     if memory_block:
         system_prompt += "\n\nSupporting memory:\n" + memory_block
 
+    journal_block = format_journal_block(journal_entries)
+    if journal_block:
+        system_prompt += "\n\nRecent project journal:\n" + journal_block
+
     messages = [{"role": "user", "content": user_input}]
     return system_prompt, messages
 
@@ -876,8 +1105,18 @@ def handle_user_input(user_input: str) -> str:
     if user_input.lower() in {"exit", "quit"}:
         return "Goodbye."
 
+    journal_result = handle_project_journal_command(user_input)
+    if journal_result:
+        return journal_result
+
     command_result = update_state_from_command(user_input)
     if command_result:
+        append_project_journal(
+            entry_type="state_command",
+            user_input=user_input,
+            response_text=command_result,
+            action_type="state",
+        )
         return command_result
 
     write_runtime_memory(user_input)
@@ -906,8 +1145,20 @@ def handle_user_input(user_input: str) -> str:
             )
         except RuntimeError as exc:
             return f"LLM configuration error: {exc}"
+        append_project_journal(
+            entry_type="tool_flow",
+            user_input=user_input,
+            response_text=final_response,
+            action_type="research",
+        )
         return final_response
 
+    append_project_journal(
+        entry_type="conversation",
+        user_input=user_input,
+        response_text=response,
+        action_type=infer_action_type(user_input, get_current_stage()),
+    )
     return response
 
 

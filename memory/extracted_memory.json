@@ -4,7 +4,7 @@
     "extractor_version": "AI-V2-filter-merge",
     "source": "imported.json",
     "message_limit": 50,
-    "memory_count": 13
+    "memory_count": 20
   },
   "memory_items": [
     {
@@ -19,7 +19,9 @@
       "first_seen": "msg_0",
       "last_seen": "msg_0",
       "trend": "new",
-      "source_refs": ["msg_0"]
+      "source_refs": [
+        "msg_0"
+      ]
     },
     {
       "memory_id": "mem_0002",
@@ -33,7 +35,9 @@
       "first_seen": "msg_2",
       "last_seen": "msg_2",
       "trend": "new",
-      "source_refs": ["msg_2"]
+      "source_refs": [
+        "msg_2"
+      ]
     },
     {
       "memory_id": "mem_0004",
@@ -47,7 +51,9 @@
       "first_seen": "msg_4",
       "last_seen": "msg_4",
       "trend": "new",
-      "source_refs": ["msg_4"]
+      "source_refs": [
+        "msg_4"
+      ]
     },
     {
       "memory_id": "mem_0008",
@@ -61,7 +67,9 @@
       "first_seen": "msg_8",
       "last_seen": "msg_8",
       "trend": "new",
-      "source_refs": ["msg_8"]
+      "source_refs": [
+        "msg_8"
+      ]
     },
     {
       "memory_id": "mem_0010",
@@ -75,7 +83,9 @@
       "first_seen": "msg_10",
       "last_seen": "msg_10",
       "trend": "new",
-      "source_refs": ["msg_10"]
+      "source_refs": [
+        "msg_10"
+      ]
     },
     {
       "memory_id": "mem_0012",
@@ -89,7 +99,9 @@
       "first_seen": "msg_12",
       "last_seen": "msg_12",
       "trend": "new",
-      "source_refs": ["msg_12"]
+      "source_refs": [
+        "msg_12"
+      ]
     },
     {
       "memory_id": "mem_0014",
@@ -103,7 +115,9 @@
       "first_seen": "msg_14",
       "last_seen": "msg_14",
       "trend": "new",
-      "source_refs": ["msg_14"]
+      "source_refs": [
+        "msg_14"
+      ]
     },
     {
       "memory_id": "mem_0016",
@@ -117,7 +131,9 @@
       "first_seen": "msg_16",
       "last_seen": "msg_16",
       "trend": "new",
-      "source_refs": ["msg_16"]
+      "source_refs": [
+        "msg_16"
+      ]
     },
     {
       "memory_id": "mem_0018",
@@ -131,7 +147,9 @@
       "first_seen": "msg_18",
       "last_seen": "msg_18",
       "trend": "new",
-      "source_refs": ["msg_18"]
+      "source_refs": [
+        "msg_18"
+      ]
     },
     {
       "memory_id": "mem_0018b",
@@ -145,7 +163,9 @@
       "first_seen": "msg_18",
       "last_seen": "msg_18",
       "trend": "new",
-      "source_refs": ["msg_18"]
+      "source_refs": [
+        "msg_18"
+      ]
     },
     {
       "memory_id": "mem_0020",
@@ -159,7 +179,9 @@
       "first_seen": "msg_20",
       "last_seen": "msg_20",
       "trend": "new",
-      "source_refs": ["msg_20"]
+      "source_refs": [
+        "msg_20"
+      ]
     },
     {
       "memory_id": "mem_0022",
@@ -173,7 +195,9 @@
       "first_seen": "msg_22",
       "last_seen": "msg_22",
       "trend": "new",
-      "source_refs": ["msg_22"]
+      "source_refs": [
+        "msg_22"
+      ]
     },
     {
       "memory_id": "mem_manual_001",
@@ -187,7 +211,121 @@
       "first_seen": "manual",
       "last_seen": "manual",
       "trend": "stable",
-      "source_refs": ["manual"]
+      "source_refs": [
+        "manual"
+      ]
+    },
+    {
+      "memory_id": "mem_0023",
+      "category": "preference",
+      "value": "I prefer step-by-step learning",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "runtime",
+      "last_seen": "runtime",
+      "trend": "new",
+      "source_refs": [
+        "runtime"
+      ]
+    },
+    {
+      "memory_id": "mem_0024",
+      "category": "preference",
+      "value": "I prefer step by step learning",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "runtime",
+      "last_seen": "runtime",
+      "trend": "new",
+      "source_refs": [
+        "runtime"
+      ]
+    },
+    {
+      "memory_id": "mem_0025",
+      "category": "preference",
+      "value": "I prefer Step By Step learning.",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "runtime",
+      "last_seen": "runtime",
+      "trend": "new",
+      "source_refs": [
+        "runtime"
+      ]
+    },
+    {
+      "memory_id": "mem_0026",
+      "category": "identity",
+      "value": "I am ready",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "runtime",
+      "last_seen": "runtime",
+      "trend": "new",
+      "source_refs": [
+        "runtime"
+      ]
+    },
+    {
+      "memory_id": "mem_0027",
+      "category": "identity",
+      "value": "I am here",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "runtime",
+      "last_seen": "runtime",
+      "trend": "new",
+      "source_refs": [
+        "runtime"
+      ]
+    },
+    {
+      "memory_id": "mem_0028",
+      "category": "identity",
+      "value": "I am back",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "runtime",
+      "last_seen": "runtime",
+      "trend": "new",
+      "source_refs": [
+        "runtime"
+      ]
+    },
+    {
+      "memory_id": "mem_0029",
+      "category": "identity",
+      "value": "I'm serious",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "runtime",
+      "last_seen": "runtime",
+      "trend": "new",
+      "source_refs": [
+        "runtime"
+      ]
     }
   ]
 }
