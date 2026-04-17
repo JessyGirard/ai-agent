@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -9,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import playground
+from core import persistence as persistence_core
 
 
 def run_test(name, fn):
@@ -28,6 +30,7 @@ def reset_agent_state():
     playground.current_state.clear()
     playground.current_state.update(playground.DEFAULT_STATE.copy())
     playground.recent_answer_history.clear()
+    persistence_core.consume_persistence_health_events()
 
 
 @contextmanager
@@ -1771,6 +1774,216 @@ def test_runtime_memory_mixed_clause_transient_and_identity():
 
         assert result is None, "Mixed clause with transient identity should be skipped for safety"
         assert len(items) == 0, "Mixed clause created memory unexpectedly"
+
+
+def test_save_memory_payload_repairs_missing_meta_and_items_shape():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        broken_payload = {"meta": "not-a-dict", "memory_items": "not-a-list"}
+        playground.save_memory_payload(broken_payload)
+        saved = playground.load_memory_payload()
+        assert isinstance(saved.get("meta"), dict), saved
+        assert isinstance(saved.get("memory_items"), list), saved
+        assert saved["meta"].get("memory_count") == 0, saved
+
+
+def test_save_memory_payload_enforces_unique_memory_ids():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        payload = {
+            "meta": {},
+            "memory_items": [
+                {"memory_id": "mem_0001", "category": "goal", "value": "a"},
+                {"memory_id": "mem_0001", "category": "goal", "value": "b"},
+                {"category": "goal", "value": "c"},
+            ],
+        }
+        playground.save_memory_payload(payload)
+        saved = playground.load_memory_payload()
+        ids = [m.get("memory_id") for m in saved.get("memory_items", [])]
+        assert len(ids) == len(set(ids)), ids
+        assert all(isinstance(i, str) and i.startswith("mem_") for i in ids), ids
+
+
+def test_load_state_corrupt_json_uses_default_and_emits_health_event():
+    reset_agent_state()
+    with isolated_runtime_files() as (_, temp_state_path, _, _):
+        temp_state_path.parent.mkdir(exist_ok=True)
+        temp_state_path.write_text("{broken", encoding="utf-8")
+        state = playground.load_state()
+        events = persistence_core.consume_persistence_health_events()
+        assert state == playground.DEFAULT_STATE.copy(), state
+        assert any(e.get("event_type") == "state_load_fallback" for e in events), events
+
+
+def test_load_project_journal_skips_malformed_lines_and_emits_health_event():
+    reset_agent_state()
+    with isolated_runtime_files() as (_, _, temp_journal_path, _):
+        temp_journal_path.parent.mkdir(exist_ok=True)
+        temp_journal_path.write_text(
+            '{"entry_type":"conversation","user_input":"ok"}\n{bad json}\n{"entry_type":"state_command"}\n',
+            encoding="utf-8",
+        )
+        entries = playground.load_project_journal()
+        events = persistence_core.consume_persistence_health_events()
+        assert len(entries) == 2, entries
+        assert any(e.get("event_type") == "journal_malformed_lines_skipped" for e in events), events
+
+
+def test_persistence_state_roundtrip_stress():
+    reset_agent_state()
+    with isolated_runtime_files():
+        for i in range(120):
+            playground.current_state["focus"] = f"focus-{i}"
+            playground.current_state["stage"] = f"stage-{i}"
+            playground.save_state()
+            reloaded = playground.load_state()
+            assert reloaded.get("focus") == f"focus-{i}", reloaded
+            assert reloaded.get("stage") == f"stage-{i}", reloaded
+
+
+def test_persistence_memory_roundtrip_stress_repairs_duplicates():
+    reset_agent_state()
+    with isolated_runtime_files():
+        for i in range(60):
+            payload = {
+                "meta": {},
+                "memory_items": [
+                    {"memory_id": "mem_0001", "category": "goal", "value": f"goal-{i}"},
+                    {"memory_id": "mem_0001", "category": "goal", "value": f"goal-{i}-b"},
+                    {"category": "project", "value": f"project-{i}"},
+                ],
+            }
+            playground.save_memory_payload(payload)
+            loaded = playground.load_memory_payload()
+            ids = [m.get("memory_id") for m in loaded.get("memory_items", [])]
+            assert len(ids) == 3, ids
+            assert len(ids) == len(set(ids)), ids
+            assert loaded.get("meta", {}).get("memory_count") == 3, loaded
+
+
+def test_project_journal_append_reload_stress():
+    reset_agent_state()
+    with isolated_runtime_files():
+        original_max = playground.JOURNAL_MAX_ACTIVE_ENTRIES
+        try:
+            playground.JOURNAL_MAX_ACTIVE_ENTRIES = 1000
+            for i in range(220):
+                playground.append_project_journal(
+                    entry_type="conversation",
+                    user_input=f"load-test-{i}",
+                    response_text="ok",
+                    action_type="test",
+                )
+            rows = playground.load_project_journal()
+            assert len(rows) == 220, len(rows)
+            assert rows[-1].get("user_input") == "load-test-219", rows[-1]
+        finally:
+            playground.JOURNAL_MAX_ACTIVE_ENTRIES = original_max
+
+
+def test_save_state_write_failure_emits_health_event():
+    reset_agent_state()
+    with isolated_runtime_files():
+        original_atomic_write = persistence_core._atomic_write_text
+        try:
+            def fail_write(*args, **kwargs):
+                raise OSError("simulated-state-write-failure")
+
+            persistence_core._atomic_write_text = fail_write
+            playground.current_state["focus"] = "fault-test-focus"
+            playground.current_state["stage"] = "fault-test-stage"
+            playground.save_state()
+            events = persistence_core.consume_persistence_health_events()
+            assert any(e.get("event_type") == "state_save_failure" for e in events), events
+        finally:
+            persistence_core._atomic_write_text = original_atomic_write
+
+
+def test_save_memory_payload_write_failure_emits_health_event():
+    reset_agent_state()
+    with isolated_runtime_files():
+        original_atomic_write = persistence_core._atomic_write_text
+        try:
+            def fail_write(*args, **kwargs):
+                raise OSError("simulated-memory-write-failure")
+
+            persistence_core._atomic_write_text = fail_write
+            payload = {"meta": {}, "memory_items": [{"memory_id": "mem_0001", "category": "goal", "value": "x"}]}
+            playground.save_memory_payload(payload)
+            events = persistence_core.consume_persistence_health_events()
+            assert any(e.get("event_type") == "memory_save_failure" for e in events), events
+        finally:
+            persistence_core._atomic_write_text = original_atomic_write
+
+
+def test_handle_user_input_soak_stability_with_mocked_llm():
+    reset_agent_state()
+    with isolated_runtime_files():
+        original_ask_ai = playground.ask_ai
+        original_max = playground.JOURNAL_MAX_ACTIVE_ENTRIES
+        try:
+            playground.JOURNAL_MAX_ACTIVE_ENTRIES = 1000
+            playground.ask_ai = lambda messages, system_prompt=None: (
+                "Answer:\nStable response.\n\n"
+                "Current state:\nFocus: ai-agent project\nStage: Phase 5 testing\nAction type: test\n\n"
+                "Next step:\nRun one focused validation."
+            )
+            prompts = [
+                "What should I do next?",
+                "How do I prefer to learn?",
+                "Set focus: ai-agent project",
+                "Show state",
+                "How is this system built?",
+                "This failed for me.",
+            ]
+            for i in range(120):
+                msg = prompts[i % len(prompts)]
+                _ = playground.handle_user_input(msg)
+            rows = playground.load_project_journal()
+            assert len(rows) >= 80, len(rows)
+        finally:
+            playground.ask_ai = original_ask_ai
+            playground.JOURNAL_MAX_ACTIVE_ENTRIES = original_max
+
+
+def test_routing_snapshot_core_paths_stable():
+    cases = [
+        (
+            "what should i do next?",
+            "ai-agent project",
+            "Phase 5 testing",
+            "current behavior",
+            "test",
+        ),
+        (
+            "How is this system built mechanically and what prevents drift?",
+            "ai-agent project",
+            "Phase 5 testing",
+            "current behavior",
+            "test",
+        ),
+        (
+            "Can you fetch a webpage with tools?",
+            "ai-agent project",
+            "Phase 5 testing",
+            "agent_tools",
+            "research",
+        ),
+    ]
+    for text, focus, stage, expected_subtarget, expected_action in cases:
+        assert playground.detect_subtarget(text, focus, stage) == expected_subtarget
+        assert playground.infer_action_type(text, stage) == expected_action
+
+
+def test_run_soak_script_smoke():
+    cmd = [sys.executable, str(PROJECT_ROOT / "tests" / "run_soak.py"), "--iterations", "300", "--quiet"]
+    completed = subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+    assert completed.returncode == 0, (
+        f"run_soak.py smoke failed\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+
+
 def test_memory_display_normalization_separators():
     raw = "  I prefer step---by___step learning  "
     normalized = playground.normalize_memory_display_value(raw)
@@ -3516,6 +3729,18 @@ def main():
         ("memory_key_repeated_punctuation_equivalence", test_memory_key_repeated_punctuation_equivalence),
         ("runtime_memory_identity_edge_not_tired_anymore", test_runtime_memory_identity_edge_not_tired_anymore),
         ("runtime_memory_mixed_clause_transient_and_identity", test_runtime_memory_mixed_clause_transient_and_identity),
+        ("save_memory_payload_repairs_missing_meta_and_items_shape", test_save_memory_payload_repairs_missing_meta_and_items_shape),
+        ("save_memory_payload_enforces_unique_memory_ids", test_save_memory_payload_enforces_unique_memory_ids),
+        ("load_state_corrupt_json_uses_default_and_emits_health_event", test_load_state_corrupt_json_uses_default_and_emits_health_event),
+        ("load_project_journal_skips_malformed_lines_and_emits_health_event", test_load_project_journal_skips_malformed_lines_and_emits_health_event),
+        ("persistence_state_roundtrip_stress", test_persistence_state_roundtrip_stress),
+        ("persistence_memory_roundtrip_stress_repairs_duplicates", test_persistence_memory_roundtrip_stress_repairs_duplicates),
+        ("project_journal_append_reload_stress", test_project_journal_append_reload_stress),
+        ("save_state_write_failure_emits_health_event", test_save_state_write_failure_emits_health_event),
+        ("save_memory_payload_write_failure_emits_health_event", test_save_memory_payload_write_failure_emits_health_event),
+        ("handle_user_input_soak_stability_with_mocked_llm", test_handle_user_input_soak_stability_with_mocked_llm),
+        ("routing_snapshot_core_paths_stable", test_routing_snapshot_core_paths_stable),
+        ("run_soak_script_smoke", test_run_soak_script_smoke),
         ("project_journal_records_events", test_project_journal_records_events),
         ("project_journal_auto_compaction", test_project_journal_auto_compaction),
         ("project_journal_manual_flush_command", test_project_journal_manual_flush_command),

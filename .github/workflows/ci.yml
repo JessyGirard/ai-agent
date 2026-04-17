@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  regression-and-quick-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run regression gate
+        run: python tests/run_regression.py
+
+      - name: Run quick chunked soak gate (1000)
+        run: |
+          python tests/run_soak.py \
+            --iterations 1000 \
+            --chunk-size 250 \
+            --progress-interval 125 \
+            --result-path "logs/test_runs/ci_soak_1000.json" \
+            --checkpoint-path "logs/test_runs/ci_soak_1000_checkpoint.json" \
+            --aggregate-path "logs/test_runs/ci_soak_1000_aggregate.json" \
+            --quiet
+
+      - name: Upload quick soak artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-soak-artifacts
+          path: logs/test_runs/ci_soak_1000*
+          if-no-files-found: warn

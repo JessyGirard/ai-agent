@@ -1,10 +1,12 @@
 import re
+from os import getenv
 from pathlib import Path
 
 from core.llm import ask_ai, llm_preflight_check
 from core.persistence import (
     append_project_journal as persistence_append_project_journal,
     archive_project_journal_entries as persistence_archive_project_journal_entries,
+    consume_persistence_health_events as persistence_consume_health_events,
     load_memory_payload as persistence_load_memory_payload,
     load_project_journal as persistence_load_project_journal,
     load_state as persistence_load_state,
@@ -37,6 +39,17 @@ ALLOWED_MEMORY_CATEGORIES = {"identity", "goal", "preference", "project"}
 current_state = {}
 RECENT_ANSWER_HISTORY_MAX = journal_service.RECENT_ANSWER_HISTORY_MAX
 recent_answer_history = journal_service.make_recent_answer_history()
+
+
+def drain_persistence_health_signals():
+    events = persistence_consume_health_events()
+    flag = (getenv("DEBUG_PERSISTENCE_HEALTH") or "").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        for event in events:
+            print(
+                f"[persistence-health] {event.get('event_type')}: {event.get('detail')}"
+            )
+    return events
 
 
 # ---------- STATE ----------
@@ -631,8 +644,10 @@ def handle_user_input(user_input: str) -> str:
 
     if not current_state:
         current_state.update(load_state())
+        drain_persistence_health_signals()
 
     user_input = user_input.strip()
+    drain_persistence_health_signals()
 
     if not user_input:
         return "⚠️ Please type something."

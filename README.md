@@ -1,6 +1,11 @@
 # ai-agent
 The creation of a powerful friend and ally.
 
+## Build Status
+
+- CI and nightly soak workflows are now included in `.github/workflows/`.
+- After your first push, add repo badges here (Actions -> workflow -> `Create status badge`) so pass/fail is visible at a glance.
+
 ## Current Architecture
 
 - `playground.py`: top-level orchestration and runtime flow (input handling, deterministic branch ordering, tool flow, service wiring)
@@ -12,13 +17,22 @@ The creation of a powerful friend and ally.
 - `services/prompt_builder.py`: prompt assembly + answer-line shaping
 - `app/ui.py`: Streamlit frontend using the same `playground.handle_user_input` path
 
+## Project History
+
+- High-level milestone timeline: `CHANGELOG.md`
+
 ## Testing Workflow
 
 - The protected baseline test suite is: `python tests/run_regression.py`
+- Quick stability gate (recommended on every change): `python tests/run_soak.py --iterations 1000 --chunk-size 250 --progress-interval 125 --result-path "logs/test_runs/ci_soak_1000.json" --checkpoint-path "logs/test_runs/ci_soak_1000_checkpoint.json" --aggregate-path "logs/test_runs/ci_soak_1000_aggregate.json"`
+- Deep periodic stability gate (recommended nightly): `python tests/run_soak.py --iterations 10000 --chunk-size 1000 --progress-interval 250 --result-path "logs/test_runs/nightly_soak_10000.json" --checkpoint-path "logs/test_runs/nightly_soak_10000_checkpoint.json" --aggregate-path "logs/test_runs/nightly_soak_10000_aggregate.json"`
 - Pytest-based tests are supplemental and can be run for additional coverage.
 - Any code change must keep the regression suite passing before commit.
 - If pytest and regression results differ, treat regression as the release gate and resolve the discrepancy before merge or push.
-- Current baseline size after the latest extraction sequence: `154` regression scenarios.
+- Current baseline size after the latest hardening sequence: `166` regression scenarios.
+- GitHub Actions automation:
+  - `.github/workflows/ci.yml` runs regression + quick chunked soak on pull requests and pushes to `main`/`master`.
+  - `.github/workflows/nightly-soak.yml` runs a scheduled 10k chunked soak and supports manual trigger (`workflow_dispatch`).
 
 Live API smoke scripts (`test_openai.py`, `test_claude.py`) call the network and require keys. Run them only when you intend to: set `RUN_LIVE_API_TESTS=1` in the environment; otherwise they print a skip message and exit without calling the APIs.
 

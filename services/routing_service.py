@@ -1,4 +1,5 @@
 import re
+from os import getenv
 
 
 META_OVERRIDE_MARKERS = (
@@ -59,21 +60,38 @@ VAGUE_RESEARCH_MARKERS = (
 )
 
 
+def _routing_debug_enabled():
+    flag = (getenv("DEBUG_ROUTING") or "").strip().lower()
+    return flag in {"1", "true", "yes", "on"}
+
+
+def _trace_route(event, detail):
+    if _routing_debug_enabled():
+        print(f"[routing] {event}: {detail}")
+
+
 def infer_action_type(user_input, stage):
     text = (user_input or "").strip().lower()
     stage_text = stage.lower()
     if re.search(r"\b(?:error|bug|broken|fix|issue)\b", text):
+        _trace_route("infer_action_type", "fix")
         return "fix"
     if any(word in text for word in ["research", "look up", "find", "compare", "read", "website", "url", "webpage"]):
+        _trace_route("infer_action_type", "research")
         return "research"
     if any(word in text for word in ["review", "evaluate", "assess", "inspect"]):
+        _trace_route("infer_action_type", "review")
         return "review"
     if re.search(r"\b(?:check|test|validate|verify)\b", text):
+        _trace_route("infer_action_type", "test")
         return "test"
     if "testing" in stage_text:
+        _trace_route("infer_action_type", "test(stage)")
         return "test"
     if "optimization" in stage_text:
+        _trace_route("infer_action_type", "review(stage)")
         return "review"
+    _trace_route("infer_action_type", "build")
     return "build"
 
 
@@ -251,10 +269,13 @@ def is_generic_next_step_question(user_input):
 def detect_subtarget(user_input, focus, stage):
     u = re.sub(r"\s+", " ", (user_input or "").strip().lower())
     if is_agent_purpose_question(u):
+        _trace_route("detect_subtarget", "agent_purpose")
         return "agent_purpose"
     if is_agent_meta_question(u):
+        _trace_route("detect_subtarget", "agent_meta")
         return "agent_meta"
     if is_agent_tools_question(u):
+        _trace_route("detect_subtarget", "agent_tools")
         return "agent_tools"
 
     text = f"{user_input} {focus} {stage}".lower()
@@ -275,8 +296,10 @@ def detect_subtarget(user_input, focus, stage):
             "what i rely",
         ]
     ):
+        _trace_route("detect_subtarget", "safety practices")
         return "safety practices"
     if "rely on" in text and any(w in text for w in ("safe", "safety", "stability", "break", "risk", "regression")):
+        _trace_route("detect_subtarget", "safety practices(rely)")
         return "safety practices"
     if (
         "biggest risk" in u
@@ -289,6 +312,7 @@ def detect_subtarget(user_input, focus, stage):
             and re.search(r"\b(risk|weakness|fragile|failure|routing|system|playground|agent|repo|codebase)\b", u)
         )
     ):
+        _trace_route("detect_subtarget", "system risk")
         return "system risk"
     memory_workflow_terms = [
         "memory retrieval",
@@ -305,11 +329,13 @@ def detect_subtarget(user_input, focus, stage):
             blocked.add("recall memory")
         active = [t for t in memory_workflow_terms if t in text and t not in blocked]
         if active:
+            _trace_route("detect_subtarget", "memory retrieval")
             return "memory retrieval"
     if any(
         term in text
         for term in ("how do i prefer", "learning style", "my preferences", "what do i prefer", "which do i prefer")
     ):
+        _trace_route("detect_subtarget", "memory behavior")
         return "memory behavior"
     if any(
         term in u
@@ -331,22 +357,31 @@ def detect_subtarget(user_input, focus, stage):
             "persist after restart",
         )
     ):
+        _trace_route("detect_subtarget", "restart persistence")
         return "restart persistence"
     ui = (user_input or "").strip().lower()
     if ui.startswith("set focus:") or ui.startswith("set stage:") or ui == "show state" or ui == "reset state":
+        _trace_route("detect_subtarget", "state commands")
         return "state commands"
     if any(term in text for term in ["format", "formatting", "output format", "titan", "structure", "response format"]):
+        _trace_route("detect_subtarget", "titan formatting")
         return "titan formatting"
     if any(term in text for term in ["action type", "action typing", "classification", "build test review", "action classification"]):
+        _trace_route("detect_subtarget", "action typing")
         return "action typing"
     if any(term in text for term in ["next step", "specificity", "specific", "too generic", "vague"]):
+        _trace_route("detect_subtarget", "next-step specificity")
         return "next-step specificity"
     if any(term in text for term in ["blank input", "empty input", "press enter", "empty line", "no input"]):
+        _trace_route("detect_subtarget", "blank-input handling")
         return "blank-input handling"
     if any(term in text for term in ["website", "webpage", "url", "online page", "read site", "fetch"]):
+        _trace_route("detect_subtarget", "web research")
         return "web research"
     if any(term in (user_input or "").lower() for term in ("playground.py", "agent behavior", "ai-agent", "agent system")):
+        _trace_route("detect_subtarget", "playground.py behavior")
         return "playground.py behavior"
+    _trace_route("detect_subtarget", "current behavior")
     return "current behavior"
 
 

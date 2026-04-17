@@ -1,0 +1,43 @@
+name: Nightly Soak
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  soak-10000:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run nightly chunked soak (10000)
+        run: |
+          python tests/run_soak.py \
+            --iterations 10000 \
+            --chunk-size 1000 \
+            --progress-interval 250 \
+            --result-path "logs/test_runs/nightly_soak_10000.json" \
+            --checkpoint-path "logs/test_runs/nightly_soak_10000_checkpoint.json" \
+            --aggregate-path "logs/test_runs/nightly_soak_10000_aggregate.json" \
+            --quiet
+
+      - name: Upload nightly soak artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-soak-artifacts
+          path: logs/test_runs/nightly_soak_10000*
+          if-no-files-found: warn

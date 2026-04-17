@@ -1,4 +1,4 @@
-# Handoff: recent memory & reliability work (for ChatGPT or other assistants)
+# Handoff: recent architecture, memory, and reliability work (for ChatGPT or other assistants)
 
 **Purpose:** Paste this whole file into another chat so the other model knows **where the project is** after the last several increments, without needing full conversation logs.
 
@@ -9,6 +9,23 @@
 ---
 
 ## What was done (rough chronological / thematic)
+
+### Structural stabilization sequence (most recent)
+- Extracted persistence/file I/O helpers into `core/persistence.py`.
+- Extracted journal/outcome-feedback/recent-answer helpers into `services/journal_service.py`.
+- Extracted memory scoring/retrieval/runtime-write logic into `services/memory_service.py`.
+- Extracted routing/control-path logic into `services/routing_service.py`.
+- Extracted prompt/answer assembly logic into `services/prompt_builder.py`.
+- Kept orchestration and deterministic call ordering in `playground.py`.
+- Preserved behavior through each step under the protected regression gate (currently **166 / 166** passing).
+- Added resilient soak execution in `tests/run_soak.py`:
+  - progress checkpoints
+  - chunked mode (`--chunk-size`)
+  - synchronized final result/checkpoint/aggregate artifact writes
+  - stable long-run proof execution (`10000` chunked pass)
+- Added GitHub Actions automation:
+  - `.github/workflows/ci.yml` (PR/push: regression + quick chunked soak)
+  - `.github/workflows/nightly-soak.yml` (scheduled/manual: 10k chunked soak)
 
 ### Normalization & dedupe (earlier in thread)
 - Stronger **canonical memory keys** (`canonicalize_memory_key_value`) so variants like hyphen vs space / punctuation don’t create duplicate memories.
@@ -92,7 +109,7 @@ From repo root:
 python tests/run_regression.py
 ```
 
-At last full run in this work session, this passed **154 / 154** tests. Re-run after any local edits.
+At last full run in this work session, this passed **166 / 166** tests. Re-run after any local edits.
 
 ---
 
@@ -104,7 +121,9 @@ At last full run in this work session, this passed **154 / 154** tests. Re-run a
 - `services/journal_service.py` — extracted journal/outcome/recent-answer logic
 - `services/routing_service.py` — extracted action/routing/control-path logic
 - `services/prompt_builder.py` — extracted answer-line and prompt/message assembly logic
-- `tests/run_regression.py` — regression coverage now at 154 scenarios and still green
+- `tests/run_regression.py` — regression coverage now at 166 scenarios and still green
+- `tests/run_soak.py` — chunked soak and artifact synchronization
+- `.github/workflows/ci.yml`, `.github/workflows/nightly-soak.yml` — automated reliability gates
 - `tests/fixtures/extractor_validation_cases.json` — offline extractor validation cases
 - `memory/import_chat.py`, `memory/extractors/run_extractor.py`
 - `PROJECT_SPECIFICATION.md`, `.gitignore`

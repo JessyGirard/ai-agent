@@ -51,7 +51,12 @@ This project is a **local AI assistant / agent** built around:
 Documented in `README.md`:
 
 - Baseline: `python tests/run_regression.py`
+- Quick stability gate: `python tests/run_soak.py --iterations 1000 --chunk-size 250 ...`
+- Deep periodic gate: `python tests/run_soak.py --iterations 10000 --chunk-size 1000 ...`
 - Pytest-based files may exist for supplemental checks; regression wins on conflict.
+- GitHub Actions automation is now in:
+  - `.github/workflows/ci.yml` (PR/push regression + quick soak)
+  - `.github/workflows/nightly-soak.yml` (scheduled/manual 10k chunked soak)
 
 Supplemental scripts (not the baseline gate):
 
@@ -113,7 +118,8 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; broad scenario coverage (state, memory write/retrieval, journal/outcome flow, routing/strictness, prompt shaping, tool fetch, extractor fixtures, error handling). **Current protected baseline: 154 scenarios. Exit code 1 if any test fails.** |
+| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; broad scenario coverage (state, memory write/retrieval, journal/outcome flow, routing/strictness, prompt shaping, tool fetch, extractor fixtures, error handling). **Current protected baseline: 166 scenarios. Exit code 1 if any test fails.** |
+| `run_soak.py` | Long-duration stability runner with progress checkpoints, chunked mode (`--chunk-size`), and synchronized per-run result/checkpoint/aggregate artifacts for reliable interrupted/long runs. |
 | `fixtures/extractor_validation_cases.json` | Offline JSON cases consumed by regression to assert `run_extractor.validate_candidate` accept/reject behavior (no OpenAI call). |
 
 ### `memory/` — code
@@ -144,6 +150,8 @@ Supplemental scripts (not the baseline gate):
 |------|-------------|
 | `.gitignore` | Ignores venvs, `.env`, `__pycache__`, logs, local extractor backups (`extracted_memory.pre_extract.json`, `extracted_memory.json.bak`). |
 | `.gitattributes` | Forces LF line endings for `*.json`. |
+| `.github/workflows/ci.yml` | Automated PR/push quality gate: regression + quick chunked soak artifact upload. |
+| `.github/workflows/nightly-soak.yml` | Automated nightly/manual long soak (10k chunked) artifact upload. |
 | `.pytest_cache/` *(if present)* | Local pytest cache; not part of product behavior. |
 
 ---
