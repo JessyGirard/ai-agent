@@ -1,6 +1,9 @@
+import copy
 import json
 import os
 import re
+import shutil
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -10,18 +13,48 @@ from openai import OpenAI
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+_client = None
 
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY is missing from .env")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+def _get_client():
+    global _client
+    key = os.getenv("OPENAI_API_KEY")
+    if not key:
+        raise ValueError("OPENAI_API_KEY is missing from .env")
+    if _client is None:
+        _client = OpenAI(api_key=key)
+    return _client
 
 INPUT_FILE = PROJECT_ROOT / "memory" / "imported.json"
 OUTPUT_FILE = PROJECT_ROOT / "memory" / "extracted_memory.json"
 
 ALLOWED_CATEGORIES = {"identity", "goal", "preference", "project"}
-LIMIT = 50
+DEFAULT_MESSAGE_LIMIT = 50
+MAX_MESSAGE_LIMIT = 500
+MAX_MEMORY_VALUE_CHARS = 420
+PRE_EXTRACT_BACKUP = PROJECT_ROOT / "memory" / "extracted_memory.pre_extract.json"
+
+
+def effective_message_limit():
+    raw = os.getenv("EXTRACT_MESSAGE_LIMIT", str(DEFAULT_MESSAGE_LIMIT)).strip()
+    try:
+        n = int(raw, 10)
+    except ValueError:
+        n = DEFAULT_MESSAGE_LIMIT
+    return max(1, min(n, MAX_MESSAGE_LIMIT))
+
+
+def backup_extracted_before_write():
+    """One rotating on-disk copy before each extract write (never blocks on failure)."""
+    if not OUTPUT_FILE.exists():
+        return False
+    try:
+        if OUTPUT_FILE.stat().st_size < 4:
+            return False
+        shutil.copy2(OUTPUT_FILE, PRE_EXTRACT_BACKUP)
+        return True
+    except OSError:
+        return False
 
 
 def load_messages():
@@ -146,42 +179,33 @@ def build_memory_key(category, value):
 
 def extract_memory_with_ai(text):
     prompt = f"""
-Extract meaningful long-term memory about the user.
+Extract durable long-term memory about the USER (the human speaking in INPUT).
 
-Only extract durable things that could matter later:
-- identity
-- goals
-- preferences
-- projects
+Categories (value strings must be concise declarative facts, never questions):
+- identity — stable facts about who they are in this context
+- goal — outcomes they are pursuing
+- preference — how they like to work or decide
+- project — concrete thing they are building or maintaining
 
-Do NOT extract:
-- temporary moods
-- greetings
-- filler
-- one-off reactions
-- assistant information
-- generic technical statements unless they clearly describe the user's real project
-- raw transcript artifacts
+Do NOT extract: moods, greetings, filler, one-off reactions, assistant-only content,
+generic tech trivia with no clear tie to this user's work, transcript/meta noise.
 
-Return ONLY valid JSON.
+Each "value": no question marks; grounded in the user's statements; max ~{MAX_MEMORY_VALUE_CHARS} characters of prose.
 
-Either:
-{{ "category": "...", "value": "..." }}
-
-OR:
+Return ONLY valid JSON — either one object or an array of objects:
+{{ "category": "goal", "value": "Ship a reliable memory layer before adding agent features" }}
 [
-  {{ "category": "...", "value": "..." }}
+  {{ "category": "preference", "value": "Prefer small changes verified by automated regression tests" }}
 ]
 
-Categories allowed:
-identity, goal, preference, project
+Allowed categories: identity, goal, preference, project
 
 INPUT:
 {text}
 """
 
     try:
-        response = client.chat.completions.create(
+        response = _get_client().chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
                 {"role": "system", "content": "Extract durable user memory only."},
@@ -219,6 +243,12 @@ def validate_candidate(result):
     if not category:
         return None
 
+    if "?" in value:
+        return None
+
+    if len(value) > MAX_MEMORY_VALUE_CHARS:
+        return None
+
     if looks_like_noise(value):
         return None
 
@@ -228,11 +258,11 @@ def validate_candidate(result):
     }
 
 
-def new_memory_item(idx, category, value):
+def new_memory_item(memory_id, msg_idx, category, value):
     evidence_count = 1
 
     return {
-        "memory_id": f"mem_{idx:04d}",
+        "memory_id": memory_id,
         "category": category,
         "value": value,
         "confidence": estimate_confidence(evidence_count),
@@ -240,14 +270,19 @@ def new_memory_item(idx, category, value):
         "status": "active",
         "memory_kind": classify_memory_kind(evidence_count),
         "evidence_count": evidence_count,
-        "first_seen": f"msg_{idx}",
-        "last_seen": f"msg_{idx}",
+        "first_seen": f"msg_{msg_idx}",
+        "last_seen": f"msg_{msg_idx}",
         "trend": "new",
-        "source_refs": [f"msg_{idx}"]
+        "source_refs": [f"msg_{msg_idx}"]
     }
 
 
 def merge_memory(existing_item, msg_idx):
+    if not isinstance(existing_item.get("source_refs"), list):
+        existing_item["source_refs"] = []
+    if not isinstance(existing_item.get("evidence_count"), int) or existing_item["evidence_count"] < 1:
+        existing_item["evidence_count"] = 1
+
     existing_item["evidence_count"] += 1
     existing_item["last_seen"] = f"msg_{msg_idx}"
     existing_item["confidence"] = estimate_confidence(existing_item["evidence_count"])
@@ -261,11 +296,63 @@ def merge_memory(existing_item, msg_idx):
     return existing_item
 
 
-def run():
-    messages = load_messages()
-    memory_map = {}
+def allocate_memory_id(memory_map):
+    used = set()
+    for item in memory_map.values():
+        mid = item.get("memory_id")
+        if isinstance(mid, str):
+            used.add(mid)
+    n = 0
+    while True:
+        cand = f"mem_{n:04d}"
+        if cand not in used:
+            return cand
+        n += 1
 
-    for i, msg in enumerate(messages[:LIMIT]):
+
+def load_existing_memory_map():
+    """Load prior extracted rows keyed by category::value for merge-on-extract."""
+    memory_map = {}
+    if not OUTPUT_FILE.exists():
+        return memory_map
+    try:
+        with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return memory_map
+
+    items = data.get("memory_items")
+    if not isinstance(items, list):
+        return memory_map
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        cat = normalize_category(item.get("category"))
+        val = item.get("value")
+        if not cat or not isinstance(val, str):
+            continue
+        val = normalize_text(val)
+        if not val:
+            continue
+        key = build_memory_key(cat, val)
+        stored = copy.deepcopy(item)
+        stored["category"] = cat
+        stored["value"] = val
+        memory_map[key] = stored
+
+    return memory_map
+
+
+def run(replace=False):
+    messages = load_messages()
+    memory_map = {} if replace else load_existing_memory_map()
+    limit = effective_message_limit()
+    initial_rows = len(memory_map)
+    merge_hits = 0
+    new_inserts = 0
+
+    for i, msg in enumerate(messages[:limit]):
         if msg.get("role") != "user":
             continue
 
@@ -292,9 +379,12 @@ def run():
             memory_key = build_memory_key(category, value)
 
             if memory_key in memory_map:
+                merge_hits += 1
                 memory_map[memory_key] = merge_memory(memory_map[memory_key], i)
             else:
-                memory_map[memory_key] = new_memory_item(i, category, value)
+                new_inserts += 1
+                mid = allocate_memory_id(memory_map)
+                memory_map[memory_key] = new_memory_item(mid, i, category, value)
 
     memory_items = list(memory_map.values())
 
@@ -303,17 +393,35 @@ def run():
             "schema_version": "2.0",
             "extractor_version": "AI-V2-filter-merge",
             "source": "imported.json",
-            "message_limit": LIMIT,
-            "memory_count": len(memory_items)
+            "message_limit": limit,
+            "memory_count": len(memory_items),
+            "last_extract": {
+                "mode": "replace" if replace else "merge",
+                "rows_before": initial_rows,
+                "rows_after": len(memory_items),
+                "new_keys_this_run": new_inserts,
+                "reinforcements_this_run": merge_hits,
+            },
         },
         "memory_items": memory_items
     }
 
+    did_backup = backup_extracted_before_write()
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2)
 
-    print(f"\n✅ Extracted {len(memory_items)} filtered memory items.")
+    mode = "replace" if replace else "merge"
+    print(f"\n✅ Extracted {len(memory_items)} filtered memory items ({mode}).")
+    print(
+        f"   This run: +{new_inserts} new, {merge_hits} reinforced "
+        f"(was {initial_rows} rows → now {len(memory_items)})."
+    )
+    if did_backup:
+        print(f"   Prior extract saved as {PRE_EXTRACT_BACKUP.name}")
 
 
 if __name__ == "__main__":
-    run()
+    replace = "--replace" in sys.argv
+    if replace:
+        print("⚠️  --replace: existing extracted_memory.json rows are discarded before this run.")
+    run(replace=replace)

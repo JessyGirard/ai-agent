@@ -330,6 +330,57 @@ def tokenize_text(text):
     return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
+def project_safety_conversation_query(user_input):
+    """User is asking about safety, stability, or what they rely on to avoid breakage."""
+    if not isinstance(user_input, str) or not user_input.strip():
+        return False
+    t = user_input.lower()
+    if any(p in t for p in ("regression harness", "run_regression", "tests/run_regression")):
+        return True
+    if any(
+        p in t
+        for p in (
+            "keep it safe",
+            "keep safe",
+            "stay safe",
+            "project safe",
+            "don't break",
+            "dont break",
+            "do not break",
+            "stability",
+            "stable enough",
+            "what do i rely",
+            "what i rely",
+        )
+    ):
+        return True
+    if "rely on" in t and any(w in t for w in ("safe", "safety", "stability", "break", "risk", "regression")):
+        return True
+    if "safe" in t and "project" in t:
+        return True
+    return False
+
+
+def safety_signal_memory(mem):
+    """Memory row that names automated regression / testing as a practice."""
+    if not isinstance(mem, dict):
+        return False
+    v = (mem.get("value") or "").lower()
+    if not v:
+        return False
+    markers = (
+        "regression",
+        "harness",
+        "run_regression",
+        "tests/run_regression",
+        "pytest",
+        "automated test",
+        "test suite",
+        "regression test",
+    )
+    return any(m in v for m in markers)
+
+
 def detect_memory_intent(user_input):
     text = user_input.lower()
 
@@ -462,6 +513,9 @@ def score_memory_item(mem, user_input):
 
     # Downrank items that look stale or weakly supported (retrieval only).
     score -= estimate_memory_staleness_penalty(mem)
+
+    if project_safety_conversation_query(user_input) and safety_signal_memory(mem):
+        score += 0.95
 
     return score
 
@@ -841,6 +895,30 @@ def is_generic_next_step_question(user_input):
 def detect_subtarget(user_input, focus, stage):
     text = f"{user_input} {focus} {stage}".lower()
 
+    if any(
+        term in text
+        for term in [
+            "regression harness",
+            "run_regression",
+            "tests/run_regression",
+            "keep it safe",
+            "keep safe",
+            "stay safe",
+            "project safe",
+            "don't break",
+            "dont break",
+            "do not break",
+            "what do i rely",
+            "what i rely",
+        ]
+    ):
+        return "safety practices"
+
+    if "rely on" in text and any(
+        w in text for w in ("safe", "safety", "stability", "break", "risk", "regression")
+    ):
+        return "safety practices"
+
     if any(term in text for term in [
         "memory retrieval", "retrieve memory", "recall memory",
         "remember", "memory system", "stored preference"
@@ -916,6 +994,15 @@ def choose_default_test_target(focus, stage):
 
 def build_specific_next_step(user_input, focus, stage, action_type):
     subtarget = detect_subtarget(user_input, focus, stage)
+
+    if subtarget == "safety practices":
+        if action_type == "test":
+            return (
+                "Run `python tests/run_regression.py` once and confirm every scenario passes before treating the system as safe to extend."
+            )
+        return (
+            "Run `python tests/run_regression.py` after the next edit and confirm exit code 0 so the protected baseline still holds."
+        )
 
     if action_type == "test":
         if is_generic_next_step_question(user_input):
@@ -1016,9 +1103,19 @@ def build_specific_next_step(user_input, focus, stage, action_type):
 
 # ---------- ANSWER LINE ----------
 
-def build_answer_line(user_input, focus, stage, action_type, next_step):
+def build_answer_line(user_input, focus, stage, action_type, next_step, memories=None):
     text = user_input.strip().lower()
     subtarget = detect_subtarget(user_input, focus, stage)
+    memories = memories or []
+
+    if subtarget == "safety practices":
+        if any(safety_signal_memory(m) for m in memories):
+            return (
+                "Your regression harness and automated checks are your main mechanical safety rail—state that plainly when it appears in memory."
+            )
+        return (
+            "Use `python tests/run_regression.py` as the regression gate before you trust wider behavioral changes."
+        )
 
     if "how do i prefer to learn" in text:
         return "You prefer step-by-step learning with validation before moving forward."
@@ -1174,7 +1271,15 @@ def build_messages(user_input):
     action_type = infer_action_type(user_input, stage)
     action_guidance = build_action_guidance(action_type)
     forced_next_step = build_specific_next_step(user_input, focus, stage, action_type)
-    forced_answer_line = build_answer_line(user_input, focus, stage, action_type, forced_next_step)
+    forced_answer_line = build_answer_line(
+        user_input, focus, stage, action_type, forced_next_step, memories=memories
+    )
+
+    safety_rules = ""
+    if project_safety_conversation_query(user_input):
+        safety_rules = """
+- PROJECT SAFETY / STABILITY: If supporting memory mentions regression harnesses, automated tests, or similar, connect that explicitly to how the repo stays safe. Do not treat testing discipline as unrelated to safety. Focus and stage labels stay authoritative, but answer the substance of the safety question using those practices when they appear in supporting memory.
+"""
 
     system_prompt = f"""
 You are a focused AI agent.
@@ -1193,6 +1298,7 @@ IMPORTANT RULES:
 - When the user asks what to do next, anchor the answer to the current focus and current stage first.
 - NEVER say you lack context if you can infer from the current focus and stage.
 - Give confident, useful answers grounded in the current project and stage.
+{safety_rules}
 
 TOOL RULE:
 - If the user asks about a website, webpage, URL, or online content that you need to read first, respond ONLY with:

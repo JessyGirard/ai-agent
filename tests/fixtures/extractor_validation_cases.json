@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "description": "Offline expectations for memory.extractors.run_extractor.validate_candidate (no API).",
+  "cases": [
+    {
+      "id": "rejects_question_mark",
+      "candidate": {
+        "category": "goal",
+        "value": "Should the user migrate everything to a new stack this quarter?"
+      },
+      "expect_accept": false
+    },
+    {
+      "id": "rejects_short_noise",
+      "candidate": { "category": "preference", "value": "okay thanks" },
+      "expect_accept": false
+    },
+    {
+      "id": "rejects_invalid_category",
+      "candidate": {
+        "category": "hobby",
+        "value": "Building detailed model train layouts on weekends for relaxation and focus practice"
+      },
+      "expect_accept": false
+    },
+    {
+      "id": "accepts_declarative_goal",
+      "candidate": {
+        "category": "goal",
+        "value": "Build a stable personal AI agent that improves gradually over time"
+      },
+      "expect_accept": true
+    },
+    {
+      "id": "accepts_preference_always",
+      "candidate": {
+        "category": "preference",
+        "value": "Always validate changes with the regression harness before trusting larger refactors"
+      },
+      "expect_accept": true
+    }
+  ]
+}

@@ -1,94 +1,50 @@
 [
   {
     "role": "user",
-    "content": "I am building a personal AI agent called ai-agent that is designed to grow with me over time."
+    "content": "I am building an AI agent system that runs locally with a CLI loop and optional UI."
   },
   {
     "role": "assistant",
-    "content": "This is not a simple chatbot. It is a long-term system that will integrate tools, memory, reasoning, and personal awareness."
+    "content": "The user is building a local AI assistant system with both CLI and UI interfaces."
   },
   {
     "role": "user",
-    "content": "Right now I am working on Memory System V2."
+    "content": "I want my system to have a memory pipeline that processes chat into structured knowledge."
   },
   {
     "role": "assistant",
-    "content": "The goal of this system is to extract meaningful long-term memory from conversations instead of storing raw logs."
+    "content": "The user is focused on building a structured memory pipeline from raw conversation."
   },
   {
     "role": "user",
-    "content": "I want memory that understands meaning, filters noise, and evolves over time."
+    "content": "I rely on a regression harness as the main safety check for my system."
   },
   {
     "role": "assistant",
-    "content": "The system should avoid storing temporary emotions, greetings, or useless filler content."
+    "content": "The user uses regression testing as the primary stability mechanism."
   },
   {
     "role": "user",
-    "content": "It should focus on identity, goals, preferences, and active projects."
+    "content": "I want my system to stay test-protected and predictable."
   },
   {
     "role": "assistant",
-    "content": "I prefer to learn step by step and validate each step before moving forward."
+    "content": "The user prioritizes deterministic behavior and test protection."
   },
   {
     "role": "user",
-    "content": "I do not like when too many things are explained at once or when instructions are unclear."
+    "content": "I am building this system step by step and want to avoid breaking it as it grows."
   },
   {
     "role": "assistant",
-    "content": "I am building this system in a modular way using folders and files where each part has a clear responsibility."
+    "content": "The user prefers incremental, controlled system evolution."
   },
   {
     "role": "user",
-    "content": "I understand that folders represent architecture and files represent components."
+    "content": "I want my system to be lean but scalable into a larger architecture."
   },
   {
     "role": "assistant",
-    "content": "I already built a basic agent that runs in the terminal using python playground.py."
-  },
-  {
-    "role": "user",
-    "content": "I also added tool support including a fetch_page tool that allows the agent to access the web."
-  },
-  {
-    "role": "assistant",
-    "content": "I successfully connected my project to GitHub and learned how to push safely without exposing API keys."
-  },
-  {
-    "role": "user",
-    "content": "Right now I want to improve the memory system so it becomes high quality and not noisy."
-  },
-  {
-    "role": "assistant",
-    "content": "The memory should merge repeated ideas, track confidence, and evolve based on evidence."
-  },
-  {
-    "role": "user",
-    "content": "I want the system to remain simple, controllable, and efficient."
-  },
-  {
-    "role": "assistant",
-    "content": "I do not want unnecessary complexity or bloated architecture."
-  },
-  {
-    "role": "user",
-    "content": "This project is part of a bigger goal which is to build a powerful AI super agent that can assist me in my work and learning."
-  },
-  {
-    "role": "assistant",
-    "content": "This agent should eventually understand me, remember important things, and adapt to my workflow."
-  },
-  {
-    "role": "user",
-    "content": "I am currently in the learning and building phase and I am actively improving the system step by step."
-  },
-  {
-    "role": "assistant",
-    "content": "I care about doing things properly, even if it takes more time."
-  },
-  {
-    "role": "user",
-    "content": "I want to build something solid, not something rushed."
+    "content": "The user aims for a minimal system that can evolve into a more complex architecture."
   }
 ]

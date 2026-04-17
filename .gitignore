@@ -11,3 +11,7 @@ __pycache__/
 
 # Logs
 *.log
+
+# Local extractor backup copies (never commit)
+memory/extracted_memory.pre_extract.json
+memory/extracted_memory.json.bak

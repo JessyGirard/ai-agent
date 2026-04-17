@@ -494,6 +494,145 @@ def test_memory_write_reinforcement():
         assert items[0]["confidence"] >= 0.6, "Confidence did not increase properly"
 
 
+def test_safety_query_prioritizes_regression_memory():
+    reset_agent_state()
+    payload = {
+        "meta": {"schema_version": "2.0", "memory_count": 2},
+        "memory_items": [
+            {
+                "memory_id": "mem_0000",
+                "category": "preference",
+                "value": "Prefer dark mode in editors for long sessions",
+                "confidence": 0.4,
+                "importance": 0.75,
+                "status": "active",
+                "memory_kind": "tentative",
+                "evidence_count": 1,
+                "first_seen": "runtime",
+                "last_seen": "runtime",
+                "trend": "new",
+                "source_refs": ["runtime"],
+            },
+            {
+                "memory_id": "mem_0001",
+                "category": "project",
+                "value": "Uses the regression harness in tests/run_regression.py to keep changes safe",
+                "confidence": 0.4,
+                "importance": 1.0,
+                "status": "active",
+                "memory_kind": "tentative",
+                "evidence_count": 1,
+                "first_seen": "runtime",
+                "last_seen": "runtime",
+                "trend": "new",
+                "source_refs": ["runtime"],
+            },
+        ],
+    }
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        retrieved = playground.retrieve_relevant_memory(
+            "What do I rely on in my project to keep it safe?"
+        )
+        blob = " ".join(m.get("value", "") for m in retrieved).lower()
+        assert "regression" in blob, f"Expected regression memory surfaced: {retrieved!r}"
+
+
+def test_safety_routing_answer_and_next_step():
+    reset_agent_state()
+    q = "What do I rely on in my project to keep it safe?"
+    focus = "I prefer testing"
+    stage = "Phase 4 action-layer refinement"
+    memories = [
+        {
+            "category": "project",
+            "value": "Uses the regression harness in tests/run_regression.py to keep changes safe",
+        }
+    ]
+    ns = playground.build_specific_next_step(q, focus, stage, "build")
+    assert "run_regression" in ns.lower(), ns
+
+    al = playground.build_answer_line(q, focus, stage, "build", ns, memories=memories)
+    assert "regression" in al.lower(), al
+
+
+def test_extractor_validation_fixtures():
+    from memory.extractors import run_extractor as rx
+
+    path = PROJECT_ROOT / "tests" / "fixtures" / "extractor_validation_cases.json"
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    for case in data["cases"]:
+        got = rx.validate_candidate(case["candidate"])
+        want = case["expect_accept"]
+        if want:
+            assert got is not None, f"{case['id']}: expected accept"
+            assert got["category"] == rx.normalize_category(case["candidate"]["category"])
+        else:
+            assert got is None, f"{case['id']}: expected reject, got {got!r}"
+
+    long_val = "word " * 120
+    assert rx.validate_candidate({"category": "project", "value": long_val}) is None
+
+
+def test_extractor_effective_message_limit():
+    import os
+
+    from memory.extractors import run_extractor as rx
+
+    old = os.environ.get("EXTRACT_MESSAGE_LIMIT")
+    try:
+        os.environ.pop("EXTRACT_MESSAGE_LIMIT", None)
+        assert rx.effective_message_limit() == rx.DEFAULT_MESSAGE_LIMIT
+        os.environ["EXTRACT_MESSAGE_LIMIT"] = "120"
+        assert rx.effective_message_limit() == 120
+        os.environ["EXTRACT_MESSAGE_LIMIT"] = "99999"
+        assert rx.effective_message_limit() == rx.MAX_MESSAGE_LIMIT
+        os.environ["EXTRACT_MESSAGE_LIMIT"] = "not-a-number"
+        assert rx.effective_message_limit() == rx.DEFAULT_MESSAGE_LIMIT
+    finally:
+        if old is None:
+            os.environ.pop("EXTRACT_MESSAGE_LIMIT", None)
+        else:
+            os.environ["EXTRACT_MESSAGE_LIMIT"] = old
+
+
+def test_extractor_merge_load_and_allocate():
+    """Extractor merges into existing file; unique ids for new keys (no OpenAI)."""
+    import copy
+
+    from memory.extractors import run_extractor as rx
+
+    existing = {
+        "memory_id": "mem_0005",
+        "category": "goal",
+        "value": "build a stable ai agent",
+        "confidence": 0.60,
+        "importance": 0.95,
+        "status": "active",
+        "memory_kind": "emerging",
+        "evidence_count": 2,
+        "first_seen": "msg_0",
+        "last_seen": "msg_2",
+        "trend": "reinforced",
+        "source_refs": ["msg_0", "msg_2"],
+    }
+    key = rx.build_memory_key("goal", "build a stable ai agent")
+    mem_map = {key: copy.deepcopy(existing)}
+    rx.merge_memory(mem_map[key], 10)
+    assert mem_map[key]["evidence_count"] == 3, "merge should bump evidence"
+    assert "msg_10" in mem_map[key]["source_refs"], "merge should append msg ref"
+
+    new_id = rx.allocate_memory_id(mem_map)
+    assert new_id == "mem_0000", f"expected first free id, got {new_id}"
+    mem_map["preference::i prefer dark mode"] = rx.new_memory_item(
+        new_id, 0, "preference", "I prefer dark mode"
+    )
+    next_id = rx.allocate_memory_id(mem_map)
+    assert next_id == "mem_0001", f"expected next free id, got {next_id}"
+
+
 def test_missing_llm_configuration_handling():
     reset_agent_state()
 
@@ -754,6 +893,11 @@ def main():
         ("post_fetch_next_step_quality", test_post_fetch_next_step_quality),
         ("memory_write_creation", test_memory_write_creation),
         ("memory_write_reinforcement", test_memory_write_reinforcement),
+        ("safety_query_prioritizes_regression_memory", test_safety_query_prioritizes_regression_memory),
+        ("safety_routing_answer_and_next_step", test_safety_routing_answer_and_next_step),
+        ("extractor_validation_fixtures", test_extractor_validation_fixtures),
+        ("extractor_effective_message_limit", test_extractor_effective_message_limit),
+        ("extractor_merge_load_and_allocate", test_extractor_merge_load_and_allocate),
         ("runtime_memory_skips_transient_identity", test_runtime_memory_skips_transient_identity),
         ("runtime_memory_skips_questions", test_runtime_memory_skips_questions),
         ("runtime_memory_skips_uncertain_preference", test_runtime_memory_skips_uncertain_preference),

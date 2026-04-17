@@ -14,7 +14,7 @@ This project is a **local AI assistant / agent** built around:
 - **Config** (`config/settings.py`): `.env` loading, model name, max tokens, API key accessor.
 - **Web tool** (`tools/fetch_page.py`): HTTP fetch + HTML-to-text (truncated).
 - **Streamlit UI** (`app/ui.py`): Chat-style front-end that calls `playground.handle_user_input`.
-- **Memory pipeline (offline)**: raw chat → `imported.json` → OpenAI-based extractor → `extracted_memory.json` (`memory/import_chat.py`, `memory/extractors/run_extractor.py`).
+- **Memory pipeline (offline)**: `raw_chat.txt` → `import_chat.py` → `imported.json` → OpenAI-based extractor → **`extracted_memory.json` (merge by default)** (`memory/import_chat.py`, `memory/extractors/run_extractor.py`). Optional env `EXTRACT_MESSAGE_LIMIT` (default 50, max 500). Extractor backs up the prior file to `memory/extracted_memory.pre_extract.json` before each write; `--replace` discards existing rows for a clean run.
 - **Legacy simple history** (`memory/memory.py`): reads/writes `memory/history.json` (last 10 entries); parallel to the richer `extracted_memory.json` system.
 
 ---
@@ -26,8 +26,8 @@ This project is a **local AI assistant / agent** built around:
 | `playground.py` (`main()`) | Interactive REPL: loads state, optional LLM preflight warnings, `handle_user_input` loop. |
 | `main.py` | Minimal placeholder (`print("Hello Jessy")`); not the agent entry. |
 | `app/ui.py` | Streamlit app: session state, themed UI, invokes `playground.handle_user_input`. |
-| `memory/import_chat.py` | CLI: `raw_chat.txt` → `imported.json`. |
-| `memory/extractors/run_extractor.py` | CLI: `imported.json` → structured `extracted_memory.json` (OpenAI). |
+| `memory/import_chat.py` | CLI: `raw_chat.txt` → `imported.json` (one non-empty line per turn; alternates user/assistant; strips leading `USER:` / `AI:` / `ASSISTANT:` labels from content). |
+| `memory/extractors/run_extractor.py` | CLI: `imported.json` → structured `extracted_memory.json` (OpenAI). **Merges** with existing `extracted_memory.json` on matching category+value keys; reinforces evidence. Server-side filters: noise list, no `?` in values, max value length. Writes `meta.last_extract` stats. |
 | `tests/run_regression.py` | **Protected baseline** regression harness (see `README.md`). |
 
 ---
@@ -38,7 +38,7 @@ This project is a **local AI assistant / agent** built around:
 
 **Used by code but not listed in `requirements.txt` (gap):** `requests` (used by `tools/fetch_page.py`), `openai` (used by `memory/extractors/run_extractor.py`). Install as needed for those paths.
 
-**Environment:** `.env` (gitignored) for `ANTHROPIC_API_KEY`, optional `ANTHROPIC_MODEL`, `ANTHROPIC_MAX_TOKENS`; extractor expects `OPENAI_API_KEY`.
+**Environment:** `.env` (gitignored) for `ANTHROPIC_API_KEY`, optional `ANTHROPIC_MODEL`, `ANTHROPIC_MAX_TOKENS`; extractor expects `OPENAI_API_KEY`. Optional: `EXTRACT_MESSAGE_LIMIT` (integer; caps how many `imported.json` messages are processed per extract run).
 
 ---
 
@@ -98,22 +98,24 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; full list of scenario tests (state, memory write, journal, tool fetch, LLM errors, memory key canonicalization, identity edge cases, etc.). **Exit code 1 if any test fails.** |
+| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; full list of scenario tests (state, memory write, journal, tool fetch, LLM errors, memory key canonicalization, identity edge cases, **extractor merge/limit/validation fixtures**, etc.). **Exit code 1 if any test fails.** |
+| `fixtures/extractor_validation_cases.json` | Offline JSON cases consumed by regression to assert `run_extractor.validate_candidate` accept/reject behavior (no OpenAI call). |
 
 ### `memory/` — code
 
 | File | Description |
 |------|-------------|
-| `import_chat.py` | Parses `raw_chat.txt` line-by-line into alternating user/assistant JSON messages → `imported.json`. |
+| `import_chat.py` | Parses `raw_chat.txt` line-by-line into alternating user/assistant JSON messages → `imported.json`; strips `USER:` / `AI:` / `ASSISTANT:` prefixes from each line’s stored content. |
 | `memory.py` | Legacy: load/save list to `history.json`, keeps last 10 items. |
-| `extractors/run_extractor.py` | OpenAI-based batch extractor: reads `imported.json`, filters noise, assigns categories (`identity`, `goal`, `preference`, `project`), writes `extracted_memory.json` with schema metadata and `memory_items`. |
+| `extractors/run_extractor.py` | OpenAI-based batch extractor: reads `imported.json`, filters noise (plus **no question marks** and **max length** on stored values), assigns categories (`identity`, `goal`, `preference`, `project`), **merges** into `extracted_memory.json` (use `--replace` to wipe first). Writes `meta.last_extract` summary. |
 
 ### `memory/` — data / artifacts
 
 | File | Description |
 |------|-------------|
-| `extracted_memory.json` | Primary structured memory store: `meta` + `memory_items[]` (ids, category, value, confidence, evidence, sources, etc.). Updated by extractor and by `playground` runtime. |
-| `extracted_memory.backup.20260416_115434.json` | Point-in-time backup of extracted memory (safety copy). |
+| `extracted_memory.json` | Primary structured memory store: `meta` + `memory_items[]` (ids, category, value, confidence, evidence, sources, etc.). Updated by extractor (merge) and by `playground` runtime. |
+| `extracted_memory.pre_extract.json` | **Rotating** on-disk copy of `extracted_memory.json` immediately before each extractor write (overwrite each run). |
+| `extracted_memory.json.bak` | Optional manual or script-created backup (not required by code). |
 | `imported.json` | Intermediate chat transcript JSON for the extractor pipeline. |
 | `raw_chat.txt` | Source text for `import_chat.py`. |
 | `history.json` | Legacy rolling history used by `memory/memory.py`. |
@@ -133,7 +135,7 @@ Supplemental scripts (not the baseline gate):
 
 ## 6. Data flow (high level)
 
-1. **Optional import:** `raw_chat.txt` → `import_chat.py` → `imported.json` → `run_extractor.py` → `extracted_memory.json`.
+1. **Optional import:** `raw_chat.txt` → `import_chat.py` → `imported.json` → `run_extractor.py` → **`extracted_memory.json` merged** with prior rows (same category+value key reinforces evidence); `run_extractor.py --replace` starts from an empty in-memory map instead.
 2. **Runtime:** User input → `playground.handle_user_input` → state commands / journal / runtime memory merge → LLM → optional `fetch_page` follow-up → journal append.
 3. **UI:** Same handler as CLI, via Streamlit.
 

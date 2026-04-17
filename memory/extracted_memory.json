@@ -4,13 +4,20 @@
     "extractor_version": "AI-V2-filter-merge",
     "source": "imported.json",
     "message_limit": 50,
-    "memory_count": 24
+    "memory_count": 18,
+    "last_extract": {
+      "mode": "merge",
+      "rows_before": 12,
+      "rows_after": 18,
+      "new_keys_this_run": 6,
+      "reinforcements_this_run": 0
+    }
   },
   "memory_items": [
     {
       "memory_id": "mem_0000",
       "category": "project",
-      "value": "building a personal AI agent called ai-agent designed to grow with the user over time",
+      "value": "building an AI agent system",
       "confidence": 0.4,
       "importance": 1.0,
       "status": "active",
@@ -24,11 +31,27 @@
       ]
     },
     {
-      "memory_id": "mem_0002",
-      "category": "project",
-      "value": "Memory System V2",
+      "memory_id": "mem_0000",
+      "category": "goal",
+      "value": "make the AI agent system stable and testable",
       "confidence": 0.4,
-      "importance": 1.0,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_0",
+      "last_seen": "msg_0",
+      "trend": "new",
+      "source_refs": [
+        "msg_0"
+      ]
+    },
+    {
+      "memory_id": "mem_0002",
+      "category": "goal",
+      "value": "build a powerful AI agent that can learn and improve over time",
+      "confidence": 0.4,
+      "importance": 0.95,
       "status": "active",
       "memory_kind": "tentative",
       "evidence_count": 1,
@@ -41,10 +64,10 @@
     },
     {
       "memory_id": "mem_0004",
-      "category": "goal",
-      "value": "Develop memory that understands meaning, filters noise, and evolves over time",
+      "category": "preference",
+      "value": "prefers working step by step and validating each change before moving forward",
       "confidence": 0.4,
-      "importance": 0.95,
+      "importance": 0.75,
       "status": "active",
       "memory_kind": "tentative",
       "evidence_count": 1,
@@ -56,11 +79,27 @@
       ]
     },
     {
-      "memory_id": "mem_0008",
+      "memory_id": "mem_0006",
       "category": "preference",
-      "value": "Prefers clear instructions without too many explanations at once",
+      "value": "System should stay controlled and not break when making changes",
       "confidence": 0.4,
       "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_6",
+      "last_seen": "msg_6",
+      "trend": "new",
+      "source_refs": [
+        "msg_6"
+      ]
+    },
+    {
+      "memory_id": "mem_0008",
+      "category": "project",
+      "value": "improving the memory system to avoid storing duplicate or useless data",
+      "confidence": 0.4,
+      "importance": 1.0,
       "status": "active",
       "memory_kind": "tentative",
       "evidence_count": 1,
@@ -72,27 +111,11 @@
       ]
     },
     {
-      "memory_id": "mem_0010",
-      "category": "preference",
-      "value": "Understands and prefers to conceptualize folders as architecture and files as components in software projects",
-      "confidence": 0.4,
-      "importance": 0.75,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "msg_10",
-      "last_seen": "msg_10",
-      "trend": "new",
-      "source_refs": [
-        "msg_10"
-      ]
-    },
-    {
       "memory_id": "mem_0012",
       "category": "project",
-      "value": "Developing an agent with tool support, including a fetch_page tool that allows web access",
+      "value": "using a regression harness to ensure system stability",
       "confidence": 0.4,
-      "importance": 1.0,
+      "importance": 0.9,
       "status": "active",
       "memory_kind": "tentative",
       "evidence_count": 1,
@@ -106,7 +129,7 @@
     {
       "memory_id": "mem_0014",
       "category": "goal",
-      "value": "Improve the memory system to be high quality and not noisy",
+      "value": "Stay in control of all changes while working with tools like Cursor",
       "confidence": 0.4,
       "importance": 0.95,
       "status": "active",
@@ -121,10 +144,10 @@
     },
     {
       "memory_id": "mem_0016",
-      "category": "preference",
-      "value": "system should remain simple, controllable, and efficient",
+      "category": "goal",
+      "value": "improving normalization to prevent duplicate memories from similar phrases",
       "confidence": 0.4,
-      "importance": 0.75,
+      "importance": 0.95,
       "status": "active",
       "memory_kind": "tentative",
       "evidence_count": 1,
@@ -138,7 +161,7 @@
     {
       "memory_id": "mem_0018",
       "category": "goal",
-      "value": "build a powerful AI super agent that can assist in work and learning",
+      "value": "Have the system ignore uncertain phrases like 'maybe' or 'I guess' when writing memory",
       "confidence": 0.4,
       "importance": 0.95,
       "status": "active",
@@ -149,46 +172,14 @@
       "trend": "new",
       "source_refs": [
         "msg_18"
-      ]
-    },
-    {
-      "memory_id": "mem_0018b",
-      "category": "project",
-      "value": "this project is part of building a powerful AI super agent",
-      "confidence": 0.4,
-      "importance": 1.0,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "msg_18",
-      "last_seen": "msg_18",
-      "trend": "new",
-      "source_refs": [
-        "msg_18"
-      ]
-    },
-    {
-      "memory_id": "mem_0020",
-      "category": "goal",
-      "value": "actively improving the system step by step during the learning and building phase",
-      "confidence": 0.4,
-      "importance": 0.95,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "msg_20",
-      "last_seen": "msg_20",
-      "trend": "new",
-      "source_refs": [
-        "msg_20"
       ]
     },
     {
       "memory_id": "mem_0022",
-      "category": "goal",
-      "value": "build something solid, not something rushed",
+      "category": "project",
+      "value": "building a system that tracks state, memory, and project evolution over time",
       "confidence": 0.4,
-      "importance": 0.95,
+      "importance": 1.0,
       "status": "active",
       "memory_kind": "tentative",
       "evidence_count": 1,
@@ -200,195 +191,115 @@
       ]
     },
     {
-      "memory_id": "mem_manual_001",
-      "category": "preference",
-      "value": "Prefers step-by-step learning with validation before moving forward, avoids overload, and learns best through hands-on building",
-      "confidence": 0.9,
-      "importance": 0.9,
-      "status": "active",
-      "memory_kind": "stable",
-      "evidence_count": 3,
-      "first_seen": "manual",
-      "last_seen": "manual",
-      "trend": "stable",
-      "source_refs": [
-        "manual"
-      ]
-    },
-    {
-      "memory_id": "mem_0023",
-      "category": "preference",
-      "value": "I prefer step-by-step learning",
-      "confidence": 0.75,
-      "importance": 0.75,
-      "status": "active",
-      "memory_kind": "stable",
-      "evidence_count": 5,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
-      "trend": "reinforced",
-      "source_refs": [
-        "runtime"
-      ]
-    },
-    {
       "memory_id": "mem_0026",
-      "category": "identity",
-      "value": "I am ready",
-      "confidence": 0.4,
-      "importance": 0.85,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
-      "trend": "new",
-      "source_refs": [
-        "runtime"
-      ]
-    },
-    {
-      "memory_id": "mem_0027",
-      "category": "identity",
-      "value": "I am here",
-      "confidence": 0.4,
-      "importance": 0.85,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
-      "trend": "new",
-      "source_refs": [
-        "runtime"
-      ]
-    },
-    {
-      "memory_id": "mem_0028",
-      "category": "identity",
-      "value": "I am back",
-      "confidence": 0.4,
-      "importance": 0.85,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
-      "trend": "new",
-      "source_refs": [
-        "runtime"
-      ]
-    },
-    {
-      "memory_id": "mem_0029",
-      "category": "identity",
-      "value": "I'm serious",
-      "confidence": 0.4,
-      "importance": 0.85,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
-      "trend": "new",
-      "source_refs": [
-        "runtime"
-      ]
-    },
-    {
-      "memory_id": "mem_0030",
-      "category": "identity",
-      "value": "I am a backend engineer",
-      "confidence": 0.4,
-      "importance": 0.85,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
-      "trend": "new",
-      "source_refs": [
-        "runtime"
-      ]
-    },
-    {
-      "memory_id": "mem_0031",
-      "category": "identity",
-      "value": "I'm a parent and builder",
-      "confidence": 0.4,
-      "importance": 0.85,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
-      "trend": "new",
-      "source_refs": [
-        "runtime"
-      ]
-    },
-    {
-      "memory_id": "mem_0032",
-      "category": "project",
-      "value": "I am building an AI agent",
-      "confidence": 0.4,
-      "importance": 1.0,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
-      "trend": "new",
-      "source_refs": [
-        "runtime"
-      ]
-    },
-    {
-      "memory_id": "mem_0033",
-      "category": "project",
-      "value": "I'm working on memory retrieval",
-      "confidence": 0.4,
-      "importance": 1.0,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
-      "trend": "new",
-      "source_refs": [
-        "runtime"
-      ]
-    },
-    {
-      "memory_id": "mem_0034",
       "category": "goal",
-      "value": "My goal is to ship stable memory behavior",
+      "value": "Make the system smarter without adding unnecessary complexity",
       "confidence": 0.4,
       "importance": 0.95,
       "status": "active",
       "memory_kind": "tentative",
       "evidence_count": 1,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
+      "first_seen": "msg_26",
+      "last_seen": "msg_26",
       "trend": "new",
       "source_refs": [
-        "runtime"
+        "msg_26"
       ]
     },
     {
-      "memory_id": "mem_0035",
-      "category": "identity",
-      "value": "I'm detail oriented",
+      "memory_id": "mem_0001",
+      "category": "project",
+      "value": "Building an AI agent system that runs locally with a CLI loop and optional UI",
       "confidence": 0.4,
-      "importance": 0.85,
+      "importance": 1.0,
       "status": "active",
       "memory_kind": "tentative",
       "evidence_count": 1,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
+      "first_seen": "msg_0",
+      "last_seen": "msg_0",
       "trend": "new",
       "source_refs": [
-        "runtime"
+        "msg_0"
+      ]
+    },
+    {
+      "memory_id": "mem_0003",
+      "category": "goal",
+      "value": "Develop a memory pipeline that processes chat into structured knowledge",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_2",
+      "last_seen": "msg_2",
+      "trend": "new",
+      "source_refs": [
+        "msg_2"
+      ]
+    },
+    {
+      "memory_id": "mem_0005",
+      "category": "preference",
+      "value": "Rely on a regression harness as the main safety check for system changes",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_4",
+      "last_seen": "msg_4",
+      "trend": "new",
+      "source_refs": [
+        "msg_4"
+      ]
+    },
+    {
+      "memory_id": "mem_0007",
+      "category": "goal",
+      "value": "Maintain a system that is test-protected and predictable",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_6",
+      "last_seen": "msg_6",
+      "trend": "new",
+      "source_refs": [
+        "msg_6"
+      ]
+    },
+    {
+      "memory_id": "mem_0009",
+      "category": "goal",
+      "value": "Build a system incrementally while avoiding breaking it as it grows",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_8",
+      "last_seen": "msg_8",
+      "trend": "new",
+      "source_refs": [
+        "msg_8"
+      ]
+    },
+    {
+      "memory_id": "mem_0010",
+      "category": "goal",
+      "value": "Build a system that is lean yet scalable into a larger architecture",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_10",
+      "last_seen": "msg_10",
+      "trend": "new",
+      "source_refs": [
+        "msg_10"
       ]
     }
   ]
