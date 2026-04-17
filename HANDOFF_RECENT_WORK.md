@@ -41,6 +41,24 @@
 ### Documentation
 - **`PROJECT_SPECIFICATION.md`** exists as a repo inventory/spec (separate from this handoff).
 
+### Offline memory import / extract (latest)
+- **`memory/import_chat.py`:** strips leading `USER:` / `AI:` / `ASSISTANT:` from each line (regex uses `re.IGNORECASE`, not inline `(?i)` after `^`). Still assigns roles by **line order** (user, assistant, user, …).
+- **`memory/extractors/run_extractor.py`:**
+  - **Merge by default:** loads existing `extracted_memory.json` and merges new extractions; same category+value key **reinforces** evidence. **`--replace`** wipes the in-memory map first (old full-replace behavior).
+  - **Safety:** copies prior `extracted_memory.json` → **`memory/extracted_memory.pre_extract.json`** before each write (rotating). `.gitignore` ignores `pre_extract` and `extracted_memory.json.bak`.
+  - **`EXTRACT_MESSAGE_LIMIT`** in `.env` (default 50, max 500) caps how many `imported.json` messages are processed per run.
+  - **Stricter rows:** `validate_candidate` rejects values containing **`?`** or over **`MAX_MEMORY_VALUE_CHARS` (420)**; prompt tightened for declarative user facts.
+  - **`meta.last_extract`** records merge stats (new vs reinforced, row counts).
+
+### Playground: safety / “what keeps this safe?” (latest)
+- **`project_safety_conversation_query`** + **`safety_signal_memory`** detect safety-style questions and memory that mentions regression / harness / `run_regression` / pytest / etc.
+- **Retrieval:** extra score bonus so those memories surface.
+- **Routing:** `detect_subtarget` → **`safety practices`** → forced **Answer** / **Next step** lines point at **`python tests/run_regression.py`** when appropriate; system prompt adds a rule to **connect testing to safety** without overriding focus/stage.
+
+### Regression fixtures
+- **`tests/fixtures/extractor_validation_cases.json`** — offline accept/reject cases for `validate_candidate` (no OpenAI).
+- Harness also covers extractor merge helpers, `effective_message_limit`, and safety routing tests.
+
 ---
 
 ## Important clarifications (common confusion)
@@ -58,14 +76,17 @@ From repo root:
 python tests/run_regression.py
 ```
 
-At last full run in this work session, this passed **35 / 35** tests. Re-run after any local edits.
+At last full run in this work session, this passed **40 / 40** tests. Re-run after any local edits.
 
 ---
 
 ## Files most touched in this phase
 
-- `playground.py` — memory extract/write, scoring, retrieval, guards
-- `tests/run_regression.py` — regression coverage
+- `playground.py` — memory extract/write, scoring, retrieval, guards, safety-query routing
+- `tests/run_regression.py` — regression coverage (40 scenarios including extractor + safety)
+- `tests/fixtures/extractor_validation_cases.json` — offline extractor validation cases
+- `memory/import_chat.py`, `memory/extractors/run_extractor.py`
+- `PROJECT_SPECIFICATION.md`, `.gitignore`
 - `requirements.txt`
 - `test_openai.py`, `test_claude.py`
 - `README.md`
@@ -76,7 +97,7 @@ At last full run in this work session, this passed **35 / 35** tests. Re-run aft
 
 - Tune negation / overlap thresholds if real usage shows false positives/negatives.
 - Optional: score-only “time decay” if you add real timestamps later (still avoid silent JSON mutation unless intended).
-- Optional: align `PROJECT_SPECIFICATION.md` with any new files if the tree grows.
+- Optional: golden **live** extractor snapshots (mocked OpenAI) if you want prompt changes fully regression-gated without API cost.
 
 ---
 
