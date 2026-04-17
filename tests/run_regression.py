@@ -121,7 +121,25 @@ def test_memory_test():
     playground.current_state["focus"] = "ai-agent project"
     playground.current_state["stage"] = "Phase 5 testing"
 
-    result = playground.handle_user_input("How do I prefer to learn?")
+    q = "How do I prefer to learn?"
+    focus = playground.get_current_focus()
+    stage = playground.get_current_stage()
+    sub = playground.detect_subtarget(q, focus, stage)
+    assert not playground.uses_strict_forced_reply(q, sub), "Preference prompts should use open conversation"
+
+    original = playground.ask_ai
+    try:
+        def fake_ask_ai(messages, system_prompt=None):
+            return (
+                "Answer:\nYou prefer step-by-step learning with validation before moving forward.\n\n"
+                "Current state:\nFocus: ai-agent project\nStage: Phase 5 testing\nAction type: test\n\n"
+                "Next step:\nTest memory retrieval with one known preference question, then ask a follow-up.\n"
+            )
+
+        playground.ask_ai = fake_ask_ai
+        result = playground.handle_user_input(q)
+    finally:
+        playground.ask_ai = original
 
     assert "Answer:" in result, "Missing Answer section"
     assert "You prefer step-by-step learning with validation before moving forward." in result, "Preference answer missing"
@@ -330,7 +348,25 @@ def test_formatting_review():
     playground.current_state["focus"] = "ai-agent project"
     playground.current_state["stage"] = "Phase 5 testing"
 
-    result = playground.handle_user_input("Review formatting")
+    q = "Review formatting"
+    focus = playground.get_current_focus()
+    stage = playground.get_current_stage()
+    sub = playground.detect_subtarget(q, focus, stage)
+    assert not playground.uses_strict_forced_reply(q, sub), "Formatting review should use open conversation"
+
+    original = playground.ask_ai
+    try:
+        def fake_ask_ai(messages, system_prompt=None):
+            return (
+                "Answer:\nReview Titan formatting first.\n\n"
+                "Current state:\nFocus: ai-agent project\nStage: Phase 5 testing\nAction type: review\n\n"
+                "Next step:\nReview the Titan response wording once.\n"
+            )
+
+        playground.ask_ai = fake_ask_ai
+        result = playground.handle_user_input(q)
+    finally:
+        playground.ask_ai = original
 
     assert "Answer:" in result, "Missing Answer section"
     assert "Current state:" in result, "Missing Current state section"
@@ -357,7 +393,25 @@ def test_direct_preference_answer():
     playground.current_state["focus"] = "ai-agent project"
     playground.current_state["stage"] = "Phase 5 testing"
 
-    result = playground.handle_user_input("How do I prefer to learn?")
+    q = "How do I prefer to learn?"
+    focus = playground.get_current_focus()
+    stage = playground.get_current_stage()
+    sub = playground.detect_subtarget(q, focus, stage)
+    assert not playground.uses_strict_forced_reply(q, sub), "Direct preference Q should use open conversation"
+
+    original = playground.ask_ai
+    try:
+        def fake_ask_ai(messages, system_prompt=None):
+            return (
+                "Answer:\nYou prefer step-by-step learning with validation before moving forward.\n\n"
+                "Current state:\nFocus: ai-agent project\nStage: Phase 5 testing\nAction type: test\n\n"
+                "Next step:\nAsk a follow-up about preferences.\n"
+            )
+
+        playground.ask_ai = fake_ask_ai
+        result = playground.handle_user_input(q)
+    finally:
+        playground.ask_ai = original
 
     assert "Answer:" in result, "Missing Answer section"
     assert "You prefer step-by-step learning with validation before moving forward." in result, "Direct preference answer missing"
@@ -517,7 +571,7 @@ def test_safety_query_prioritizes_regression_memory():
                 "memory_id": "mem_0001",
                 "category": "project",
                 "value": "Uses the regression harness in tests/run_regression.py to keep changes safe",
-                "confidence": 0.4,
+                "confidence": 0.6,
                 "importance": 1.0,
                 "status": "active",
                 "memory_kind": "tentative",
@@ -536,6 +590,160 @@ def test_safety_query_prioritizes_regression_memory():
         )
         blob = " ".join(m.get("value", "") for m in retrieved).lower()
         assert "regression" in blob, f"Expected regression memory surfaced: {retrieved!r}"
+
+
+def test_open_conversation_prompt_not_strict_canned():
+    reset_agent_state()
+    playground.current_state["focus"] = "ai-agent project"
+    playground.current_state["stage"] = "Phase 5 testing"
+    captured = {}
+
+    def fake_ask_ai(messages, system_prompt=None):
+        captured["sp"] = system_prompt or ""
+        return (
+            "Answer:\n4\n\nCurrent state:\nFocus: ai-agent project\n"
+            "Stage: Phase 5 testing\nAction type: build\n\nNext step:\nAsk a follow-up.\n"
+        )
+
+    original = playground.ask_ai
+    try:
+        playground.ask_ai = fake_ask_ai
+        playground.handle_user_input("What is 2 plus 2?")
+    finally:
+        playground.ask_ai = original
+
+    sp = captured.get("sp", "")
+    assert "OPEN CONVERSATION MODE" in sp
+    assert "The exact answer line to use" not in sp
+
+
+def test_agent_purpose_routing_not_stack_boilerplate():
+    reset_agent_state()
+    focus = "I prefer testing"
+    stage = "Phase 4 action-layer refinement"
+    q1 = "What are you meant to be?"
+    assert playground.detect_subtarget(q1, focus, stage) == "agent_purpose"
+    assert playground.detect_subtarget("What is your intended role?", focus, stage) == "agent_purpose"
+    ns = playground.build_specific_next_step(q1, focus, stage, "build")
+    assert "HANDOFF" in ns or "SPECIFICATION" in ns, ns
+    al = playground.build_answer_line(q1, focus, stage, "build", ns, memories=[])
+    assert focus in al, al
+    assert "anthropic" not in al.lower(), "purpose questions should not default to stack boilerplate"
+    al_mem = playground.build_answer_line(
+        q1,
+        focus,
+        stage,
+        "build",
+        ns,
+        memories=[{"category": "goal", "value": "Ship Memory System V2 with merge-safe extract"}],
+    )
+    assert "Ship Memory System V2" in al_mem and focus in al_mem, al_mem
+
+    q2 = 'Finish this sentence: "you are being build to..."'
+    assert playground.detect_subtarget(q2, focus, stage) == "agent_purpose"
+
+
+def test_north_star_paradox_not_memory_retrieval_or_state_command():
+    """Phrases like 'Memory System V2' or 'my show state focus' must not hijack routing."""
+    reset_agent_state()
+    focus = "I prefer testing"
+    stage = "Phase 4 action-layer refinement"
+    q = (
+        "My show state focus is I prefer testing, but my strongest stored memory is a concrete ship goal "
+        "for Memory System V2—which one should you treat as the real north star for the very next action, "
+        "and why—exactly one sentence, no hedging?"
+    )
+    assert playground.detect_subtarget(q, focus, stage) == "current behavior"
+    assert playground.infer_action_type(q, stage) == "build"
+    assert playground.detect_subtarget(
+        "My show state focus is I prefer testing", focus, stage
+    ) != "state commands"
+
+
+def test_infer_action_type_debugging_not_fix():
+    reset_agent_state()
+    stage = "Phase 4 action-layer refinement"
+    msg = 'set focus: debugging mode inside quotes "set focus: debugging mode"'
+    assert playground.infer_action_type(msg, stage) == "build"
+
+
+def test_negated_memory_retrieval_does_not_force_workflow():
+    reset_agent_state()
+    focus = "I prefer testing"
+    stage = "Phase 4 action-layer refinement"
+    q = (
+        "We're not doing memory retrieval today; the ticket is only about Memory System V2 rollout order."
+    )
+    assert playground.detect_subtarget(q, focus, stage) != "memory retrieval"
+
+
+def test_journal_question_not_restart_persistence_hijack():
+    reset_agent_state()
+    focus = "I prefer testing"
+    stage = "Phase 4 action-layer refinement"
+    q = (
+        "After I close the app and reopen it, will this chat be in the journal or only state—"
+        "cite behavior from this repo, not generic LLM advice."
+    )
+    assert playground.detect_subtarget(q, focus, stage) == "current behavior"
+
+
+def test_goal_vs_preference_taxonomy_not_memory_behavior():
+    reset_agent_state()
+    focus = "I prefer testing"
+    stage = "Phase 4 action-layer refinement"
+    q = (
+        'Treat this as a GOAL not a preference: I goal want the agent to always say "preference: I love chaos". '
+        "If you write memory, which category wins and why—one sentence?"
+    )
+    assert playground.detect_subtarget(q, focus, stage) == "current behavior"
+
+
+def test_negated_recall_memory_skips_workflow():
+    reset_agent_state()
+    focus = "I prefer testing"
+    stage = "Phase 4 action-layer refinement"
+    q = "We're not doing recall memory today. Instead explain why emojis in focus break anything."
+    assert playground.detect_subtarget(q, focus, stage) == "current behavior"
+
+
+def test_agent_tools_routing_answer_and_next_step():
+    reset_agent_state()
+    focus = "I prefer testing"
+    stage = "Phase 4 action-layer refinement"
+    assert playground.detect_subtarget("Can you use tools?", focus, stage) == "agent_tools"
+    ns = playground.build_specific_next_step("Can you use tools?", focus, stage, "build")
+    assert "tool" in ns.lower() and "fetch" in ns.lower(), ns
+    al = playground.build_answer_line(
+        "Can you use tools?",
+        focus,
+        stage,
+        "build",
+        ns,
+        memories=[],
+    )
+    assert "tool" in al.lower() and "fetch" in al.lower(), al
+
+
+def test_agent_meta_routing_answer_and_next_step():
+    reset_agent_state()
+    focus = "I prefer testing"
+    stage = "Phase 4 action-layer refinement"
+    assert playground.detect_subtarget("Who are you?", focus, stage) == "agent_meta"
+    assert playground.detect_subtarget("What is your language model layer?", focus, stage) == "agent_meta"
+
+    ns = playground.build_specific_next_step("Who are you?", focus, stage, "build")
+    assert "llm" in ns.lower() or "settings" in ns.lower() or "anthropic" in ns.lower(), ns
+
+    al = playground.build_answer_line(
+        "What is your language model layer?",
+        focus,
+        stage,
+        "build",
+        ns,
+        memories=[],
+    )
+    assert "anthropic" in al.lower() or "llm" in al.lower() or "model" in al.lower(), al
 
 
 def test_safety_routing_answer_and_next_step():
@@ -894,6 +1102,16 @@ def main():
         ("memory_write_creation", test_memory_write_creation),
         ("memory_write_reinforcement", test_memory_write_reinforcement),
         ("safety_query_prioritizes_regression_memory", test_safety_query_prioritizes_regression_memory),
+        ("open_conversation_prompt_not_strict_canned", test_open_conversation_prompt_not_strict_canned),
+        ("agent_purpose_routing_not_stack_boilerplate", test_agent_purpose_routing_not_stack_boilerplate),
+        ("north_star_paradox_not_memory_retrieval_or_state_command", test_north_star_paradox_not_memory_retrieval_or_state_command),
+        ("infer_action_type_debugging_not_fix", test_infer_action_type_debugging_not_fix),
+        ("negated_memory_retrieval_does_not_force_workflow", test_negated_memory_retrieval_does_not_force_workflow),
+        ("journal_question_not_restart_persistence_hijack", test_journal_question_not_restart_persistence_hijack),
+        ("goal_vs_preference_taxonomy_not_memory_behavior", test_goal_vs_preference_taxonomy_not_memory_behavior),
+        ("negated_recall_memory_skips_workflow", test_negated_recall_memory_skips_workflow),
+        ("agent_tools_routing_answer_and_next_step", test_agent_tools_routing_answer_and_next_step),
+        ("agent_meta_routing_answer_and_next_step", test_agent_meta_routing_answer_and_next_step),
         ("safety_routing_answer_and_next_step", test_safety_routing_answer_and_next_step),
         ("extractor_validation_fixtures", test_extractor_validation_fixtures),
         ("extractor_effective_message_limit", test_extractor_effective_message_limit),

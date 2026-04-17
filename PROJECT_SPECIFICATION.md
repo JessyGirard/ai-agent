@@ -63,7 +63,7 @@ Supplemental scripts (not the baseline gate):
 | `README.md` | Project tagline, **Testing Workflow**, and short **offline memory import** steps (regression as protected baseline). |
 | `HANDOFF_RECENT_WORK.md` | Human-oriented summary of recent increments for pasting into other chats (not a runtime dependency). |
 | `requirements.txt` | Pip dependencies for the main app, fetch tool, and offline extractor (see §3). |
-| `playground.py` | Core agent: state load/save, project journal (append, flush, archive, compaction), memory load/save, retrieval/scoring (including **safety / stability** phrasing tied to regression-harness memory), runtime memory extraction/write with normalization (`normalize_memory_display_value`, `canonicalize_memory_key_value`, dedupe on load), routing and prompts, `handle_user_input` orchestration (commands → memory write → LLM → optional fetch tool loop → journal). |
+| `playground.py` | Core agent: state load/save, project journal (append, flush, archive, compaction), memory load/save, retrieval/scoring (including **safety / stability** phrasing tied to regression-harness memory, strong-memory retrieval filter, reinforced-evidence bonus), runtime memory extraction/write with normalization (`normalize_memory_display_value`, `canonicalize_memory_key_value`, dedupe on load), routing and prompts, `handle_user_input` orchestration (commands → memory write → LLM → optional fetch tool loop → journal), plus guards for command-discussion text and tool-meta/veto text. |
 | `main.py` | Trivial hello script; not primary entry. |
 | `test_playground_memory.py` | Pytest-oriented tests for memory normalization / keys / transient identity (supplemental). |
 | `test_openai.py` | Calls OpenAI Responses API; prints output (manual verification). |
@@ -97,7 +97,7 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; full list of scenario tests (state, memory write, journal, tool fetch, LLM errors, memory key canonicalization, identity edge cases, **extractor merge/limit/validation fixtures**, etc.). **Exit code 1 if any test fails.** |
+| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; full list of scenario tests (state, memory write, journal, tool fetch, LLM errors, memory key canonicalization, identity edge cases, command/tool-meta guards, **extractor merge/limit/validation fixtures**, etc.). **Exit code 1 if any test fails.** |
 | `fixtures/extractor_validation_cases.json` | Offline JSON cases consumed by regression to assert `run_extractor.validate_candidate` accept/reject behavior (no OpenAI call). |
 
 ### `memory/` — code

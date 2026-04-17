@@ -50,10 +50,26 @@
   - **Stricter rows:** `validate_candidate` rejects values containing **`?`** or over **`MAX_MEMORY_VALUE_CHARS` (420)**; prompt tightened for declarative user facts.
   - **`meta.last_extract`** records merge stats (new vs reinforced, row counts).
 
-### Playground: safety / “what keeps this safe?” (latest)
+### Playground: safety / “what keeps this safe?”
 - **`project_safety_conversation_query`** + **`safety_signal_memory`** detect safety-style questions and memory that mentions regression / harness / `run_regression` / pytest / etc.
 - **Retrieval:** extra score bonus so those memories surface.
 - **Routing:** `detect_subtarget` → **`safety practices`** → forced **Answer** / **Next step** lines point at **`python tests/run_regression.py`** when appropriate; system prompt adds a rule to **connect testing to safety** without overriding focus/stage.
+
+### Recent routing / control-surface hardening (latest)
+- **Substring trap reductions:** removed/limited broad phrase matches that misrouted prompts (`memory system`, broad state-command text, `debugging`→`bug`, etc.).
+- **Command interpretation guard:** command execution only applies to direct command lines (`set focus:`, `set stage:`, exact `show state` / `reset state`), not narrative examples (e.g. *"if I type 'set focus: ...'"*).
+- **Tool-meta guard:** assistant `TOOL:fetch` output no longer triggers real fetch when user input clearly forbids tools or quotes/references literal tool syntax.
+- **Strict/open mode tuning:** strict canned workflow now reserved for explicit next-step asks and narrow actionable subtargets; broader analytical questions default to open conversation.
+- **System-risk branch:** dedicated risk reasoning path grounds answers in `playground.py` behavior (`detect_subtarget`, routing gates, strict-mode activation failure modes).
+
+### Recent answer-quality / reasoning updates
+- **Primary-intent focus in `build_answer_line`:** mixed prompts prioritize one intent (risk → goal → command → identity) and avoid splitting attention across secondary threads.
+- **Grounded reasoning shape:** risk/weakness/architecture/system-behavior answers now explicitly use repo mechanisms (`detect_subtarget`, routing logic, strict-mode gating, state-over-memory priority) with cause→mechanism→consequence wording.
+- **Sharper fallback phrasing:** generic answer fallbacks now reference concrete repo components (`playground.py`, regression harness) instead of broad project-language templates.
+
+### Recent memory retrieval quality updates
+- **Use-time filtering only:** `retrieve_relevant_memory` now ignores weak rows (`confidence < 0.5` and `evidence_count <= 1`) and keeps stronger rows (`confidence >= 0.6` or `evidence_count >= 2`).
+- **Reinforced-pattern bonus:** `score_memory_item` adds a small `+0.10` when `evidence_count >= 3` and `trend == "reinforced"` (keeps intent/recency dominant while nudging stable patterns upward).
 
 ### Regression fixtures
 - **`tests/fixtures/extractor_validation_cases.json`** — offline accept/reject cases for `validate_candidate` (no OpenAI).
@@ -76,14 +92,14 @@ From repo root:
 python tests/run_regression.py
 ```
 
-At last full run in this work session, this passed **40 / 40** tests. Re-run after any local edits.
+At last full run in this work session, this passed **50 / 50** tests. Re-run after any local edits.
 
 ---
 
 ## Files most touched in this phase
 
-- `playground.py` — memory extract/write, scoring, retrieval, guards, safety-query routing
-- `tests/run_regression.py` — regression coverage (40 scenarios including extractor + safety)
+- `playground.py` — routing/strictness guards, command/tool interpretation gates, answer-construction focus, memory retrieval/scoring refinements, safety/risk reasoning
+- `tests/run_regression.py` — regression coverage (50 scenarios including extractor, safety, command/tool/routing guards)
 - `tests/fixtures/extractor_validation_cases.json` — offline extractor validation cases
 - `memory/import_chat.py`, `memory/extractors/run_extractor.py`
 - `PROJECT_SPECIFICATION.md`, `.gitignore`

@@ -54,11 +54,54 @@ def save_state():
         json.dump(current_state, f, indent=2, ensure_ascii=False)
 
 
+def _user_discussing_state_command(line: str) -> bool:
+    """True when the user is talking about commands, not issuing a bare line."""
+    raw = (line or "").strip()
+    if not raw:
+        return False
+    text = raw.lower()
+
+    if text.startswith("set focus:") or text.startswith("set stage:"):
+        return False
+    if text in ("show state", "reset state"):
+        return False
+
+    meta_phrases = (
+        "if i type",
+        "if i say",
+        "what happens if",
+        "treat this as",
+        "example:",
+        "this is",
+    )
+    if any(p in text for p in meta_phrases):
+        return True
+
+    if re.search(
+        r'["\'][^"\']*(?:set\s+focus\s*:|set\s+stage\s*:)[^"\']*["\']',
+        raw,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.search(
+        r'["\'][^"\']*(?:show\s+state|reset\s+state)[^"\']*["\']',
+        raw,
+        re.IGNORECASE,
+    ):
+        return True
+
+    return False
+
+
 def update_state_from_command(user_input):
-    text = user_input.lower()
+    line = (user_input or "").strip()
+    text = line.lower()
+
+    if _user_discussing_state_command(line):
+        return None
 
     if text.startswith("set stage:"):
-        new_stage = user_input.split(":", 1)[1].strip()
+        new_stage = line.split(":", 1)[1].strip()
         if not new_stage:
             return "❌ Stage cannot be empty."
 
@@ -67,7 +110,7 @@ def update_state_from_command(user_input):
         return f"✅ Stage updated to: {new_stage}"
 
     if text.startswith("set focus:"):
-        new_focus = user_input.split(":", 1)[1].strip()
+        new_focus = line.split(":", 1)[1].strip()
         if not new_focus:
             return "❌ Focus cannot be empty."
 
@@ -479,6 +522,8 @@ def score_memory_item(mem, user_input):
     memory_value = mem.get("value", "")
     memory_kind = mem.get("memory_kind", "")
     category = mem.get("category", "")
+    evidence_count = int(mem.get("evidence_count", 0) or 0)
+    trend = (mem.get("trend") or "").lower()
 
     user_tokens = tokenize_text(user_input)
     memory_tokens = tokenize_text(memory_value)
@@ -511,6 +556,9 @@ def score_memory_item(mem, user_input):
     # Prefer recently reinforced memory when relevance is otherwise similar.
     score += estimate_memory_recency_bonus(mem)
 
+    if evidence_count >= 3 and trend == "reinforced":
+        score += 0.10
+
     # Downrank items that look stale or weakly supported (retrieval only).
     score -= estimate_memory_staleness_penalty(mem)
 
@@ -526,19 +574,60 @@ def retrieve_relevant_memory(user_input):
     if not memory_items:
         return []
 
+    def keep_for_use(mem):
+        confidence = float(mem.get("confidence", 0) or 0)
+        evidence_count = int(mem.get("evidence_count", 0) or 0)
+
+        # Ignore weak rows.
+        if confidence < 0.5 and evidence_count <= 1:
+            return False
+
+        # Keep only strong rows.
+        return confidence >= 0.6 or evidence_count >= 2
+
     scored = []
     for mem in memory_items:
         score = score_memory_item(mem, user_input)
         scored.append((score, mem))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    filtered = [m for score, m in scored if score >= 1.10]
+    filtered = [m for score, m in scored if score >= 1.10 and keep_for_use(m)]
 
     if filtered:
         return filtered[:3]
 
     # Fallback: keep one strongest memory if everything scored low.
-    return [scored[0][1]] if scored else []
+    for _, mem in scored:
+        if keep_for_use(mem):
+            return [mem]
+    return []
+
+
+def retrieve_memory_for_purpose(user_input, k=6):
+    """Broader retrieval for role/purpose prompts so the forced line can quote real rows."""
+    memory_items = load_memory()
+    if not memory_items:
+        return []
+    broaden = (
+        "goal project memory regression harness journal tools preference identity "
+        "agent testing safety merge extract"
+    )
+    scored = []
+    for mem in memory_items:
+        s = score_memory_item(mem, user_input) + 0.4 * score_memory_item(mem, broaden)
+        scored.append((s, mem))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    out = []
+    seen = set()
+    for _, mem in scored:
+        key = build_memory_key(mem.get("category", ""), mem.get("value", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(mem)
+        if len(out) >= k:
+            break
+    return out
 
 
 def format_memory_block(memories):
@@ -840,10 +929,11 @@ def write_runtime_memory(user_input):
 # ---------- ACTION STRUCTURE ----------
 
 def infer_action_type(user_input, stage):
-    text = user_input.lower()
+    text = (user_input or "").strip().lower()
     stage_text = stage.lower()
 
-    if any(word in text for word in ["error", "bug", "broken", "fix", "issue"]):
+    # Whole words only — "debugging" must not match "bug".
+    if re.search(r"\b(?:error|bug|broken|fix|issue)\b", text):
         return "fix"
 
     if any(word in text for word in ["research", "look up", "find", "compare", "read", "website", "url", "webpage"]):
@@ -852,7 +942,8 @@ def infer_action_type(user_input, stage):
     if any(word in text for word in ["review", "evaluate", "assess", "inspect"]):
         return "review"
 
-    if any(word in text for word in ["check", "test", "validate", "verify"]):
+    # Whole words only — "testing" must not match "test".
+    if re.search(r"\b(?:check|test|validate|verify)\b", text):
         return "test"
 
     if "testing" in stage_text:
@@ -877,6 +968,159 @@ def build_action_guidance(action_type):
 
 # ---------- ROUTING ----------
 
+def is_agent_purpose_question(text):
+    """Why this agent exists / what it is for — not the API stack (user message only)."""
+    if not isinstance(text, str) or not text.strip():
+        return False
+    t = re.sub(r"\s+", " ", text.strip().lower())
+    if len(t) > 280:
+        return False
+
+    purpose_markers = (
+        "meant to be",
+        "meant to do",
+        "meant for",
+        "what is your purpose",
+        "your purpose",
+        "why do you exist",
+        "why were you made",
+        "why were you built",
+        "what are you for",
+        "what are you supposed to",
+        "finish this sentence",
+        "complete this sentence",
+        "fill in the blank",
+        "being built to",
+        "being build to",
+        "you are being",
+        "you're being",
+        "built to be",
+        "build to be",
+        "intended role",
+        "your intended role",
+        "what is your role",
+        "what's your role",
+        "whats your role",
+        "your role here",
+        "your role in this",
+    )
+    if any(m in t for m in purpose_markers):
+        return True
+    return False
+
+
+def is_agent_meta_question(text):
+    """Who/what is this assistant, or what model/API stack powers replies (user message only)."""
+    if not isinstance(text, str) or not text.strip():
+        return False
+    t = re.sub(r"\s+", " ", text.strip().lower())
+    if len(t) > 220:
+        return False
+
+    identity_phrases = (
+        "who are you",
+        "what are you",
+        "what's your name",
+        "whats your name",
+        "your name",
+        "introduce yourself",
+    )
+    base = t.rstrip("?").strip()
+    if base in identity_phrases:
+        return True
+    if t in identity_phrases or t in {p + "?" for p in identity_phrases}:
+        return True
+
+    stack_markers = (
+        "language model",
+        "llm layer",
+        "model layer",
+        "what model",
+        "which model",
+        "anthropic",
+        "claude api",
+        "what api",
+        "core/llm",
+        "llm.py",
+        "api layer",
+    )
+    if any(m in t for m in stack_markers):
+        return True
+    if "your" in t and "model" in t:
+        return True
+    return False
+
+
+def is_agent_tools_question(text):
+    """Whether this assistant can use tools (e.g. web fetch) — user message only."""
+    if not isinstance(text, str) or not text.strip():
+        return False
+    t = re.sub(r"\s+", " ", text.strip().lower())
+    if len(t) > 220:
+        return False
+    tool_markers = (
+        "tools",
+        "what tools",
+        "any tools",
+        "use tools",
+        "using tools",
+        "tool:",
+        "tool support",
+        "fetch tool",
+        "tool fetch",
+    )
+    if not any(m in t for m in tool_markers):
+        return False
+    if any(
+        p in t
+        for p in (
+            "can you",
+            "could you",
+            "do you",
+            "are you able",
+            "will you",
+            "what tools",
+            "any tools",
+            "have tools",
+            "use tools",
+            "using tools",
+            "tool fetch",
+            "fetch tool",
+            "fetch a url",
+            "fetch a page",
+            "browse the web",
+        )
+    ):
+        return True
+    return False
+
+
+def _user_negates_memory_retrieval_phrase(user_input: str) -> bool:
+    """True when the user is clearly dismissing memory retrieval (substring false positives)."""
+    u = (user_input or "").lower()
+    if "memory retrieval" not in u:
+        return False
+    return bool(
+        re.search(
+            r"\b(?:not|never|without|no|isn't|aren't|don't|won't)\b[\w\s,'\"—-]{0,120}\bmemory\s+retrieval\b",
+            u,
+        )
+    )
+
+
+def _user_negates_recall_memory_phrase(user_input: str) -> bool:
+    """Same idea as memory-retrieval negation, for 'not doing recall memory today' style lines."""
+    u = (user_input or "").lower()
+    if "recall memory" not in u:
+        return False
+    return bool(
+        re.search(
+            r"\b(?:not|never|without|no|isn't|aren't|don't|won't)\b[\w\s,'\"—-]{0,120}\brecall\s+memory\b",
+            u,
+        )
+    )
+
+
 def is_generic_next_step_question(user_input):
     text = user_input.strip().lower()
     generic_patterns = {
@@ -893,6 +1137,14 @@ def is_generic_next_step_question(user_input):
 
 
 def detect_subtarget(user_input, focus, stage):
+    u = re.sub(r"\s+", " ", (user_input or "").strip().lower())
+    if is_agent_purpose_question(u):
+        return "agent_purpose"
+    if is_agent_meta_question(u):
+        return "agent_meta"
+    if is_agent_tools_question(u):
+        return "agent_tools"
+
     text = f"{user_input} {focus} {stage}".lower()
 
     if any(
@@ -919,27 +1171,85 @@ def detect_subtarget(user_input, focus, stage):
     ):
         return "safety practices"
 
-    if any(term in text for term in [
-        "memory retrieval", "retrieve memory", "recall memory",
-        "remember", "memory system", "stored preference"
-    ]):
-        return "memory retrieval"
+    # User text only — avoid focus/stage noise; runs after safety so harness/reliability questions win.
+    if (
+        "biggest risk" in u
+        or "failure point" in u
+        or re.search(r"\brisk\b", u)
+        or re.search(r"\bweakness\b", u)
+        or re.search(r"\bfragile\b", u)
+        or (
+            re.search(r"\bbreak\b", u)
+            and re.search(
+                r"\b(risk|weakness|fragile|failure|routing|system|playground|agent|repo|codebase)\b",
+                u,
+            )
+        )
+    ):
+        return "system risk"
 
-    if any(term in text for term in [
-        "preference", "how do i prefer", "learning style"
-    ]):
+    memory_workflow_terms = [
+        "memory retrieval",
+        "retrieve memory",
+        "recall memory",
+        "remember",
+        "stored preference",
+    ]
+    if any(term in text for term in memory_workflow_terms):
+        blocked = set()
+        if "memory retrieval" in text and _user_negates_memory_retrieval_phrase(user_input):
+            blocked.add("memory retrieval")
+        if "recall memory" in text and _user_negates_recall_memory_phrase(user_input):
+            blocked.add("recall memory")
+        active = [t for t in memory_workflow_terms if t in text and t not in blocked]
+        if active:
+            return "memory retrieval"
+
+    # Do not match bare "preference" — it fires on taxonomy prompts ("GOAL not a preference") and
+    # on literal "preference: ..." strings inside the question.
+    if any(
+        term in text
+        for term in (
+            "how do i prefer",
+            "learning style",
+            "my preferences",
+            "what do i prefer",
+            "which do i prefer",
+        )
+    ):
         return "memory behavior"
 
-    if any(term in text for term in [
-        "state persistence", "restart", "reopen", "relaunch",
-        "close the app", "after restart", "persist state"
-    ]):
+    # User text only — broad words like "reopen" in "journal vs state" questions hijacked this branch.
+    if any(
+        term in u
+        for term in (
+            "state persistence",
+            "persist state",
+            "after restart",
+            "after a restart",
+            "survive restart",
+            "survives restart",
+            "restart the app",
+            "restart playground",
+            "restart once",
+            "relaunch the app",
+            "state persisted",
+            "does state persist",
+            "will state persist",
+            "state survive",
+            "persist after restart",
+        )
+    ):
         return "restart persistence"
 
-    if any(term in text for term in [
-        "show state", "set stage", "set focus", "reset state",
-        "state command", "state commands"
-    ]):
+    # Match only real commands (same surface forms as `update_state_from_command`), not phrases like "my show state focus".
+    ui = (user_input or "").strip().lower()
+    if (
+        ui.startswith("set focus:")
+        or ui.startswith("set stage:")
+        or ui == "show state"
+        or ui == "reset state"
+    ):
         return "state commands"
 
     if any(term in text for term in [
@@ -971,13 +1281,30 @@ def detect_subtarget(user_input, focus, stage):
     ]):
         return "web research"
 
-    if any(term in text for term in [
-        "playground.py", "agent behavior", "ai-agent",
-        "agent system"
-    ]):
+    # Only the user's words — do not let focus/stage (e.g. "ai-agent" in focus) hijack unrelated questions.
+    if any(
+        term in (user_input or "").lower()
+        for term in (
+            "playground.py",
+            "agent behavior",
+            "ai-agent",
+            "agent system",
+        )
+    ):
         return "playground.py behavior"
 
     return "current behavior"
+
+
+def uses_strict_forced_reply(user_input, subtarget):
+    """Strict canned Answer/Next-step only for explicit next-step asks or a few actionable subtargets."""
+    if is_generic_next_step_question(user_input):
+        return True
+    return subtarget in {
+        "safety practices",
+        "state commands",
+        "agent tools",
+    }
 
 
 def choose_default_test_target(focus, stage):
@@ -994,6 +1321,26 @@ def choose_default_test_target(focus, stage):
 
 def build_specific_next_step(user_input, focus, stage, action_type):
     subtarget = detect_subtarget(user_input, focus, stage)
+
+    if subtarget == "agent_purpose":
+        return (
+            "Open `HANDOFF_RECENT_WORK.md` or `PROJECT_SPECIFICATION.md`, pick one subsystem (memory, journal, tools, or regression), and ask your next question about only that piece."
+        )
+
+    if subtarget == "agent_meta":
+        return (
+            "Open `core/llm.py` and `config/settings.py` and confirm `ANTHROPIC_MODEL` / `ANTHROPIC_API_KEY` in `.env` match how you want this agent to call Anthropic."
+        )
+
+    if subtarget == "agent_tools":
+        return (
+            "Try one prompt that needs real page text with a full https URL and confirm the first reply is exactly one line: TOOL:fetch <that-url>."
+        )
+
+    if subtarget == "system risk":
+        return (
+            "Pick one prior mis-route in `playground.py` (`detect_subtarget` / `uses_strict_forced_reply`), adjust a single guard or phrase list, and run `python tests/run_regression.py` to confirm nothing regressed."
+        )
 
     if subtarget == "safety practices":
         if action_type == "test":
@@ -1108,13 +1455,124 @@ def build_answer_line(user_input, focus, stage, action_type, next_step, memories
     subtarget = detect_subtarget(user_input, focus, stage)
     memories = memories or []
 
+    def primary_intent_from_text(t):
+        # Priority order: risk > goal > command > identity.
+        if any(
+            k in t
+            for k in (
+                "biggest risk",
+                "risk",
+                "weakness",
+                "fragile",
+                "failure point",
+                "architecture",
+                "system behavior",
+            )
+        ):
+            return "risk"
+        if any(
+            k in t
+            for k in (
+                "goal",
+                "north star",
+                "objective",
+                "ship",
+                "what should we achieve",
+            )
+        ):
+            return "goal"
+        if any(
+            k in t
+            for k in (
+                "set focus",
+                "set stage",
+                "show state",
+                "reset state",
+                "command",
+            )
+        ):
+            return "command"
+        if any(
+            k in t
+            for k in (
+                "who are you",
+                "what are you",
+                "identity",
+                "intended role",
+                "what model",
+            )
+        ):
+            return "identity"
+        return None
+
+    primary_intent = primary_intent_from_text(text)
+
     if subtarget == "safety practices":
         if any(safety_signal_memory(m) for m in memories):
             return (
-                "Your regression harness and automated checks are your main mechanical safety rail—state that plainly when it appears in memory."
+                "The core safety rail is the regression harness and automated checks because they expose regressions at the boundary where behavior changes, which prevents confident but unsafe edits from shipping."
             )
         return (
-            "Use `python tests/run_regression.py` as the regression gate before you trust wider behavioral changes."
+            "Treat `python tests/run_regression.py` as the hard gate because it validates cross-flow behavior after each edit, which prevents subtle routing and state regressions from spreading."
+        )
+
+    if subtarget == "system risk":
+        return (
+            "The biggest risk is routing misclassification because `detect_subtarget` and strict-mode gating can map a normal analytical question into a workflow shell, which leads to structurally valid but behaviorally wrong answers."
+        )
+
+    if subtarget == "agent_purpose":
+        parts = []
+        for mem in memories[:5]:
+            v = (mem.get("value") or "").strip()
+            cat = mem.get("category")
+            if v and cat in ("goal", "project", "preference", "identity"):
+                parts.append(f"{cat}: {v}")
+        if parts:
+            joined = " | ".join(parts)
+            if len(joined) > 380:
+                joined = joined[:377] + "..."
+            return (
+                f"For your current focus `{focus}` / stage `{stage}`, your stored memory says this agent exists to back: {joined}—quote those facts plainly, no marketing tone."
+            )
+        return (
+            f"For focus `{focus}` at stage `{stage}`, there are not enough stored memory rows to name specifics; run one memory import/extract pass so the answer can quote real goal/project/preference lines."
+        )
+
+    if subtarget == "agent_meta":
+        try:
+            from config.settings import get_model_name
+            mid = get_model_name()
+        except Exception:
+            mid = "configure ANTHROPIC_MODEL in .env"
+        return (
+            f"I'm the local ai-agent loop for this repo, and responses flow through Anthropic via `core/llm.py` with model id `{mid}` from settings, which makes model behavior depend on that configured runtime path."
+        )
+
+    if subtarget == "agent_tools":
+        return (
+            "Yes: when webpage content is required first, reply with exactly `TOOL:fetch <https://…>`; `playground.py` calls `tools/fetch_page.py` and then re-queries with fetched text."
+        )
+
+    # For mixed prompts, answer only the primary intent and keep secondary ideas out.
+    if primary_intent == "risk":
+        return (
+            "The main weakness is routing misclassification in `detect_subtarget`: the routing logic and strict-mode gating can put a normal analytical question into a workflow shell, which produces confident output in the wrong behavior mode."
+        )
+
+    if primary_intent == "goal":
+        return (
+            "The primary goal is to keep responses aligned with current state while preserving routing correctness in `playground.py`, because that is the control point that determines whether reasoning or workflow shells are activated."
+        )
+
+    if primary_intent == "command":
+        return (
+            "Command intent is authoritative only for direct command lines (`set focus:`, `set stage:`, `show state`, `reset state`), because `update_state_from_command` guards against narrative or quoted command text."
+        )
+
+    if primary_intent == "identity":
+        return (
+            "This agent is the local loop orchestrated by `playground.py`; behavior is determined by `detect_subtarget`, routing logic, strict-mode gating, and the rule that current state has priority over memory."
         )
 
     if "how do i prefer to learn" in text:
@@ -1148,25 +1606,27 @@ def build_answer_line(user_input, focus, stage, action_type, next_step, memories
             return "Verify Titan formatting now."
         if subtarget == "blank-input handling":
             return "Test blank-input handling now."
-        return f"Test {subtarget} now."
+        return f"Test the `{subtarget}` path in `playground.py` now."
 
     if action_type == "review":
         if subtarget == "titan formatting":
             return "Review Titan formatting first."
         if subtarget == "state commands":
             return "Review the state-command logic first."
-        return f"Review {subtarget} first."
+        return f"Review `{subtarget}` handling in `playground.py` first."
 
     if action_type == "fix":
-        return f"Fix {subtarget} first."
+        return f"Fix `{subtarget}` handling in `detect_subtarget` / routing logic first."
 
     if action_type == "research":
         if subtarget == "web research":
             return "Read the page and answer from its content."
 
-        return f"Research {subtarget} first."
+        return f"Research `{subtarget}` behavior in this repo, then verify it against `playground.py`."
 
-    return f"Focus on one concrete step inside {focus}."
+    return (
+        f"Anchor to one concrete behavior in `playground.py` for focus `{focus}`, then verify it with the regression harness."
+    )
 
 
 # ---------- TOOL HANDLING ----------
@@ -1185,6 +1645,33 @@ def parse_tool_command(response_text):
         "tool": "fetch",
         "url": match.group(1)
     }
+
+
+def user_message_suppresses_tool_fetch(user_input: str) -> bool:
+    """True when the user forbids tools or quotes/references TOOL:fetch as syntax — skip real fetch."""
+    if not user_input or not isinstance(user_input, str):
+        return False
+    text = user_input.strip()
+    low = text.lower()
+
+    if re.search(r'["\'][^"\']*TOOL:fetch[^"\']*["\']', text, re.IGNORECASE):
+        return True
+    if re.search(r'["\']\s*TOOL:fetch', text, re.IGNORECASE):
+        return True
+    if re.search(r'TOOL:fetch\s*["\']', text, re.IGNORECASE):
+        return True
+
+    forbid_or_exact_message = (
+        "i forbid tools",
+        "do not use tools",
+        "don't fetch",
+        "not asking you to fetch",
+        "message is exactly tool:fetch",
+    )
+    if any(p in low for p in forbid_or_exact_message):
+        return True
+
+    return False
 
 
 def choose_post_fetch_next_step(fetched_content):
@@ -1263,13 +1750,29 @@ Fetched content:
 # ---------- BUILD ----------
 
 def build_messages(user_input):
+    ul_norm = re.sub(r"\s+", " ", user_input.strip().lower())
     memories = retrieve_relevant_memory(user_input)
+    if is_agent_purpose_question(ul_norm):
+        purpose_hits = retrieve_memory_for_purpose(user_input)
+        merged = []
+        seen = set()
+        for mem in purpose_hits + memories:
+            key = build_memory_key(mem.get("category", ""), mem.get("value", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(mem)
+        memories = merged[:6]
+
     journal_entries = retrieve_relevant_journal_entries(user_input)
 
     focus = get_current_focus()
     stage = get_current_stage()
     action_type = infer_action_type(user_input, stage)
     action_guidance = build_action_guidance(action_type)
+    subtarget = detect_subtarget(user_input, focus, stage)
+    strict_reply = uses_strict_forced_reply(user_input, subtarget)
+
     forced_next_step = build_specific_next_step(user_input, focus, stage, action_type)
     forced_answer_line = build_answer_line(
         user_input, focus, stage, action_type, forced_next_step, memories=memories
@@ -1281,37 +1784,32 @@ def build_messages(user_input):
 - PROJECT SAFETY / STABILITY: If supporting memory mentions regression harnesses, automated tests, or similar, connect that explicitly to how the repo stays safe. Do not treat testing discipline as unrelated to safety. Focus and stage labels stay authoritative, but answer the substance of the safety question using those practices when they appear in supporting memory.
 """
 
-    system_prompt = f"""
-You are a focused AI agent.
+    meta_rules = ""
+    ul = ul_norm
+    if is_agent_purpose_question(ul):
+        meta_rules = """
+- AGENT PURPOSE: The user asked what this agent is *for* or to complete a sentence about what it is becoming. Use the provided Answer line verbatim as the substantive reply. No brochure language: if memory clauses appear in that line, treat them as the user's own facts, not generic capabilities.
+"""
+    elif is_agent_meta_question(ul):
+        meta_rules = """
+- AGENT META: The user asked who you are or what LLM/API stack powers you. Use the provided Answer line as the substantive reply; do not substitute generic focus-only build advice for that line.
+"""
+    elif is_agent_tools_question(ul):
+        meta_rules = """
+- AGENT TOOLS: The user asked about tool use (e.g. web fetch). Use the provided Answer line as the substantive reply; do not substitute generic focus-only build advice for that line.
+"""
 
-Current focus: {focus}
-Current stage: {stage}
-Current action type: {action_type}
-
-IMPORTANT RULES:
-- The current focus and stage are ALWAYS correct.
-- ALWAYS prioritize state over memory.
-- Memory may be outdated. State is the current truth.
-- NEVER let memory rename, replace, or override the current focus or stage.
-- Use memory only as supporting background context.
-- If memory contains older project labels, older subsystem names, or older phase names, do NOT foreground them unless the user explicitly asks about them.
-- When the user asks what to do next, anchor the answer to the current focus and current stage first.
-- NEVER say you lack context if you can infer from the current focus and stage.
-- Give confident, useful answers grounded in the current project and stage.
-{safety_rules}
-
-TOOL RULE:
-- If the user asks about a website, webpage, URL, or online content that you need to read first, respond ONLY with:
-  TOOL:fetch https://url
-- Do NOT explain.
-- Do NOT answer yet.
-- Do NOT wrap the tool command in markdown.
-- Only use TOOL:fetch when a real URL is needed.
-
-ACTION RULE:
-- The next step must match the current action type.
-- {action_guidance}
-
+    if subtarget == "system risk":
+        answer_and_step_rules = f"""
+SYSTEM RISK REPLY:
+- Your entire assistant message must be exactly one sentence, with no other text.
+- Do not use section headers such as "Answer:", "Current state:", "Next step:", or "Action type:".
+- Do not add bullets, prefixes, or suffixes.
+- Reply using exactly this sentence (verbatim):
+{forced_answer_line}
+""".strip()
+    elif strict_reply:
+        answer_and_step_rules = f"""
 SPECIFICITY RULE:
 - The "Next step" must be narrow and directly executable.
 - It must name one exact task, check, or target.
@@ -1365,6 +1863,64 @@ Next step:
 - Keep the wording concrete, direct, and grounded in the current state.
 
 After answering, follow the exact output format above unless the TOOL RULE applies.
+"""
+    else:
+        answer_and_step_rules = f"""
+OPEN CONVERSATION MODE:
+- The user did not match a narrow workflow template (subtarget: {subtarget}). Treat this as a normal question to answer well.
+- In Answer:, respond directly to what they asked (facts, definitions, code, tradeoffs, or short reasoning). Length should fit the question: one sentence for a tiny fact, a short paragraph if they asked for explanation.
+- Use supporting memory when it genuinely helps; if it is irrelevant, ignore it. Never contradict the current focus/stage labels in the Current state block, but you are not required to steer unrelated questions back into "one refinement inside focus."
+- In Next step:, give one sensible follow-up (clarifying question, small experiment, file to open, or test)—on topic for their message, or lightly tied to this repo only when that fits.
+
+OUTPUT FORMAT RULES:
+- Use exactly these three sections in this order:
+
+Answer:
+<substantive reply>
+
+Current state:
+Focus: {focus}
+Stage: {stage}
+Action type: {action_type}
+
+Next step:
+<one helpful follow-up>
+
+- Do not add extra sections unless the user asked for lists or structure.
+- Do not paste boilerplate about "one small refinement inside the current focus" unless they were clearly asking what to build next in this focus.
+"""
+
+    system_prompt = f"""
+You are a focused AI agent.
+
+Current focus: {focus}
+Current stage: {stage}
+Current action type: {action_type}
+
+IMPORTANT RULES:
+- The current focus and stage are ALWAYS correct.
+- ALWAYS prioritize state over memory.
+- Memory may be outdated. State is the current truth.
+- NEVER let memory rename, replace, or override the current focus or stage.
+- Use memory only as supporting background context.
+- If memory contains older project labels, older subsystem names, or older phase names, do NOT foreground them unless the user explicitly asks about them.
+- When the user asks what to do next, anchor the answer to the current focus and current stage first.
+- NEVER say you lack context if you can infer from the current focus and stage.
+- Give confident, useful answers grounded in the current project and stage.
+{safety_rules}{meta_rules}
+
+TOOL RULE:
+- If the user asks about a website, webpage, URL, or online content that you need to read first, respond ONLY with:
+  TOOL:fetch https://url
+- Do NOT explain.
+- Do NOT answer yet.
+- Do NOT wrap the tool command in markdown.
+- Only use TOOL:fetch when a real URL is needed.
+
+ACTION RULE:
+- The next step must match the current action type.
+- {action_guidance}
+{answer_and_step_rules}
 """.strip()
 
     memory_block = format_memory_block(memories)
@@ -1418,7 +1974,11 @@ def handle_user_input(user_input: str) -> str:
         return f"LLM configuration error: {exc}"
 
     tool_command = parse_tool_command(response)
-    if tool_command and tool_command["tool"] == "fetch":
+    if (
+        tool_command
+        and tool_command["tool"] == "fetch"
+        and not user_message_suppresses_tool_fetch(user_input)
+    ):
         fetched_content = fetch_page(tool_command["url"])
         focus = get_current_focus()
         stage = get_current_stage()
