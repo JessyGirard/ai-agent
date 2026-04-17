@@ -34,11 +34,9 @@ This project is a **local AI assistant / agent** built around:
 
 ## 3. Dependencies
 
-**Declared in `requirements.txt`:** `anthropic`, `python-dotenv`, `beautifulsoup4`, `streamlit`.
+**Declared in `requirements.txt`:** `anthropic`, `python-dotenv`, `beautifulsoup4`, `streamlit`, `requests`, `openai` (covers `playground` / `fetch_page` / offline extractor paths). Pytest is optional for supplemental tests and is not pinned in this file.
 
-**Used by code but not listed in `requirements.txt` (gap):** `requests` (used by `tools/fetch_page.py`), `openai` (used by `memory/extractors/run_extractor.py`). Install as needed for those paths.
-
-**Environment:** `.env` (gitignored) for `ANTHROPIC_API_KEY`, optional `ANTHROPIC_MODEL`, `ANTHROPIC_MAX_TOKENS`; extractor expects `OPENAI_API_KEY`. Optional: `EXTRACT_MESSAGE_LIMIT` (integer; caps how many `imported.json` messages are processed per extract run).
+**Environment:** `.env` (gitignored) for `ANTHROPIC_API_KEY`, optional `ANTHROPIC_MODEL`, `ANTHROPIC_MAX_TOKENS`; offline extractor expects `OPENAI_API_KEY`. Optional: `EXTRACT_MESSAGE_LIMIT` (integer; default 50, capped at 500 in code; limits how many `imported.json` messages are processed per extract run).
 
 ---
 
@@ -62,9 +60,10 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `README.md` | Project tagline + **Testing Workflow** (regression as protected baseline). |
-| `requirements.txt` | Pip dependencies (partial vs full codebase; see §3). |
-| `playground.py` | Core agent: state load/save, project journal (append, flush, archive, compaction), memory load/save, retrieval/scoring, runtime memory extraction/write with normalization (`normalize_memory_display_value`, `canonicalize_memory_key_value`, dedupe on load), routing and prompts, `handle_user_input` orchestration (commands → memory write → LLM → optional fetch tool loop → journal). |
+| `README.md` | Project tagline, **Testing Workflow**, and short **offline memory import** steps (regression as protected baseline). |
+| `HANDOFF_RECENT_WORK.md` | Human-oriented summary of recent increments for pasting into other chats (not a runtime dependency). |
+| `requirements.txt` | Pip dependencies for the main app, fetch tool, and offline extractor (see §3). |
+| `playground.py` | Core agent: state load/save, project journal (append, flush, archive, compaction), memory load/save, retrieval/scoring (including **safety / stability** phrasing tied to regression-harness memory), runtime memory extraction/write with normalization (`normalize_memory_display_value`, `canonicalize_memory_key_value`, dedupe on load), routing and prompts, `handle_user_input` orchestration (commands → memory write → LLM → optional fetch tool loop → journal). |
 | `main.py` | Trivial hello script; not primary entry. |
 | `test_playground_memory.py` | Pytest-oriented tests for memory normalization / keys / transient identity (supplemental). |
 | `test_openai.py` | Calls OpenAI Responses API; prints output (manual verification). |
@@ -127,7 +126,7 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `.gitignore` | Ignores venvs, `.env`, `__pycache__`, logs. |
+| `.gitignore` | Ignores venvs, `.env`, `__pycache__`, logs, local extractor backups (`extracted_memory.pre_extract.json`, `extracted_memory.json.bak`). |
 | `.gitattributes` | Forces LF line endings for `*.json`. |
 | `.pytest_cache/` *(if present)* | Local pytest cache; not part of product behavior. |
 
@@ -144,7 +143,7 @@ Supplemental scripts (not the baseline gate):
 ## 7. Known structural notes (non-blocking)
 
 - Two memory mechanisms coexist: **`memory/memory.py` + `history.json`** vs **`extracted_memory.json` + playground runtime**. Intentional or legacy; worth documenting owner-of-truth per feature.
-- `requirements.txt` is not a complete lockfile for all import paths; tighten when you formalize installs.
+- Dependency versions are not pinned; add a lockfile or version caps when you formalize production installs.
 
 ---
 
