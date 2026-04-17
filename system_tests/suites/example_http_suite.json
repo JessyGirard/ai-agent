@@ -1,0 +1,47 @@
+{
+  "suite_name": "example-http-target-suite",
+  "target_name": "replace-with-your-target-name",
+  "cases": [
+    {
+      "name": "basic-health-check",
+      "method": "POST",
+      "url": "https://example.com/replace-with-endpoint",
+      "headers": {
+        "Authorization": "Bearer REPLACE_ME"
+      },
+      "payload": {
+        "input": "Respond with EXACTLY: healthy"
+      },
+      "timeout_seconds": 20,
+      "assertions": {
+        "status_code": 200,
+        "contains_all": [
+          "healthy"
+        ],
+        "not_contains": [
+          "error"
+        ]
+      }
+    },
+    {
+      "name": "structured-response-check",
+      "method": "POST",
+      "url": "https://example.com/replace-with-endpoint",
+      "headers": {
+        "Authorization": "Bearer REPLACE_ME"
+      },
+      "payload": {
+        "input": "Return JSON with fields status and message"
+      },
+      "timeout_seconds": 20,
+      "assertions": {
+        "status_code": 200,
+        "contains_all": [
+          "\"status\"",
+          "\"message\""
+        ],
+        "regex": "\"status\"\\s*:\\s*\"[a-zA-Z_]+\""
+      }
+    }
+  ]
+}

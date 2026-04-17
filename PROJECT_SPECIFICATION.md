@@ -118,7 +118,7 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; broad scenario coverage (state, memory write/retrieval, journal/outcome flow, routing/strictness, prompt shaping, tool fetch, extractor fixtures, error handling). **Current protected baseline: 166 scenarios. Exit code 1 if any test fails.** |
+| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; broad scenario coverage (state, memory write/retrieval, journal/outcome flow, routing/strictness, prompt shaping, tool fetch, extractor fixtures, error handling). **Current protected baseline: 173 scenarios. Exit code 1 if any test fails.** |
 | `run_soak.py` | Long-duration stability runner with progress checkpoints, chunked mode (`--chunk-size`), and synchronized per-run result/checkpoint/aggregate artifacts for reliable interrupted/long runs. |
 | `fixtures/extractor_validation_cases.json` | Offline JSON cases consumed by regression to assert `run_extractor.validate_candidate` accept/reject behavior (no OpenAI call). |
 

@@ -3,7 +3,9 @@ import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+import threading
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -11,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import playground
 from core import persistence as persistence_core
+from core import system_eval as system_eval_core
 
 
 def run_test(name, fn):
@@ -1984,6 +1987,281 @@ def test_run_soak_script_smoke():
     )
 
 
+def test_system_eval_validate_suite_requires_non_empty_cases():
+    try:
+        system_eval_core.validate_suite({"suite_name": "x", "target_name": "y", "cases": []})
+        assert False, "Expected ValueError for empty cases"
+    except ValueError as exc:
+        assert "non-empty 'cases'" in str(exc), exc
+
+
+def test_system_eval_execute_suite_success_with_fake_adapter():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "unit-suite",
+            "target_name": "fake-target",
+            "cases": [
+                {
+                    "name": "case1",
+                    "method": "POST",
+                    "url": "http://fake.local/test",
+                    "payload": {"input": "hello"},
+                    "assertions": {"status_code": 200, "contains_all": ["healthy"], "not_contains": ["error"]},
+                }
+            ],
+        }
+    )
+
+    class FakeAdapter:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="service healthy",
+                latency_ms=11,
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=FakeAdapter())
+    assert result["ok"] is True, result
+    assert result["failed_cases"] == 0, result
+    assert result["passed_cases"] == 1, result
+    assert result["cases"][0]["ok"] is True, result["cases"][0]
+
+
+def test_system_eval_execute_suite_records_assertion_failures():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "unit-suite",
+            "target_name": "fake-target",
+            "cases": [
+                {
+                    "name": "case1",
+                    "method": "POST",
+                    "url": "http://fake.local/test",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["required-token"]},
+                }
+            ],
+        }
+    )
+
+    class FakeAdapter:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="missing expected content",
+                latency_ms=7,
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=FakeAdapter())
+    assert result["ok"] is False, result
+    assert result["failed_cases"] == 1, result
+    assert result["cases"][0]["ok"] is False, result["cases"][0]
+    assert any("missing required token" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_runner_script_smoke_with_fake_http():
+    suite_payload = {
+        "suite_name": "runner-smoke-suite",
+        "target_name": "fake-http-target",
+        "cases": [
+            {
+                "name": "status-and-token",
+                "method": "POST",
+                "url": "https://fake.local/endpoint",
+                "payload": {"prompt": "hello"},
+                "assertions": {"status_code": 200, "contains_all": ["pass-token"]},
+            }
+        ],
+    }
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        suite_path = temp_root / "suite.json"
+        suite_path.write_text(json.dumps(suite_payload, ensure_ascii=False), encoding="utf-8")
+        output_dir = temp_root / "artifacts"
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = b'{"result":"pass-token detected"}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                _ = (format, args)
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            suite_payload["cases"][0]["url"] = f"http://127.0.0.1:{server.server_port}/evaluate"
+            suite_path.write_text(json.dumps(suite_payload, ensure_ascii=False), encoding="utf-8")
+            cmd = [
+                sys.executable,
+                str(PROJECT_ROOT / "tools" / "system_eval_runner.py"),
+                "--suite",
+                str(suite_path),
+                "--output-dir",
+                str(output_dir),
+                "--file-stem",
+                "runner_smoke",
+            ]
+            completed = subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+            assert completed.returncode == 0, (
+                f"system_eval_runner smoke failed\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            )
+            assert (output_dir / "runner_smoke.json").exists(), "Missing JSON artifact"
+            assert (output_dir / "runner_smoke.md").exists(), "Missing markdown artifact"
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+def test_system_eval_execute_suite_multiple_cases_mixed_results():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "multi-case-suite",
+            "target_name": "fake-target",
+            "cases": [
+                {
+                    "name": "case-pass",
+                    "method": "POST",
+                    "url": "http://fake.local/pass",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["ok"]},
+                },
+                {
+                    "name": "case-fail",
+                    "method": "POST",
+                    "url": "http://fake.local/fail",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["must-not-match"]},
+                },
+            ],
+        }
+    )
+
+    class FakeAdapter:
+        def run_case(self, case):
+            if case["name"] == "case-pass":
+                return system_eval_core.AdapterResult(ok=True, status_code=200, output_text="ok payload", latency_ms=5)
+            return system_eval_core.AdapterResult(ok=True, status_code=200, output_text="different payload", latency_ms=6)
+
+    result = system_eval_core.execute_suite(suite, adapter=FakeAdapter())
+    assert result["executed_cases"] == 2, result
+    assert result["passed_cases"] == 1, result
+    assert result["failed_cases"] == 1, result
+    assert result["ok"] is False, result
+    assert result["cases"][0]["ok"] is True, result["cases"][0]
+    assert result["cases"][1]["ok"] is False, result["cases"][1]
+
+
+def test_system_eval_execute_suite_fail_fast_stops_after_first_failure():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "fail-fast-suite",
+            "target_name": "fake-target",
+            "cases": [
+                {
+                    "name": "first-fail",
+                    "method": "POST",
+                    "url": "http://fake.local/one",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["required-token"]},
+                },
+                {
+                    "name": "second-skipped",
+                    "method": "POST",
+                    "url": "http://fake.local/two",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["ok"]},
+                },
+            ],
+        }
+    )
+
+    class FakeAdapter:
+        def __init__(self):
+            self.calls = []
+
+        def run_case(self, case):
+            self.calls.append(case["name"])
+            if case["name"] == "first-fail":
+                return system_eval_core.AdapterResult(ok=True, status_code=200, output_text="no-match", latency_ms=4)
+            return system_eval_core.AdapterResult(ok=True, status_code=200, output_text="ok", latency_ms=4)
+
+    adapter = FakeAdapter()
+    result = system_eval_core.execute_suite(suite, adapter=adapter, fail_fast=True)
+    assert result["executed_cases"] == 1, result
+    assert result["failed_cases"] == 1, result
+    assert result["passed_cases"] == 0, result
+    assert adapter.calls == ["first-fail"], adapter.calls
+
+
+def test_system_eval_runner_script_returns_nonzero_on_failure():
+    suite_payload = {
+        "suite_name": "runner-fail-suite",
+        "target_name": "fake-http-target",
+        "cases": [
+            {
+                "name": "status-and-token",
+                "method": "POST",
+                "url": "https://fake.local/endpoint",
+                "payload": {"prompt": "hello"},
+                "assertions": {"status_code": 200, "contains_all": ["missing-token"]},
+            }
+        ],
+    }
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        suite_path = temp_root / "suite.json"
+        suite_path.write_text(json.dumps(suite_payload, ensure_ascii=False), encoding="utf-8")
+        output_dir = temp_root / "artifacts"
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = b'{"result":"different-token"}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                _ = (format, args)
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            suite_payload["cases"][0]["url"] = f"http://127.0.0.1:{server.server_port}/evaluate"
+            suite_path.write_text(json.dumps(suite_payload, ensure_ascii=False), encoding="utf-8")
+            cmd = [
+                sys.executable,
+                str(PROJECT_ROOT / "tools" / "system_eval_runner.py"),
+                "--suite",
+                str(suite_path),
+                "--output-dir",
+                str(output_dir),
+                "--file-stem",
+                "runner_fail",
+            ]
+            completed = subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+            assert completed.returncode != 0, (
+                f"system_eval_runner expected non-zero on failure\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            )
+            assert (output_dir / "runner_fail.json").exists(), "Missing JSON artifact on failed run"
+            assert (output_dir / "runner_fail.md").exists(), "Missing markdown artifact on failed run"
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
 def test_memory_display_normalization_separators():
     raw = "  I prefer step---by___step learning  "
     normalized = playground.normalize_memory_display_value(raw)
@@ -3741,6 +4019,13 @@ def main():
         ("handle_user_input_soak_stability_with_mocked_llm", test_handle_user_input_soak_stability_with_mocked_llm),
         ("routing_snapshot_core_paths_stable", test_routing_snapshot_core_paths_stable),
         ("run_soak_script_smoke", test_run_soak_script_smoke),
+        ("system_eval_validate_suite_requires_non_empty_cases", test_system_eval_validate_suite_requires_non_empty_cases),
+        ("system_eval_execute_suite_success_with_fake_adapter", test_system_eval_execute_suite_success_with_fake_adapter),
+        ("system_eval_execute_suite_records_assertion_failures", test_system_eval_execute_suite_records_assertion_failures),
+        ("system_eval_runner_script_smoke_with_fake_http", test_system_eval_runner_script_smoke_with_fake_http),
+        ("system_eval_execute_suite_multiple_cases_mixed_results", test_system_eval_execute_suite_multiple_cases_mixed_results),
+        ("system_eval_execute_suite_fail_fast_stops_after_first_failure", test_system_eval_execute_suite_fail_fast_stops_after_first_failure),
+        ("system_eval_runner_script_returns_nonzero_on_failure", test_system_eval_runner_script_returns_nonzero_on_failure),
         ("project_journal_records_events", test_project_journal_records_events),
         ("project_journal_auto_compaction", test_project_journal_auto_compaction),
         ("project_journal_manual_flush_command", test_project_journal_manual_flush_command),

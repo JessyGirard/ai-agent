@@ -13,7 +13,17 @@ It complements:
   - Added `.github/workflows/ci.yml` for PR/push regression + quick chunked soak.
   - Added `.github/workflows/nightly-soak.yml` for scheduled/manual 10k chunked soak.
   - Enhanced `tests/run_soak.py` with chunked execution and synchronized result/checkpoint/aggregate artifact outputs.
+  - Added compact artifact retention defaults in `tests/run_soak.py` to reduce log clutter while preserving final results.
   - Produced 10k chunked soak proof artifact with pass status (`logs/test_runs/soak_10000_aggregate.json`).
+  - Added constrained Phase 1 system-test runner implementation:
+    - `core/system_eval.py`
+    - `tools/system_eval_runner.py`
+    - `system_tests/suites/example_http_suite.json`
+  - Expanded deterministic regression coverage for system-test runner behavior and fail-fast/exit-code paths.
+  - Added collaboration/process control docs:
+    - `RELIABILITY_EVIDENCE.md`
+    - `TEST_ENGINEERING_ROADMAP.md`
+    - `CHATGPT_COLLAB_SYNC.md`
 
 - `3374882` - Refactor runtime into dedicated services and refresh docs
   - Extracted core runtime responsibilities into:

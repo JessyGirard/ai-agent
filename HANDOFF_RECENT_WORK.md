@@ -3,6 +3,8 @@
 **Purpose:** Paste this whole file into another chat so the other model knows **where the project is** after the last several increments, without needing full conversation logs.
 
 **Project:** `ai-agent` (Python). Core loop: `playground.py`. Protected baseline tests: `python tests/run_regression.py` (documented in `README.md` as the release gate; pytest is supplemental).
+**Current mission anchor:** `TEST_ENGINEERING_ROADMAP.md` (authoritative plan for building the AI-system test-engineering copilot).
+**External collaboration sync:** `CHATGPT_COLLAB_SYNC.md` (copy/paste bootstrap + guardrails for external ChatGPT sessions).
 
 **User preferences we followed:** small increments, low risk, no scope creep, regression must stay green before trusting changes.
 
@@ -17,7 +19,7 @@
 - Extracted routing/control-path logic into `services/routing_service.py`.
 - Extracted prompt/answer assembly logic into `services/prompt_builder.py`.
 - Kept orchestration and deterministic call ordering in `playground.py`.
-- Preserved behavior through each step under the protected regression gate (currently **166 / 166** passing).
+- Preserved behavior through each step under the protected regression gate (currently **173 / 173** passing).
 - Added resilient soak execution in `tests/run_soak.py`:
   - progress checkpoints
   - chunked mode (`--chunk-size`)
@@ -109,7 +111,7 @@ From repo root:
 python tests/run_regression.py
 ```
 
-At last full run in this work session, this passed **166 / 166** tests. Re-run after any local edits.
+At last full run in this work session, this passed **173 / 173** tests. Re-run after any local edits.
 
 ---
 
@@ -121,7 +123,7 @@ At last full run in this work session, this passed **166 / 166** tests. Re-run a
 - `services/journal_service.py` — extracted journal/outcome/recent-answer logic
 - `services/routing_service.py` — extracted action/routing/control-path logic
 - `services/prompt_builder.py` — extracted answer-line and prompt/message assembly logic
-- `tests/run_regression.py` — regression coverage now at 166 scenarios and still green
+- `tests/run_regression.py` — regression coverage now at 173 scenarios and still green
 - `tests/run_soak.py` — chunked soak and artifact synchronization
 - `.github/workflows/ci.yml`, `.github/workflows/nightly-soak.yml` — automated reliability gates
 - `tests/fixtures/extractor_validation_cases.json` — offline extractor validation cases

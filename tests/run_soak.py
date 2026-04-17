@@ -21,12 +21,35 @@ def _write_json(path, payload):
     target.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _safe_delete(path):
+    if not path:
+        return
+    target = Path(path)
+    try:
+        if target.exists():
+            target.unlink()
+    except OSError:
+        return
+
+
+def _finalize_artifacts_compact(result_path, checkpoint_path, aggregate_path, keep_auxiliary_artifacts):
+    if keep_auxiliary_artifacts:
+        return
+    # Checkpoint is primarily useful during execution; keep final artifacts compact by default.
+    if checkpoint_path and checkpoint_path != result_path and checkpoint_path != aggregate_path:
+        _safe_delete(checkpoint_path)
+    # In chunked mode, result/checkpoint mirror aggregate content. Keep only aggregate when available.
+    if aggregate_path and result_path and result_path != aggregate_path:
+        _safe_delete(result_path)
+
+
 def run_soak(
     iterations=5000,
     verbose=True,
     progress_interval=500,
     result_path=None,
     checkpoint_path=None,
+    keep_auxiliary_artifacts=False,
 ):
     original_memory_file = playground.MEMORY_FILE
     original_state_file = playground.STATE_FILE
@@ -119,6 +142,12 @@ def run_soak(
             result["status"] = "pass" if ok else ("interrupted" if interrupted else "fail")
             _write_json(checkpoint_path, result)
             _write_json(result_path, result)
+            _finalize_artifacts_compact(
+                result_path=result_path,
+                checkpoint_path=checkpoint_path,
+                aggregate_path=None,
+                keep_auxiliary_artifacts=keep_auxiliary_artifacts,
+            )
             if verbose:
                 print(json.dumps(result, indent=2, ensure_ascii=False))
                 print("SOAK_STATUS: PASS" if ok else "SOAK_STATUS: FAIL")
@@ -140,6 +169,8 @@ def run_soak_chunked(
     result_path=None,
     checkpoint_path=None,
     aggregate_path=None,
+    keep_chunk_artifacts=False,
+    keep_auxiliary_artifacts=False,
 ):
     remaining = max(1, iterations)
     chunk = max(1, chunk_size)
@@ -193,6 +224,9 @@ def run_soak_chunked(
         _write_json(aggregate_path, aggregate)
         _write_json(checkpoint_path, aggregate)
         _write_json(result_path, aggregate)
+        if not keep_chunk_artifacts and result.get("ok"):
+            _safe_delete(chunk_result_path)
+            _safe_delete(chunk_checkpoint_path)
 
         if not result.get("ok"):
             break
@@ -211,6 +245,12 @@ def run_soak_chunked(
     _write_json(aggregate_path, final)
     _write_json(checkpoint_path, final)
     _write_json(result_path, final)
+    _finalize_artifacts_compact(
+        result_path=result_path,
+        checkpoint_path=checkpoint_path,
+        aggregate_path=aggregate_path,
+        keep_auxiliary_artifacts=keep_auxiliary_artifacts,
+    )
     if verbose:
         print(json.dumps(final, indent=2, ensure_ascii=False))
         print("SOAK_STATUS: PASS" if final["all_ok"] else "SOAK_STATUS: FAIL")
@@ -225,6 +265,8 @@ def main():
     parser.add_argument("--checkpoint-path", type=str, default="")
     parser.add_argument("--aggregate-path", type=str, default="")
     parser.add_argument("--chunk-size", type=int, default=0)
+    parser.add_argument("--keep-chunk-artifacts", action="store_true")
+    parser.add_argument("--keep-auxiliary-artifacts", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
@@ -238,6 +280,8 @@ def main():
             result_path=(args.result_path or None),
             checkpoint_path=(args.checkpoint_path or None),
             aggregate_path=(args.aggregate_path or None),
+            keep_chunk_artifacts=args.keep_chunk_artifacts,
+            keep_auxiliary_artifacts=args.keep_auxiliary_artifacts,
         )
         if not result.get("all_ok"):
             raise SystemExit(1)
@@ -248,6 +292,7 @@ def main():
             progress_interval=max(0, args.progress_interval),
             result_path=(args.result_path or None),
             checkpoint_path=(args.checkpoint_path or None),
+            keep_auxiliary_artifacts=args.keep_auxiliary_artifacts,
         )
         if not result.get("ok"):
             raise SystemExit(1)
