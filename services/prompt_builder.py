@@ -1,5 +1,7 @@
 import re
 
+from tools.fetch_page import fetch_failure_tag
+
 
 def choose_post_fetch_next_step(fetched_content):
     if not isinstance(fetched_content, str):
@@ -10,6 +12,39 @@ def choose_post_fetch_next_step(fetched_content):
 
     if not content:
         return "Try one reachable page URL and verify the final answer is based on fetched content."
+
+    tag = fetch_failure_tag(fetched_content)
+    if tag in (
+        "forbidden",
+        "auth_required",
+        "rate_limited",
+        "http_client_error",
+        "http_server_error",
+        "http_other",
+        "timeout",
+        "network",
+        "error",
+        "parse_error",
+        "browser_unavailable",
+        "browser_timeout",
+        "browser_error",
+        "browser_invalid_url",
+    ):
+        return (
+            "Try a different public page (documentation or static article), or paste the excerpt you need "
+            "if the site blocks bots or requires login."
+        )
+    if tag == "low_content":
+        return (
+            "Use a page with more static HTML, paste the passage you care about, or confirm whether the site "
+            "requires JavaScript or sign-in."
+        )
+
+    if low.startswith("[fetch error]"):
+        return (
+            "Try a different public page (documentation or static article), or paste the excerpt you need "
+            "if the site blocks bots or requires login."
+        )
 
     if low.startswith("error:") or "client error" in low or "server error" in low:
         return "Try one reachable page URL and verify the agent handles a successful fetch correctly."

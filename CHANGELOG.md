@@ -4,26 +4,19 @@ This changelog tracks high-level milestones for the project and links them to co
 It complements:
 
 - `README.md` for current usage/testing guidance
-- `PROJECT_SPECIFICATION.md` for current architecture/file inventory
-- `HANDOFF_RECENT_WORK.md` for detailed recent context
+- `docs/specs/PROJECT_SPECIFICATION.md` for current architecture/file inventory
+- `docs/handoffs/HANDOFF_RECENT_WORK.md` for detailed recent context
 
 ## 2026-04-17
 
-- `uncommitted` - Reliability gate automation and soak resilience hardening
-  - Added `.github/workflows/ci.yml` for PR/push regression + quick chunked soak.
-  - Added `.github/workflows/nightly-soak.yml` for scheduled/manual 10k chunked soak.
-  - Enhanced `tests/run_soak.py` with chunked execution and synchronized result/checkpoint/aggregate artifact outputs.
-  - Added compact artifact retention defaults in `tests/run_soak.py` to reduce log clutter while preserving final results.
-  - Produced 10k chunked soak proof artifact with pass status (`logs/test_runs/soak_10000_aggregate.json`).
-  - Added constrained Phase 1 system-test runner implementation:
-    - `core/system_eval.py`
-    - `tools/system_eval_runner.py`
-    - `system_tests/suites/example_http_suite.json`
-  - Expanded deterministic regression coverage for system-test runner behavior and fail-fast/exit-code paths.
-  - Added collaboration/process control docs:
-    - `RELIABILITY_EVIDENCE.md`
-    - `TEST_ENGINEERING_ROADMAP.md`
-    - `CHATGPT_COLLAB_SYNC.md`
+- `uncommitted` - Reliability gate automation, soak resilience, FETCH browser lane, UI launcher, and doc alignment
+  - **CI / soak:** `.github/workflows/ci.yml`, `.github/workflows/nightly-soak.yml`; `tests/run_soak.py` chunked execution, synchronized artifacts, compact retention defaults; 10k chunked soak proof artifact (`logs/test_runs/soak_10000_aggregate.json`).
+  - **Fetch (browser):** `tools/fetch_browser.py` — bounded Playwright navigation (`goto` ladder, post-goto waits), landmark + scroll extraction, headline and text-node `evaluate` passes, compact **`diag=`** diagnostics (probe tiers, **`exc=`**, **`st=1`** / fallbacks), optional **`FETCH_BROWSER_TIMEOUT_SECONDS`**; **`tools/fetch_page.py`** remains the facade (`FETCH_MODE=browser` vs HTTP). **`[fetch:tag]`** classification preserved for downstream prompt shaping.
+  - **Operator docs:** `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md` (manual sites + **`diag=`** token glossary).
+  - **UI lane:** `Launch-Agent-UI.cmd` — Windows one-click Streamlit using **`.venv-win`**; `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md` — *Windows one-click launch* (pin/relaunch).
+  - **Handoff / bootstrap / collab sync / project story / spec / reliability evidence / changelog** refreshed for lane status (FETCH through Incr. 13, UI active) and regression count **215**.
+  - **Phase 1 system-test runner:** `core/system_eval.py`, `tools/system_eval_runner.py`, `system_tests/suites/example_http_suite.json`; expanded regression for runner/fail-fast/exit-code paths.
+  - **Process docs (initial drop):** `docs/reliability/RELIABILITY_EVIDENCE.md`, `docs/roadmaps/TEST_ENGINEERING_ROADMAP.md`, `docs/handoffs/CHATGPT_COLLAB_SYNC.md`.
 
 - `3374882` - Refactor runtime into dedicated services and refresh docs
   - Extracted core runtime responsibilities into:

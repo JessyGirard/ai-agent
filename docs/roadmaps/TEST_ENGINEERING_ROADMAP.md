@@ -6,11 +6,17 @@ Evolve `ai-agent` into a reliable, fast, evidence-first assistant for testing ot
 
 Primary outcome: help the operator act as a strong test engineer by generating, running, and evaluating reproducible AI-system tests with clear troubleshooting artifacts.
 
+## Long-Term North Star
+
+Build a personal AI assistant that grows with the operator over time, retains relevant context, and provides consistent support for important life and work decisions.
+
+This roadmap defines the first mission only: use test-engineering capability as the foundation layer for long-term trust, reliability, and usefulness.
+
 ## Product Direction
 
 - **Core role:** AI test-engineering copilot
 - **Primary domain:** test design, execution, evaluation, and failure triage for external AI systems
-- **Non-goal (for now):** broad autonomous operations outside the testing mission
+- **Non-goal (for now):** broad autonomous operations outside the testing mission in this roadmap phase
 
 ## Build Principles
 
@@ -27,7 +33,7 @@ This roadmap has a hard execution constraint layer: scope must expand only after
 - Do not combine adapter expansion, evaluation expansion, and reporting redesign in the same increment.
 - Keep `system_tests` isolated from `playground.py` orchestration and from runtime memory/journal systems.
 - Do not alter reliability gates while expanding test-engineering capabilities.
-- Phase 2+ work is not allowed until Phase 1 V0.1 acceptance criteria are satisfied and recorded in `RELIABILITY_EVIDENCE.md`.
+- Phase 2+ work is not allowed until Phase 1 V0.1 acceptance criteria are satisfied and recorded in `docs/reliability/RELIABILITY_EVIDENCE.md`.
 - Treat this as a constrained build-up, not a framework expansion race.
 
 ## Target Capability Model
@@ -133,16 +139,28 @@ Exit criteria:
 
 ## Current Implementation Intent
 
-First implementation slice to start now:
+Phase 1 (V0.1) implementation status in-repo:
 
-1. Define test suite schema for external targets
-2. Implement adapter interface and first HTTP adapter
-3. Implement `system_eval_runner` with artifact output
-4. Add regression tests for runner correctness and failure handling
-5. Document runbook usage and acceptance criteria
+1. Suite schema for HTTP cases — **done** (`system_tests/suites/example_http_suite.json`, validated in `core/system_eval.py`).
+2. Adapter interface + HTTP adapter — **done** (`core/system_eval.py`).
+3. `system_eval_runner` + artifacts — **done** (`tools/system_eval_runner.py`).
+4. Regression coverage — **done** (`tests/run_regression.py`).
+5. Runbook + acceptance criteria pointer — **done** (`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`, `docs/reliability/RELIABILITY_EVIDENCE.md`).
+
+**Safe optional next (no code required):** run a copied suite against a staging endpoint you control and keep the emitted JSON/MD as a real-world evidence run.
+
+**When you choose to extend:** Phase 2+ remains one small vertical slice at a time; do not bundle evaluation expansion, adapters, and reporting in a single change.
 
 Current enforcement: no Phase 2+ scope may start until Phase 1 V0.1 acceptance criteria are explicitly met and recorded.
 
+## Near-term path (product framing + agreed code sequence)
+
+**Framing:** Treat the product as an **AI Testing Workbench** — one shared spine (`core/system_eval.py`, `tools/system_eval_runner.py`, `system_tests/suites/*.json`) and **three tool profiles**: (1) API reliability, (2) prompt↔response testing, (3) regression (`tests/run_regression.py`). Detail: `docs/handoffs/THREE_TOOLS_ALIGNMENT_BRIEF.md`.
+
+**Next code increment (PR #1, when started):** extend the HTTP suite / runner with **API reliability lanes** (stability / correctness / consistency — exact behavior locked in `tests/run_regression.py`). No prompt-response-only schema work, no new adapters, no `playground.py` coupling in the same PR.
+
+**After PR #1:** prompt↔response schema or conventions (PR #2); optional regression “operator surface” wrapper (PR #3). Reconcile this list with `docs/handoffs/SESSION_SYNC_LOG.md` (bottom entries always win for “what we did last”).
+
 ## Session Continuity
 
-If a session is interrupted, resume from this file and continue Phase 1 from the current implementation slice.
+If a session is interrupted, resume from this file and check the latest entry in `docs/handoffs/SESSION_SYNC_LOG.md`. Phase 1 baseline is complete; forward work follows **Near-term path** above unless the log records a deliberate change.

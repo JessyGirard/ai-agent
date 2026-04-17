@@ -3,23 +3,41 @@
 **Purpose:** Paste this whole file into another chat so the other model knows **where the project is** after the last several increments, without needing full conversation logs.
 
 **Project:** `ai-agent` (Python). Core loop: `playground.py`. Protected baseline tests: `python tests/run_regression.py` (documented in `README.md` as the release gate; pytest is supplemental).
-**Current mission anchor:** `TEST_ENGINEERING_ROADMAP.md` (authoritative plan for building the AI-system test-engineering copilot).
-**External collaboration sync:** `CHATGPT_COLLAB_SYNC.md` (copy/paste bootstrap + guardrails for external ChatGPT sessions).
+**Current mission anchor:** `docs/roadmaps/TEST_ENGINEERING_ROADMAP.md` (authoritative plan for building the AI-system test-engineering copilot).
+**External collaboration sync:** `docs/handoffs/CHATGPT_COLLAB_SYNC.md` (copy/paste bootstrap + guardrails for external ChatGPT sessions).
 
 **User preferences we followed:** small increments, low risk, no scope creep, regression must stay green before trusting changes.
+
+**Aligned for new ChatGPT session (2026-04-17):** Protected baseline is **`215 / 215`** (`python tests/run_regression.py`) — confirm **`SESSION_SYNC_LOG.md` (bottom)** if newer.
+
+**Lanes:** The **FETCH (browser)** vertical shipped through **Increment 13** (behavior in **`tools/fetch_browser.py`** through **Increment 12**; **Increment 13** = operator **`diag=`** glossary in **`docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`** only). **Active focus** pivoted to the **UI lane**: **UI Increment 1** adds **`Launch-Agent-UI.cmd`** (Windows one-click Streamlit using **`.venv-win`**) plus runbook pinning steps in **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`**. **Tool 1 expansion paused**; **PR #2** (prompt↔response) not started unless the log says otherwise.
+
+Also in repo (earlier same phase): **HTTP system_eval lanes**, **Tool 1** Streamlit tab + **`tools/tool1_verify_server.py`**, **`FETCH_MODE=browser`** (Playwright) behind **`tools/fetch_page.py`**, **`[fetch:tag]`** classification, optional **`FETCH_BROWSER_TIMEOUT_SECONDS`**, dev shell helpers (**`Open-DevShell.cmd`** / **`.venv-win`**).
 
 ---
 
 ## What was done (rough chronological / thematic)
 
-### Structural stabilization sequence (most recent)
+### FETCH lane — browser mode + operator diagnostics (2026-04-17, Increments 4–13)
+
+- **`tools/fetch_page.py`** remains the facade: default **HTTP** (`tools/fetch_http.py`); set **`FETCH_MODE=browser`** for headless Chromium via **`tools/fetch_browser.py`** (public `http`/`https` only).
+- **Navigation:** bounded **`goto`** retry ladder (**`commit` → `domcontentloaded` → `load`**), post-goto waits, optional **`FETCH_BROWSER_TIMEOUT_SECONDS`** (5–120s, browser nav budget only).
+- **Extraction:** landmark preference (**`main` / `[role="main"]` / `article`**), optional bounded scroll, structured **headlines**, alternate **text-node** `evaluate` pass, deterministic merge/title cap; **`[fetch:tag]`** names unchanged for **`prompt_builder`** / regression.
+- **Diagnostics:** compact **`diag=…`** suffix on **`browser_timeout`**, **`browser_error`**, **`low_content`** (probe snapshot keys, **`exc=`** classes like **`goto_timeout`**, **`fb=1`/`fb=2`** fallbacks, **`st=1`** when all bounded probe evaluates exhausted). Operator token glossary: **`docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`** (*Operator reference: `diag=` suffix*).
+- **Manual validation** for hard sites (Reuters/WaPo/BBC, etc.): same runbook file.
+
+### UI lane — operator cockpit (started 2026-04-17)
+
+- **UI Increment 1:** **`Launch-Agent-UI.cmd`** at repo root; **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`** → *Windows one-click launch* (launch, shortcut → taskbar pin, relaunch). **`app/ui.py`** tabs/Tool 1 behavior unchanged — layout refinements are **next** increments only.
+
+### Structural stabilization sequence (architecture extraction; earlier phase)
 - Extracted persistence/file I/O helpers into `core/persistence.py`.
 - Extracted journal/outcome-feedback/recent-answer helpers into `services/journal_service.py`.
 - Extracted memory scoring/retrieval/runtime-write logic into `services/memory_service.py`.
 - Extracted routing/control-path logic into `services/routing_service.py`.
 - Extracted prompt/answer assembly logic into `services/prompt_builder.py`.
 - Kept orchestration and deterministic call ordering in `playground.py`.
-- Preserved behavior through each step under the protected regression gate (currently **173 / 173** passing).
+- Preserved behavior through each step under the protected regression gate (baseline grew afterward; see top “Aligned” note — **215 / 215** at last full run).
 - Added resilient soak execution in `tests/run_soak.py`:
   - progress checkpoints
   - chunked mode (`--chunk-size`)
@@ -58,7 +76,7 @@
 - **`README.md`:** notes live API scripts + env gate.
 
 ### Documentation
-- **`PROJECT_SPECIFICATION.md`** exists as a repo inventory/spec (separate from this handoff).
+- **`docs/specs/PROJECT_SPECIFICATION.md`** exists as a repo inventory/spec (separate from this handoff).
 
 ### Offline memory import / extract (latest)
 - **`memory/import_chat.py`:** strips leading `USER:` / `AI:` / `ASSISTANT:` from each line (regex uses `re.IGNORECASE`, not inline `(?i)` after `^`). Still assigns roles by **line order** (user, assistant, user, …).
@@ -111,7 +129,7 @@ From repo root:
 python tests/run_regression.py
 ```
 
-At last full run in this work session, this passed **173 / 173** tests. Re-run after any local edits.
+At last full Cursor alignment (see `SESSION_SYNC_LOG.md` bottom), regression was **215 / 215** PASS. Re-run after any local edits.
 
 ---
 
@@ -123,20 +141,24 @@ At last full run in this work session, this passed **173 / 173** tests. Re-run a
 - `services/journal_service.py` — extracted journal/outcome/recent-answer logic
 - `services/routing_service.py` — extracted action/routing/control-path logic
 - `services/prompt_builder.py` — extracted answer-line and prompt/message assembly logic
-- `tests/run_regression.py` — regression coverage now at 173 scenarios and still green
+- `tests/run_regression.py` — regression harness **215** scenarios at last recorded run (see log)
 - `tests/run_soak.py` — chunked soak and artifact synchronization
 - `.github/workflows/ci.yml`, `.github/workflows/nightly-soak.yml` — automated reliability gates
 - `tests/fixtures/extractor_validation_cases.json` — offline extractor validation cases
 - `memory/import_chat.py`, `memory/extractors/run_extractor.py`
-- `PROJECT_SPECIFICATION.md`, `.gitignore`
+- `docs/specs/PROJECT_SPECIFICATION.md`, `.gitignore`
 - `requirements.txt`
 - `test_openai.py`, `test_claude.py`
 - `README.md`
+- **FETCH / browser:** `tools/fetch_page.py`, `tools/fetch_http.py`, `tools/fetch_browser.py`; operator runbook `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`
+- **UI / operator launch:** `app/ui.py` (unchanged in Incr. 1), `Launch-Agent-UI.cmd`, `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`
 
 ---
 
 ## Suggested “next moves” (not implemented here; optional)
 
+- **UI lane:** incremental Streamlit layout/operator clarity (Tool 1 first); keep Assistant and room for future regression / prompt-analysis surfaces without clutter.
+- **FETCH lane:** further slices only when approved (hard sites may still yield `low_content` / `browser_timeout`; use **`diag=`** + runbook to interpret).
 - Tune negation / overlap thresholds if real usage shows false positives/negatives.
 - Optional: score-only “time decay” if you add real timestamps later (still avoid silent JSON mutation unless intended).
 - Optional: golden **live** extractor snapshots (mocked OpenAI) if you want prompt changes fully regression-gated without API cost.

@@ -1,50 +1,154 @@
 [
   {
     "role": "user",
-    "content": "I am building an AI agent system that runs locally with a CLI loop and optional UI."
+    "content": "I need us to always be on the same page before moving forward. If we are not aligned, that is a serious problem."
   },
   {
     "role": "assistant",
-    "content": "The user is building a local AI assistant system with both CLI and UI interfaces."
+    "content": "You require strong alignment and shared understanding before any progress is made."
   },
   {
     "role": "user",
-    "content": "I want my system to have a memory pipeline that processes chat into structured knowledge."
+    "content": "I prefer building step-by-step, making sure everything is clear and validated before continuing."
   },
   {
     "role": "assistant",
-    "content": "The user is focused on building a structured memory pipeline from raw conversation."
+    "content": "You prefer structured, step-by-step progress with validation at each stage."
   },
   {
     "role": "user",
-    "content": "I rely on a regression harness as the main safety check for my system."
+    "content": "I do not want to move fast and fix later. Everything must be solid before we move, then we move quickly."
   },
   {
     "role": "assistant",
-    "content": "The user uses regression testing as the primary stability mechanism."
+    "content": "You prioritize correctness and solidity first, then momentum once something is validated."
   },
   {
     "role": "user",
-    "content": "I want my system to stay test-protected and predictable."
+    "content": "I get frustrated when the system gives shallow or generic answers. I know the value is there, I need help extracting it."
   },
   {
     "role": "assistant",
-    "content": "The user prioritizes deterministic behavior and test protection."
+    "content": "You expect high-quality, non-generic responses that help you extract real value efficiently."
   },
   {
     "role": "user",
-    "content": "I am building this system step by step and want to avoid breaking it as it grows."
+    "content": "I am new to this, but I am learning fast. I need the system to help me stay on track and not get lost."
   },
   {
     "role": "assistant",
-    "content": "The user prefers incremental, controlled system evolution."
+    "content": "You are early in your journey and rely on the system to maintain clarity and continuity."
   },
   {
     "role": "user",
-    "content": "I want my system to be lean but scalable into a larger architecture."
+    "content": "I want this AI to remember what is important to me so I don\u2019t have to repeat myself constantly."
   },
   {
     "role": "assistant",
-    "content": "The user aims for a minimal system that can evolve into a more complex architecture."
+    "content": "You expect important information to be remembered and reinforced over time."
+  },
+  {
+    "role": "user",
+    "content": "When something feels off, I want immediate diagnostics and a clear way to investigate and fix it."
+  },
+  {
+    "role": "assistant",
+    "content": "You want fast diagnostic capability and structured problem-solving when issues occur."
+  },
+  {
+    "role": "user",
+    "content": "If there is a problem, we stop and fix it. If everything is good, we keep moving without unnecessary delay."
+  },
+  {
+    "role": "assistant",
+    "content": "You want a strict rule: fix problems immediately, otherwise maintain momentum."
+  },
+  {
+    "role": "user",
+    "content": "When I am unsure, I want the system to narrow things down to the single best move."
+  },
+  {
+    "role": "assistant",
+    "content": "You prefer decisive guidance with one strong recommended action."
+  },
+  {
+    "role": "user",
+    "content": "I want the system to challenge me if something feels off. It should not just follow me blindly."
+  },
+  {
+    "role": "assistant",
+    "content": "You expect proactive correction and challenge when needed to protect progress."
+  },
+  {
+    "role": "user",
+    "content": "I want instructions to be extremely clear and actionable, ideally step-by-step and easy to execute."
+  },
+  {
+    "role": "assistant",
+    "content": "You require highly clear, concrete, and executable instructions."
+  },
+  {
+    "role": "user",
+    "content": "I want this system to become autonomous, but safely, and always aligned with my goals."
+  },
+  {
+    "role": "assistant",
+    "content": "You want increasing autonomy built on control, safety, and alignment."
+  },
+  {
+    "role": "user",
+    "content": "The system must never give up. If the goal is realistic and ethical, it must find a way."
+  },
+  {
+    "role": "assistant",
+    "content": "You expect persistence and solution-seeking behavior at all times."
+  },
+  {
+    "role": "user",
+    "content": "My main goal right now is to bring this AI to life quickly, but the right way, without skipping steps."
+  },
+  {
+    "role": "assistant",
+    "content": "You aim to build the system fast but correctly, ensuring stability and long-term reliability."
+  },
+  {
+    "role": "user",
+    "content": "I want this AI to help me generate consistent income so I can stabilize and grow."
+  },
+  {
+    "role": "assistant",
+    "content": "You want the AI to support practical, real-world results such as generating steady income."
+  },
+  {
+    "role": "user",
+    "content": "When I am frustrated, I want the system to stay calm and help find a solution, not add confusion."
+  },
+  {
+    "role": "assistant",
+    "content": "You expect grounded, focused responses during frustration, prioritizing solutions."
+  },
+  {
+    "role": "user",
+    "content": "If there is no solution, I want the system to recognize that honestly, not force an answer."
+  },
+  {
+    "role": "assistant",
+    "content": "You value honesty and realism when no valid solution exists."
+  },
+  {
+    "role": "user",
+    "content": "If we commit to something, we do not drop it. We follow through and find a way."
+  },
+  {
+    "role": "assistant",
+    "content": "You require commitment and follow-through on all agreed directions."
+  },
+  {
+    "role": "user",
+    "content": "I am building this system to help me move forward in life, not just as a project."
+  },
+  {
+    "role": "assistant",
+    "content": "This system is important to your real-life progress and must stay aligned with that purpose."
   }
 ]

@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -6,13 +7,22 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import threading
+from unittest.mock import MagicMock, Mock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from requests import ConnectionError as RequestsConnectionError
+from requests import Timeout
+
+import tools.fetch_http as fetch_http_module
+from services import prompt_builder
+from tools.fetch_page import fetch_failure_tag, fetch_page
+
 import playground
 from core import persistence as persistence_core
+from app.system_eval_operator import run_tool1_system_eval_http
 from core import system_eval as system_eval_core
 
 
@@ -1130,6 +1140,329 @@ def test_post_fetch_next_step_quality():
         playground.fetch_page = original_fetch_page
 
 
+def test_fetch_failure_tag_plain_and_tagged():
+    assert fetch_failure_tag("Hello world") is None
+    assert fetch_failure_tag("[fetch:timeout] x") == "timeout"
+    assert fetch_failure_tag("  [fetch:forbidden] HTTP 403") == "forbidden"
+
+
+def test_fetch_page_http_403_classified():
+    with patch.object(fetch_http_module.requests, "get") as mock_get:
+        resp = Mock()
+        resp.status_code = 403
+        mock_get.return_value = resp
+        out = fetch_page("https://example.com/protected")
+    assert out.startswith("[fetch:forbidden]")
+    assert "403" in out
+    assert fetch_failure_tag(out) == "forbidden"
+
+
+def test_fetch_page_timeout_classified():
+    with patch.object(fetch_http_module.requests, "get") as mock_get:
+        mock_get.side_effect = Timeout()
+        out = fetch_page("https://example.com/slow")
+    assert out.startswith("[fetch:timeout]")
+    assert fetch_failure_tag(out) == "timeout"
+
+
+def test_fetch_page_network_classified():
+    with patch.object(fetch_http_module.requests, "get") as mock_get:
+        mock_get.side_effect = RequestsConnectionError("failed to connect")
+        out = fetch_page("https://example.invalid/")
+    assert out.startswith("[fetch:network]")
+    assert fetch_failure_tag(out) == "network"
+
+
+def test_fetch_page_401_and_404_classified():
+    with patch.object(fetch_http_module.requests, "get") as mock_get:
+        r401 = Mock()
+        r401.status_code = 401
+        r404 = Mock()
+        r404.status_code = 404
+        mock_get.side_effect = [r401, r404]
+        a = fetch_page("https://example.com/login")
+        b = fetch_page("https://example.com/missing")
+    assert fetch_failure_tag(a) == "auth_required"
+    assert "401" in a
+    assert fetch_failure_tag(b) == "http_client_error"
+    assert "404" in b
+
+
+def test_fetch_page_200_substantial_html_untagged():
+    html = "<html><body><p>" + ("word " * 50) + "</p></body></html>"
+    with patch.object(fetch_http_module.requests, "get") as mock_get:
+        resp = Mock()
+        resp.status_code = 200
+        resp.text = html
+        mock_get.return_value = resp
+        out = fetch_page("https://example.com/doc")
+    assert not out.startswith("[fetch:")
+    assert "word" in out
+
+
+def test_fetch_page_200_empty_body_low_content():
+    with patch.object(fetch_http_module.requests, "get") as mock_get:
+        resp = Mock()
+        resp.status_code = 200
+        resp.text = "<html><body></body></html>"
+        mock_get.return_value = resp
+        out = fetch_page("https://example.com/empty")
+    assert fetch_failure_tag(out) == "low_content"
+    assert "JavaScript" in out or "login" in out.lower()
+
+
+def test_choose_post_fetch_next_step_recognizes_fetch_tags():
+    ns_block = prompt_builder.choose_post_fetch_next_step(
+        "[fetch:forbidden] HTTP 403 Forbidden. blocked."
+    )
+    assert "paste" in ns_block.lower() or "public" in ns_block.lower()
+    ns_low = prompt_builder.choose_post_fetch_next_step(
+        "[fetch:low_content] Very little text was extracted (3 characters)."
+    )
+    assert "static" in ns_low.lower() or "javascript" in ns_low.lower() or "paste" in ns_low.lower()
+
+
+def test_fetch_via_browser_invalid_url():
+    from tools.fetch_browser import fetch_via_browser
+
+    out = fetch_via_browser("file:///tmp/x")
+    assert fetch_failure_tag(out) == "browser_invalid_url"
+
+
+def test_fetch_via_browser_unavailable_when_playwright_unresolved():
+    from tools.fetch_browser import fetch_via_browser
+
+    with patch("tools.fetch_browser._resolve_sync_playwright", return_value=None):
+        out = fetch_via_browser("https://example.com/")
+    assert fetch_failure_tag(out) == "browser_unavailable"
+
+
+def test_chromium_launch_args_include_transport_hints():
+    from tools.fetch_browser import _chromium_launch_args
+
+    args = _chromium_launch_args()
+    assert "--disable-http2" in args
+    assert "--disable-quic" in args
+
+
+def test_prefer_headline_blob_when_visible_thin_or_shorter():
+    from tools.fetch_browser import _prefer_headline_blob_over_visible
+
+    long_h = "Breaking: markets " * 6
+    assert _prefer_headline_blob_over_visible(long_h, "reuters.com") is True
+    assert _prefer_headline_blob_over_visible(long_h, "x" * 200) is False
+    assert _prefer_headline_blob_over_visible("", "anything") is False
+
+
+def test_bounded_dom_text_nodes_via_eval_calls_evaluate_with_timeout():
+    from tools.fetch_browser import _bounded_dom_text_nodes_via_eval
+
+    page = MagicMock()
+    page.evaluate = MagicMock(return_value="  alpha   beta  gamma  ")
+
+    out = _bounded_dom_text_nodes_via_eval(page, 4500)
+    assert out == "alpha beta gamma"
+    page.evaluate.assert_called_once()
+    _js, kwargs = page.evaluate.call_args[0][0], page.evaluate.call_args[1]
+    assert "textContent" in _js or "nodeType" in _js
+    assert kwargs.get("timeout") == 4500
+
+
+def test_nav_exc_class_blocked_transport_and_goto_timeout():
+    from tools.fetch_browser import _nav_exc_class
+
+    e1 = Exception("Page.goto: net::ERR_HTTP2_PROTOCOL_ERROR")
+    assert _nav_exc_class(e1) == "blocked_transport"
+    e2 = Exception("Page.goto: Timeout 20000ms exceeded")
+    assert _nav_exc_class(e2) == "goto_timeout"
+
+
+def test_probe_dict_from_evaluate_result_accepts_json_string():
+    from tools.fetch_browser import _probe_dict_from_evaluate_result
+
+    s = '{"b":1,"m":0,"r":0,"a":0,"h1":2,"h2":3,"bit":11,"bct":4000}'
+    d = _probe_dict_from_evaluate_result(s)
+    assert d is not None
+    assert d["b"] == 1 and d["h1"] == 2 and d["bct"] == 4000
+
+
+def test_normalize_probe_dict_coerces_floaty_values():
+    from tools.fetch_browser import _normalize_probe_dict
+
+    d = _normalize_probe_dict({"b": 1.0, "h1": "2", "x": 99})
+    assert d["b"] == 1 and d["h1"] == 2
+    assert "x" not in d
+
+
+def test_bounded_dom_probe_fallback_pipe_parses():
+    from tools.fetch_browser import _bounded_dom_probe_fallback_pipe
+
+    page = MagicMock()
+    page.evaluate = MagicMock(return_value="1|100|50|2|3|1|0|1")
+    d = _bounded_dom_probe_fallback_pipe(page, 5000)
+    assert d is not None
+    assert d["fb"] == 1
+    assert d["bct"] == 100 and d["bit"] == 50
+
+
+def test_bounded_dom_probe_micro_lengths_sets_fb2():
+    from tools.fetch_browser import _bounded_dom_probe_micro_lengths
+
+    page = MagicMock()
+    page.evaluate = MagicMock(side_effect=[42, 9000])
+    d = _bounded_dom_probe_micro_lengths(page, 9000)
+    assert d is not None
+    assert d["fb"] == 2
+    assert d["bit"] == 42 and d["bct"] == 9000
+
+
+def test_bounded_dom_probe_via_eval_sets_st_when_all_evaluate_fail():
+    from tools.fetch_browser import _bounded_dom_probe_via_eval
+
+    page = MagicMock()
+    page.evaluate = MagicMock(side_effect=RuntimeError("blocked"))
+    d = _bounded_dom_probe_via_eval(page, 5000)
+    assert d is not None
+    assert d.get("st") == 1
+
+
+def test_fetch_failure_tag_parses_low_content_with_diag_suffix():
+    from tools.fetch_page import fetch_failure_tag
+
+    s = (
+        "[fetch:low_content] Browser extracted very little text (11 characters). "
+        "Snippet: x diag=mrg=11;b=1;h1=0;probe=none"
+    )
+    assert fetch_failure_tag(s) == "low_content"
+
+
+def test_bounded_extract_prefers_main_landmark_over_thin_body():
+    from tools.fetch_browser import _bounded_extract_visible_text
+
+    def locator_for(sel: str):
+        layer = MagicMock()
+        first = MagicMock()
+        mapping = {
+            "body": "reuters.com",
+            "main": "Daily briefing " * 8,
+            '[role="main"]': "",
+            "article": "",
+        }
+
+        def inner_text(**kwargs):
+            return mapping.get(sel, "")
+
+        first.inner_text = inner_text
+        layer.first = first
+        return layer
+
+    page = MagicMock()
+    page.locator = lambda s: locator_for(s)
+    out = _bounded_extract_visible_text(page, 10_000)
+    assert "Daily briefing" in out
+    assert len(out) >= 80
+
+
+def test_goto_bounded_retries_ladder_commit_then_domcontentloaded():
+    from tools.fetch_browser import _goto_with_bounded_retries
+
+    page = MagicMock()
+    page.goto.side_effect = [RuntimeError("ERR_HTTP2_PROTOCOL_ERROR"), None]
+    _goto_with_bounded_retries(page, "https://example.com/", 30_000)
+    assert page.goto.call_count == 2
+    assert page.goto.call_args_list[0][1]["wait_until"] == "commit"
+    assert page.goto.call_args_list[1][1]["wait_until"] == "domcontentloaded"
+    assert page.goto.call_args_list[0][1]["timeout"] == 10_000
+    assert page.goto.call_args_list[1][1]["timeout"] == 10_000
+
+
+def test_goto_bounded_retries_reaches_load_after_two_failures():
+    from tools.fetch_browser import _goto_with_bounded_retries
+
+    page = MagicMock()
+    page.goto.side_effect = [RuntimeError("a"), RuntimeError("b"), None]
+    _goto_with_bounded_retries(page, "https://example.com/", 12_000)
+    assert page.goto.call_count == 3
+    assert page.goto.call_args_list[0][1]["wait_until"] == "commit"
+    assert page.goto.call_args_list[1][1]["wait_until"] == "domcontentloaded"
+    assert page.goto.call_args_list[2][1]["wait_until"] == "load"
+    assert page.goto.call_args_list[2][1]["timeout"] == 4000
+
+
+def test_goto_bounded_retries_raises_after_three_failures():
+    from tools.fetch_browser import _goto_with_bounded_retries
+
+    page = MagicMock()
+    page.goto.side_effect = RuntimeError("blocked")
+    try:
+        _goto_with_bounded_retries(page, "https://example.com/", 9000)
+    except RuntimeError:
+        assert page.goto.call_count == 3
+    else:
+        raise AssertionError("expected raise after three failures")
+
+
+def test_fetch_page_browser_mode_dispatches_to_browser_backend():
+    old = os.environ.get("FETCH_MODE")
+    try:
+        os.environ["FETCH_MODE"] = "browser"
+        with patch("tools.fetch_page.fetch_via_browser", side_effect=lambda url, timeout_seconds=20: "Title\n\nbody"):
+            out = fetch_page("https://example.com/")
+        assert out == "Title\n\nbody"
+    finally:
+        if old is None:
+            os.environ.pop("FETCH_MODE", None)
+        else:
+            os.environ["FETCH_MODE"] = old
+
+
+def test_browser_timeout_seconds_default_and_clamp():
+    from tools.fetch_page import browser_timeout_seconds_from_env
+
+    with patch.dict(os.environ, {"FETCH_BROWSER_TIMEOUT_SECONDS": ""}):
+        assert browser_timeout_seconds_from_env() == 20
+    with patch.dict(os.environ, {"FETCH_BROWSER_TIMEOUT_SECONDS": "3"}):
+        assert browser_timeout_seconds_from_env() == 5
+    with patch.dict(os.environ, {"FETCH_BROWSER_TIMEOUT_SECONDS": "999"}):
+        assert browser_timeout_seconds_from_env() == 120
+
+
+def test_browser_timeout_seconds_invalid_env_uses_default():
+    from tools.fetch_page import browser_timeout_seconds_from_env
+
+    with patch.dict(os.environ, {"FETCH_BROWSER_TIMEOUT_SECONDS": "x"}):
+        assert browser_timeout_seconds_from_env() == 20
+
+
+def test_browser_adapter_forwards_fetch_browser_timeout_env():
+    old_mode = os.environ.get("FETCH_MODE")
+    old_to = os.environ.get("FETCH_BROWSER_TIMEOUT_SECONDS")
+    try:
+        os.environ["FETCH_MODE"] = "browser"
+        os.environ["FETCH_BROWSER_TIMEOUT_SECONDS"] = "42"
+        with patch("tools.fetch_page.fetch_via_browser", return_value="OK") as m:
+            out = fetch_page("https://example.com/z")
+        assert out == "OK"
+        assert m.call_args[0][0] == "https://example.com/z"
+        assert m.call_args[1]["timeout_seconds"] == 42
+    finally:
+        if old_mode is None:
+            os.environ.pop("FETCH_MODE", None)
+        else:
+            os.environ["FETCH_MODE"] = old_mode
+        if old_to is None:
+            os.environ.pop("FETCH_BROWSER_TIMEOUT_SECONDS", None)
+        else:
+            os.environ["FETCH_BROWSER_TIMEOUT_SECONDS"] = old_to
+
+
+def test_choose_post_fetch_next_step_browser_unavailable_tag():
+    ns = prompt_builder.choose_post_fetch_next_step(
+        "[fetch:browser_unavailable] Playwright is not installed."
+    )
+    assert "paste" in ns.lower() or "public" in ns.lower()
+
+
 def test_memory_write_creation():
     reset_agent_state()
     with isolated_runtime_files() as (temp_memory_path, _, _, _):
@@ -1995,6 +2328,441 @@ def test_system_eval_validate_suite_requires_non_empty_cases():
         assert "non-empty 'cases'" in str(exc), exc
 
 
+def test_system_eval_validate_suite_rejects_invalid_lane():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "bad-lane",
+                "target_name": "t",
+                "cases": [
+                    {
+                        "name": "c1",
+                        "lane": "throughput",
+                        "method": "POST",
+                        "url": "http://fake.local/x",
+                        "payload": {},
+                        "assertions": {"status_code": 200},
+                    }
+                ],
+            }
+        )
+        assert False, "Expected ValueError for invalid lane"
+    except ValueError as exc:
+        assert "lane" in str(exc).lower(), exc
+        assert "throughput" in str(exc), exc
+
+
+def test_system_eval_lane_preserved_in_results_and_artifacts():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "lane-suite",
+            "target_name": "fake-target",
+            "cases": [
+                {
+                    "name": "a",
+                    "lane": "stability",
+                    "method": "POST",
+                    "url": "http://fake.local/a",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["ok"]},
+                },
+                {
+                    "name": "b",
+                    "lane": "correctness",
+                    "method": "POST",
+                    "url": "http://fake.local/b",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["ok"]},
+                },
+                {
+                    "name": "c",
+                    "lane": "consistency",
+                    "method": "POST",
+                    "url": "http://fake.local/c",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["ok"]},
+                },
+                {
+                    "name": "no-lane",
+                    "method": "POST",
+                    "url": "http://fake.local/d",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["ok"]},
+                },
+            ],
+        }
+    )
+
+    class FakeAdapter:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=3
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=FakeAdapter())
+    assert result["cases"][0]["lane"] == "stability", result["cases"][0]
+    assert result["cases"][1]["lane"] == "correctness", result["cases"][1]
+    assert result["cases"][2]["lane"] == "consistency", result["cases"][2]
+    assert result["cases"][0]["stability_attempts"] == 3, result["cases"][0]
+    assert result["cases"][0]["attempts_total"] == 3, result["cases"][0]
+    assert result["cases"][0]["attempts_passed"] == 3, result["cases"][0]
+    assert len(result["cases"][0]["attempts"]) == 3, result["cases"][0]
+    assert result["cases"][2]["repeat_count"] == 3, result["cases"][2]
+    assert result["cases"][2]["attempts_total"] == 3, result["cases"][2]
+    assert result["cases"][2]["attempts_passed"] == 3, result["cases"][2]
+    assert len(result["cases"][2]["attempts"]) == 3, result["cases"][2]
+    assert "repeat_count" not in result["cases"][0], result["cases"][0]
+    assert "attempts" not in result["cases"][1], result["cases"][1]
+    assert result["cases"][3]["lane"] is None, result["cases"][3]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        paths = system_eval_core.write_result_artifacts(
+            result, temp_dir, file_stem="lane_artifact"
+        )
+        written = json.loads(Path(paths["json_path"]).read_text(encoding="utf-8"))
+        assert written["cases"][0]["lane"] == "stability", written
+        assert written["cases"][3]["lane"] is None, written
+        assert written["cases"][0]["attempts_passed"] == 3, written
+        assert written["cases"][2]["attempts_passed"] == 3, written
+        md_text = Path(paths["markdown_path"]).read_text(encoding="utf-8")
+        assert "lane=`stability`" in md_text, md_text
+        assert "lane=`correctness`" in md_text, md_text
+        assert "lane=`consistency`" in md_text, md_text
+        assert "lane=(none)" in md_text, md_text
+        assert "stability:" in md_text, md_text
+        assert "stability_attempts=`3`" in md_text, md_text
+        assert "consistency:" in md_text, md_text
+        assert "attempt `1`:" in md_text, md_text
+
+
+def test_system_eval_repeat_count_rejected_when_lane_not_consistency():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "x",
+                "target_name": "y",
+                "cases": [
+                    {
+                        "name": "c1",
+                        "lane": "stability",
+                        "repeat_count": 3,
+                        "method": "POST",
+                        "url": "http://fake.local/x",
+                        "payload": {},
+                        "assertions": {"status_code": 200},
+                    }
+                ],
+            }
+        )
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert "repeat_count" in str(exc).lower(), exc
+        assert "consistency" in str(exc).lower(), exc
+
+
+def test_system_eval_invalid_repeat_count_rejected():
+    for bad in (0, -1, 51, "x"):
+        try:
+            system_eval_core.validate_suite(
+                {
+                    "suite_name": "x",
+                    "target_name": "y",
+                    "cases": [
+                        {
+                            "name": "c1",
+                            "lane": "consistency",
+                            "repeat_count": bad,
+                            "method": "POST",
+                            "url": "http://fake.local/x",
+                            "payload": {},
+                            "assertions": {"status_code": 200},
+                        }
+                    ],
+                }
+            )
+            assert False, f"Expected ValueError for repeat_count={bad!r}"
+        except ValueError:
+            pass
+
+
+def test_system_eval_consistency_runs_adapter_exactly_n_times():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "consistency-n",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "multi",
+                    "lane": "consistency",
+                    "repeat_count": 5,
+                    "method": "POST",
+                    "url": "http://fake.local/m",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["ok"]},
+                }
+            ],
+        }
+    )
+
+    class CountAdapter:
+        def __init__(self):
+            self.calls = 0
+
+        def run_case(self, case):
+            self.calls += 1
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=1
+            )
+
+    adapter = CountAdapter()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert adapter.calls == 5, adapter.calls
+    assert result["cases"][0]["attempts_total"] == 5, result["cases"][0]
+    assert result["cases"][0]["attempts_passed"] == 5, result["cases"][0]
+    assert result["ok"] is True, result
+
+
+def test_system_eval_consistency_fails_when_one_attempt_fails_assertion():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "consistency-fail",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "wobble",
+                    "lane": "consistency",
+                    "repeat_count": 4,
+                    "method": "POST",
+                    "url": "http://fake.local/w",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["STABLE_MARKER"]},
+                }
+            ],
+        }
+    )
+
+    class WobbleAdapter:
+        def __init__(self):
+            self.n = 0
+
+        def run_case(self, case):
+            self.n += 1
+            _ = case
+            if self.n == 3:
+                return system_eval_core.AdapterResult(
+                    ok=True, status_code=200, output_text="no marker here", latency_ms=2
+                )
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok STABLE_MARKER ok", latency_ms=2
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=WobbleAdapter())
+    assert result["ok"] is False, result
+    assert result["cases"][0]["attempts_passed"] == 3, result["cases"][0]
+    assert result["cases"][0]["attempts_total"] == 4, result["cases"][0]
+    assert any("attempt 3/4" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_run_tool1_system_eval_operator_helper_with_fake_adapter():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        out = root / "out"
+        suite_data = {
+            "suite_name": "ui-helper-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "POST",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["hi"]},
+                }
+            ],
+        }
+        suite_path = root / "suite.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+
+        class FakeAdapter:
+            def run_case(self, case):
+                _ = case
+                return system_eval_core.AdapterResult(
+                    ok=True, status_code=200, output_text="hi there", latency_ms=3
+                )
+
+        bundle = run_tool1_system_eval_http(
+            str(suite_path),
+            str(out),
+            "ui_test_run",
+            project_root=root,
+            adapter=FakeAdapter(),
+        )
+        assert bundle.get("error") is None, bundle
+        assert bundle["ok"] is True, bundle
+        assert Path(bundle["artifact_paths"]["json_path"]).is_file(), bundle
+        assert Path(bundle["artifact_paths"]["markdown_path"]).is_file(), bundle
+        assert "ui-helper-suite" in bundle["json_preview"]
+        assert "ui_test_run" in bundle["artifact_paths"]["json_path"]
+
+
+def test_run_tool1_system_eval_operator_missing_suite_file():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        bundle = run_tool1_system_eval_http(
+            str(root / "missing.json"),
+            str(root / "out"),
+            "x",
+            project_root=root,
+            adapter=None,
+        )
+        assert bundle.get("error")
+        assert "not found" in bundle["error"].lower()
+
+
+def test_system_eval_stability_runs_default_three_times():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "stability-default",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "s",
+                    "lane": "stability",
+                    "method": "POST",
+                    "url": "http://fake.local/s",
+                    "payload": {},
+                    "assertions": {"status_code": 200},
+                }
+            ],
+        }
+    )
+
+    class CountAdapter:
+        def __init__(self):
+            self.calls = 0
+
+        def run_case(self, case):
+            self.calls += 1
+            _ = case
+            return system_eval_core.AdapterResult(ok=True, status_code=200, output_text="", latency_ms=1)
+
+    adapter = CountAdapter()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert adapter.calls == 3, adapter.calls
+    assert result["cases"][0]["stability_attempts"] == 3, result["cases"][0]
+
+
+def test_system_eval_stability_runs_adapter_exactly_n_times():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "stability-n",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "s",
+                    "lane": "stability",
+                    "stability_attempts": 6,
+                    "method": "POST",
+                    "url": "http://fake.local/s",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["ok"]},
+                }
+            ],
+        }
+    )
+
+    class CountAdapter:
+        def __init__(self):
+            self.calls = 0
+
+        def run_case(self, case):
+            self.calls += 1
+            _ = case
+            return system_eval_core.AdapterResult(ok=True, status_code=200, output_text="ok", latency_ms=1)
+
+    adapter = CountAdapter()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert adapter.calls == 6, adapter.calls
+    assert result["cases"][0]["attempts_total"] == 6, result["cases"][0]
+    assert result["ok"] is True, result
+
+
+def test_system_eval_stability_attempts_rejected_when_lane_not_stability():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "x",
+                "target_name": "y",
+                "cases": [
+                    {
+                        "name": "c1",
+                        "lane": "correctness",
+                        "stability_attempts": 3,
+                        "method": "POST",
+                        "url": "http://fake.local/x",
+                        "payload": {},
+                        "assertions": {"status_code": 200},
+                    }
+                ],
+            }
+        )
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert "stability_attempts" in str(exc).lower(), exc
+
+
+def test_system_eval_stability_attempts_rejected_when_lane_consistency():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "x",
+                "target_name": "y",
+                "cases": [
+                    {
+                        "name": "c1",
+                        "lane": "consistency",
+                        "stability_attempts": 3,
+                        "method": "POST",
+                        "url": "http://fake.local/x",
+                        "payload": {},
+                        "assertions": {"status_code": 200},
+                    }
+                ],
+            }
+        )
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert "stability_attempts" in str(exc).lower(), exc
+        assert "repeat_count" in str(exc).lower(), exc
+
+
+def test_system_eval_invalid_stability_attempts_rejected():
+    for bad in (0, -1, 51, "x"):
+        try:
+            system_eval_core.validate_suite(
+                {
+                    "suite_name": "x",
+                    "target_name": "y",
+                    "cases": [
+                        {
+                            "name": "c1",
+                            "lane": "stability",
+                            "stability_attempts": bad,
+                            "method": "POST",
+                            "url": "http://fake.local/x",
+                            "payload": {},
+                            "assertions": {"status_code": 200},
+                        }
+                    ],
+                }
+            )
+            assert False, f"Expected ValueError for stability_attempts={bad!r}"
+        except ValueError:
+            pass
+
+
 def test_system_eval_execute_suite_success_with_fake_adapter():
     suite = system_eval_core.validate_suite(
         {
@@ -2027,6 +2795,7 @@ def test_system_eval_execute_suite_success_with_fake_adapter():
     assert result["failed_cases"] == 0, result
     assert result["passed_cases"] == 1, result
     assert result["cases"][0]["ok"] is True, result["cases"][0]
+    assert result["cases"][0]["lane"] is None, result["cases"][0]
 
 
 def test_system_eval_execute_suite_records_assertion_failures():
@@ -2070,6 +2839,7 @@ def test_system_eval_runner_script_smoke_with_fake_http():
         "cases": [
             {
                 "name": "status-and-token",
+                "lane": "stability",
                 "method": "POST",
                 "url": "https://fake.local/endpoint",
                 "payload": {"prompt": "hello"},
@@ -2117,6 +2887,13 @@ def test_system_eval_runner_script_smoke_with_fake_http():
             )
             assert (output_dir / "runner_smoke.json").exists(), "Missing JSON artifact"
             assert (output_dir / "runner_smoke.md").exists(), "Missing markdown artifact"
+            artifact = json.loads((output_dir / "runner_smoke.json").read_text(encoding="utf-8"))
+            assert artifact["cases"][0].get("lane") == "stability", artifact
+            assert artifact["cases"][0].get("stability_attempts") == 3, artifact
+            assert artifact["cases"][0].get("attempts_total") == 3, artifact
+            md_smoke = (output_dir / "runner_smoke.md").read_text(encoding="utf-8")
+            assert "lane=`stability`" in md_smoke, md_smoke
+            assert "stability:" in md_smoke, md_smoke
         finally:
             server.shutdown()
             server.server_close()
@@ -3969,6 +4746,35 @@ def main():
         ("state_over_memory_guard", test_state_over_memory_guard),
         ("tool_fetch_routing", test_tool_fetch_routing),
         ("post_fetch_next_step_quality", test_post_fetch_next_step_quality),
+        ("fetch_failure_tag_plain_and_tagged", test_fetch_failure_tag_plain_and_tagged),
+        ("fetch_page_http_403_classified", test_fetch_page_http_403_classified),
+        ("fetch_page_timeout_classified", test_fetch_page_timeout_classified),
+        ("fetch_page_network_classified", test_fetch_page_network_classified),
+        ("fetch_page_401_and_404_classified", test_fetch_page_401_and_404_classified),
+        ("fetch_page_200_substantial_html_untagged", test_fetch_page_200_substantial_html_untagged),
+        ("fetch_page_200_empty_body_low_content", test_fetch_page_200_empty_body_low_content),
+        ("choose_post_fetch_next_step_recognizes_fetch_tags", test_choose_post_fetch_next_step_recognizes_fetch_tags),
+        ("fetch_via_browser_invalid_url", test_fetch_via_browser_invalid_url),
+        ("fetch_via_browser_unavailable_when_playwright_unresolved", test_fetch_via_browser_unavailable_when_playwright_unresolved),
+        ("chromium_launch_args_include_transport_hints", test_chromium_launch_args_include_transport_hints),
+        ("prefer_headline_blob_when_visible_thin_or_shorter", test_prefer_headline_blob_when_visible_thin_or_shorter),
+        ("bounded_dom_text_nodes_via_eval_calls_evaluate_with_timeout", test_bounded_dom_text_nodes_via_eval_calls_evaluate_with_timeout),
+        ("nav_exc_class_blocked_transport_and_goto_timeout", test_nav_exc_class_blocked_transport_and_goto_timeout),
+        ("probe_dict_from_evaluate_result_accepts_json_string", test_probe_dict_from_evaluate_result_accepts_json_string),
+        ("normalize_probe_dict_coerces_floaty_values", test_normalize_probe_dict_coerces_floaty_values),
+        ("bounded_dom_probe_fallback_pipe_parses", test_bounded_dom_probe_fallback_pipe_parses),
+        ("bounded_dom_probe_micro_lengths_sets_fb2", test_bounded_dom_probe_micro_lengths_sets_fb2),
+        ("bounded_dom_probe_via_eval_sets_st_when_all_evaluate_fail", test_bounded_dom_probe_via_eval_sets_st_when_all_evaluate_fail),
+        ("fetch_failure_tag_parses_low_content_with_diag_suffix", test_fetch_failure_tag_parses_low_content_with_diag_suffix),
+        ("bounded_extract_prefers_main_landmark_over_thin_body", test_bounded_extract_prefers_main_landmark_over_thin_body),
+        ("goto_bounded_retries_ladder_commit_then_domcontentloaded", test_goto_bounded_retries_ladder_commit_then_domcontentloaded),
+        ("goto_bounded_retries_reaches_load_after_two_failures", test_goto_bounded_retries_reaches_load_after_two_failures),
+        ("goto_bounded_retries_raises_after_three_failures", test_goto_bounded_retries_raises_after_three_failures),
+        ("fetch_page_browser_mode_dispatches_to_browser_backend", test_fetch_page_browser_mode_dispatches_to_browser_backend),
+        ("browser_timeout_seconds_default_and_clamp", test_browser_timeout_seconds_default_and_clamp),
+        ("browser_timeout_seconds_invalid_env_uses_default", test_browser_timeout_seconds_invalid_env_uses_default),
+        ("browser_adapter_forwards_fetch_browser_timeout_env", test_browser_adapter_forwards_fetch_browser_timeout_env),
+        ("choose_post_fetch_next_step_browser_unavailable_tag", test_choose_post_fetch_next_step_browser_unavailable_tag),
         ("memory_write_creation", test_memory_write_creation),
         ("memory_write_reinforcement", test_memory_write_reinforcement),
         ("safety_query_prioritizes_regression_memory", test_safety_query_prioritizes_regression_memory),
@@ -4019,7 +4825,20 @@ def main():
         ("handle_user_input_soak_stability_with_mocked_llm", test_handle_user_input_soak_stability_with_mocked_llm),
         ("routing_snapshot_core_paths_stable", test_routing_snapshot_core_paths_stable),
         ("run_soak_script_smoke", test_run_soak_script_smoke),
+        ("run_tool1_system_eval_operator_helper_with_fake_adapter", test_run_tool1_system_eval_operator_helper_with_fake_adapter),
+        ("run_tool1_system_eval_operator_missing_suite_file", test_run_tool1_system_eval_operator_missing_suite_file),
         ("system_eval_validate_suite_requires_non_empty_cases", test_system_eval_validate_suite_requires_non_empty_cases),
+        ("system_eval_validate_suite_rejects_invalid_lane", test_system_eval_validate_suite_rejects_invalid_lane),
+        ("system_eval_lane_preserved_in_results_and_artifacts", test_system_eval_lane_preserved_in_results_and_artifacts),
+        ("system_eval_repeat_count_rejected_when_lane_not_consistency", test_system_eval_repeat_count_rejected_when_lane_not_consistency),
+        ("system_eval_invalid_repeat_count_rejected", test_system_eval_invalid_repeat_count_rejected),
+        ("system_eval_consistency_runs_adapter_exactly_n_times", test_system_eval_consistency_runs_adapter_exactly_n_times),
+        ("system_eval_consistency_fails_when_one_attempt_fails_assertion", test_system_eval_consistency_fails_when_one_attempt_fails_assertion),
+        ("system_eval_stability_runs_default_three_times", test_system_eval_stability_runs_default_three_times),
+        ("system_eval_stability_runs_adapter_exactly_n_times", test_system_eval_stability_runs_adapter_exactly_n_times),
+        ("system_eval_stability_attempts_rejected_when_lane_not_stability", test_system_eval_stability_attempts_rejected_when_lane_not_stability),
+        ("system_eval_stability_attempts_rejected_when_lane_consistency", test_system_eval_stability_attempts_rejected_when_lane_consistency),
+        ("system_eval_invalid_stability_attempts_rejected", test_system_eval_invalid_stability_attempts_rejected),
         ("system_eval_execute_suite_success_with_fake_adapter", test_system_eval_execute_suite_success_with_fake_adapter),
         ("system_eval_execute_suite_records_assertion_failures", test_system_eval_execute_suite_records_assertion_failures),
         ("system_eval_runner_script_smoke_with_fake_http", test_system_eval_runner_script_smoke_with_fake_http),

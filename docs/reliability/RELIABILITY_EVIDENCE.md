@@ -41,7 +41,7 @@ All reliability claims are bounded to the validated conditions described above.
 ### Regression Gate
 
 - Pass condition: all scenarios pass and process exits `0`.
-- Current protected baseline size: `173` scenarios.
+- Current protected baseline size: **`215`** scenarios (confirm with latest `python tests/run_regression.py` output if this drifts).
 
 ### Soak Gate (Chunked)
 
@@ -57,7 +57,7 @@ All reliability claims are bounded to the validated conditions described above.
 
 ### Regression
 
-- **Result:** `173 / 173` passing
+- **Result:** `215 / 215` passing (last Cursor alignment; re-run to refresh)
 - **Gate status:** PASS
 
 ### Deep Soak (10000, chunked)
@@ -116,5 +116,5 @@ Run from repository root.
 - Prefer artifact-backed decisions over ad-hoc terminal observations.
 - Preserve this file as the authoritative reliability audit entry point.
 - Enforce constrained execution for test-engineering expansion:
-  - no Phase 2+ work until Phase 1 (V0.1) acceptance criteria are explicitly satisfied
-  - avoid bundling adapter/evaluation/reporting expansion into a single increment
+  - Phase 1 (V0.1) acceptance criteria for the HTTP system-eval slice are recorded above as PASS
+  - further Phase 2+ work must proceed one small vertical slice at a time; avoid bundling adapter/evaluation/reporting expansion into a single increment

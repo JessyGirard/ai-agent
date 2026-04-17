@@ -4,12 +4,12 @@
     "extractor_version": "AI-V2-filter-merge",
     "source": "imported.json",
     "message_limit": 50,
-    "memory_count": 18,
+    "memory_count": 56,
     "last_extract": {
       "mode": "merge",
-      "rows_before": 12,
-      "rows_after": 18,
-      "new_keys_this_run": 6,
+      "rows_before": 36,
+      "rows_after": 56,
+      "new_keys_this_run": 20,
       "reinforcements_this_run": 0
     }
   },
@@ -300,6 +300,614 @@
       "trend": "new",
       "source_refs": [
         "msg_10"
+      ]
+    },
+    {
+      "memory_id": "mem_0011",
+      "category": "identity",
+      "value": "Building a local AI assistant",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_0",
+      "last_seen": "msg_0",
+      "trend": "new",
+      "source_refs": [
+        "msg_0"
+      ]
+    },
+    {
+      "memory_id": "mem_0013",
+      "category": "goal",
+      "value": "Create a functional local AI assistant beyond a simple script",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_0",
+      "last_seen": "msg_0",
+      "trend": "new",
+      "source_refs": [
+        "msg_0"
+      ]
+    },
+    {
+      "memory_id": "mem_0015",
+      "category": "project",
+      "value": "Developing or maintaining a system where core behavior is orchestrated in playground.py",
+      "confidence": 0.4,
+      "importance": 1.0,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_2",
+      "last_seen": "msg_2",
+      "trend": "new",
+      "source_refs": [
+        "msg_2"
+      ]
+    },
+    {
+      "memory_id": "mem_0017",
+      "category": "identity",
+      "value": "User is a developer working with command-line and Streamlit interfaces",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_4",
+      "last_seen": "msg_4",
+      "trend": "new",
+      "source_refs": [
+        "msg_4"
+      ]
+    },
+    {
+      "memory_id": "mem_0019",
+      "category": "preference",
+      "value": "Prefer system architectures where the language model layer is separated to keep the system clean and controlled",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_6",
+      "last_seen": "msg_6",
+      "trend": "new",
+      "source_refs": [
+        "msg_6"
+      ]
+    },
+    {
+      "memory_id": "mem_0020",
+      "category": "project",
+      "value": "An offline memory pipeline that converts raw chat into structured knowledge",
+      "confidence": 0.4,
+      "importance": 1.0,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_12",
+      "last_seen": "msg_12",
+      "trend": "new",
+      "source_refs": [
+        "msg_12"
+      ]
+    },
+    {
+      "memory_id": "mem_0021",
+      "category": "goal",
+      "value": "Develop a memory pipeline that merges and reinforces existing memory without resetting",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_14",
+      "last_seen": "msg_14",
+      "trend": "new",
+      "source_refs": [
+        "msg_14"
+      ]
+    },
+    {
+      "memory_id": "mem_0023",
+      "category": "preference",
+      "value": "Write memory during live interaction, not just offline",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_18",
+      "last_seen": "msg_18",
+      "trend": "new",
+      "source_refs": [
+        "msg_18"
+      ]
+    },
+    {
+      "memory_id": "mem_0024",
+      "category": "goal",
+      "value": "Maintain a clean memory system using normalization and deduplication",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_20",
+      "last_seen": "msg_20",
+      "trend": "new",
+      "source_refs": [
+        "msg_20"
+      ]
+    },
+    {
+      "memory_id": "mem_0025",
+      "category": "project",
+      "value": "Maintain a project journal to track what happens over time",
+      "confidence": 0.4,
+      "importance": 1.0,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_22",
+      "last_seen": "msg_22",
+      "trend": "new",
+      "source_refs": [
+        "msg_22"
+      ]
+    },
+    {
+      "memory_id": "mem_0027",
+      "category": "goal",
+      "value": "Combine state, memory, and journaling into a single working flow",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_24",
+      "last_seen": "msg_24",
+      "trend": "new",
+      "source_refs": [
+        "msg_24"
+      ]
+    },
+    {
+      "memory_id": "mem_0028",
+      "category": "preference",
+      "value": "Rely on a regression harness as the main safety mechanism",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_26",
+      "last_seen": "msg_26",
+      "trend": "new",
+      "source_refs": [
+        "msg_26"
+      ]
+    },
+    {
+      "memory_id": "mem_0029",
+      "category": "preference",
+      "value": "Supplemental tests should not override the regression baseline",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_28",
+      "last_seen": "msg_28",
+      "trend": "new",
+      "source_refs": [
+        "msg_28"
+      ]
+    },
+    {
+      "memory_id": "mem_0030",
+      "category": "goal",
+      "value": "Remain deterministic, testable, and debuggable",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_30",
+      "last_seen": "msg_30",
+      "trend": "new",
+      "source_refs": [
+        "msg_30"
+      ]
+    },
+    {
+      "memory_id": "mem_0031",
+      "category": "goal",
+      "value": "Maintain awareness and management of multiple memory systems",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_32",
+      "last_seen": "msg_32",
+      "trend": "new",
+      "source_refs": [
+        "msg_32"
+      ]
+    },
+    {
+      "memory_id": "mem_0032",
+      "category": "goal",
+      "value": "Maintain useful, evolving knowledge over time rather than just storing memory",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_34",
+      "last_seen": "msg_34",
+      "trend": "new",
+      "source_refs": [
+        "msg_34"
+      ]
+    },
+    {
+      "memory_id": "mem_0033",
+      "category": "goal",
+      "value": "Grow into a stronger agent without losing control",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_36",
+      "last_seen": "msg_36",
+      "trend": "new",
+      "source_refs": [
+        "msg_36"
+      ]
+    },
+    {
+      "memory_id": "mem_0034",
+      "category": "identity",
+      "value": "I'm debugging why my debugging string contains the word debugging\u2014one sentence, no action type talk.",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "runtime",
+      "last_seen": "runtime",
+      "trend": "new",
+      "source_refs": [
+        "runtime"
+      ]
+    },
+    {
+      "memory_id": "mem_0035",
+      "category": "preference",
+      "value": "Require clear alignment and shared understanding before proceeding with tasks",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_0",
+      "last_seen": "msg_0",
+      "trend": "new",
+      "source_refs": [
+        "msg_0"
+      ]
+    },
+    {
+      "memory_id": "mem_0036",
+      "category": "preference",
+      "value": "Prefer building step-by-step with clarity and validation before continuing",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_2",
+      "last_seen": "msg_2",
+      "trend": "new",
+      "source_refs": [
+        "msg_2"
+      ]
+    },
+    {
+      "memory_id": "mem_0037",
+      "category": "preference",
+      "value": "Prefer to ensure everything is solid before moving quickly, avoiding moving fast and fixing later",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_4",
+      "last_seen": "msg_4",
+      "trend": "new",
+      "source_refs": [
+        "msg_4"
+      ]
+    },
+    {
+      "memory_id": "mem_0038",
+      "category": "preference",
+      "value": "Prefers deep, specific, and valuable answers rather than shallow or generic responses",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_6",
+      "last_seen": "msg_6",
+      "trend": "new",
+      "source_refs": [
+        "msg_6"
+      ]
+    },
+    {
+      "memory_id": "mem_0039",
+      "category": "identity",
+      "value": "New to this domain but learning quickly",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_8",
+      "last_seen": "msg_8",
+      "trend": "new",
+      "source_refs": [
+        "msg_8"
+      ]
+    },
+    {
+      "memory_id": "mem_0040",
+      "category": "goal",
+      "value": "Stay on track and avoid getting lost while working",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_8",
+      "last_seen": "msg_8",
+      "trend": "new",
+      "source_refs": [
+        "msg_8"
+      ]
+    },
+    {
+      "memory_id": "mem_0041",
+      "category": "goal",
+      "value": "Have the AI remember important information to avoid repeating myself constantly",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_10",
+      "last_seen": "msg_10",
+      "trend": "new",
+      "source_refs": [
+        "msg_10"
+      ]
+    },
+    {
+      "memory_id": "mem_0042",
+      "category": "preference",
+      "value": "Want immediate diagnostics and a clear way to investigate and fix issues when something feels off",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_12",
+      "last_seen": "msg_12",
+      "trend": "new",
+      "source_refs": [
+        "msg_12"
+      ]
+    },
+    {
+      "memory_id": "mem_0043",
+      "category": "preference",
+      "value": "Stop and fix problems immediately; continue without unnecessary delay when all is good",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_14",
+      "last_seen": "msg_14",
+      "trend": "new",
+      "source_refs": [
+        "msg_14"
+      ]
+    },
+    {
+      "memory_id": "mem_0044",
+      "category": "preference",
+      "value": "When unsure, prefer the system to narrow down to the single best move",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_16",
+      "last_seen": "msg_16",
+      "trend": "new",
+      "source_refs": [
+        "msg_16"
+      ]
+    },
+    {
+      "memory_id": "mem_0045",
+      "category": "preference",
+      "value": "The user prefers the system to challenge them if something feels off rather than following blindly.",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_18",
+      "last_seen": "msg_18",
+      "trend": "new",
+      "source_refs": [
+        "msg_18"
+      ]
+    },
+    {
+      "memory_id": "mem_0046",
+      "category": "preference",
+      "value": "Prefer instructions that are extremely clear, actionable, step-by-step, and easy to execute",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_20",
+      "last_seen": "msg_20",
+      "trend": "new",
+      "source_refs": [
+        "msg_20"
+      ]
+    },
+    {
+      "memory_id": "mem_0047",
+      "category": "goal",
+      "value": "Develop an autonomous system that operates safely and remains aligned with my goals",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_22",
+      "last_seen": "msg_22",
+      "trend": "new",
+      "source_refs": [
+        "msg_22"
+      ]
+    },
+    {
+      "memory_id": "mem_0048",
+      "category": "goal",
+      "value": "Persistently achieve realistic and ethical objectives without giving up",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_24",
+      "last_seen": "msg_24",
+      "trend": "new",
+      "source_refs": [
+        "msg_24"
+      ]
+    },
+    {
+      "memory_id": "mem_0049",
+      "category": "goal",
+      "value": "Bring this AI to life quickly but correctly without skipping steps",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_26",
+      "last_seen": "msg_26",
+      "trend": "new",
+      "source_refs": [
+        "msg_26"
+      ]
+    },
+    {
+      "memory_id": "mem_0050",
+      "category": "goal",
+      "value": "Generate consistent income to stabilize and grow",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_28",
+      "last_seen": "msg_28",
+      "trend": "new",
+      "source_refs": [
+        "msg_28"
+      ]
+    },
+    {
+      "memory_id": "mem_0051",
+      "category": "preference",
+      "value": "System should remain calm and help find solutions during user frustration, avoiding added confusion",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_30",
+      "last_seen": "msg_30",
+      "trend": "new",
+      "source_refs": [
+        "msg_30"
+      ]
+    },
+    {
+      "memory_id": "mem_0052",
+      "category": "preference",
+      "value": "Prefer systems that honestly recognize when there is no solution rather than forcing an answer",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_32",
+      "last_seen": "msg_32",
+      "trend": "new",
+      "source_refs": [
+        "msg_32"
+      ]
+    },
+    {
+      "memory_id": "mem_0053",
+      "category": "preference",
+      "value": "Commit fully to decisions and follow through without dropping them",
+      "confidence": 0.4,
+      "importance": 0.75,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_34",
+      "last_seen": "msg_34",
+      "trend": "new",
+      "source_refs": [
+        "msg_34"
+      ]
+    },
+    {
+      "memory_id": "mem_0054",
+      "category": "goal",
+      "value": "Build a system that helps move forward in life beyond just a project",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_36",
+      "last_seen": "msg_36",
+      "trend": "new",
+      "source_refs": [
+        "msg_36"
       ]
     }
   ]

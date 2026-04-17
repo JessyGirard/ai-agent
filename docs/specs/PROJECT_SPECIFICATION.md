@@ -18,8 +18,8 @@ This project is a **local AI assistant / agent** built around:
 - **Persistence layer** (`core/persistence.py`): file I/O for state, memory payload, journal, and archive.
 - **LLM layer** (`core/llm.py`): Anthropic client, default tool-routing system prompt, preflight checks.
 - **Config** (`config/settings.py`): `.env` loading, model name, max tokens, API key accessor.
-- **Web tool** (`tools/fetch_page.py`): HTTP fetch + HTML-to-text (truncated).
-- **Streamlit UI** (`app/ui.py`): Chat-style front-end that calls `playground.handle_user_input`.
+- **Web fetch** (`tools/fetch_page.py`): Facade for **HTTP** fetch + HTML-to-text (`tools/fetch_http.py`, truncated) and optional **browser** mode when **`FETCH_MODE=browser`** (Playwright in `tools/fetch_browser.py`, public `http`/`https` only). Optional **`FETCH_BROWSER_TIMEOUT_SECONDS`** bounds browser navigation time. Failure lines may carry **`[fetch:tag]`** and (browser) a compact **`diag=`** suffix; see `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`.
+- **Streamlit UI** (`app/ui.py`): Chat-style front-end that calls `playground.handle_user_input`; includes **Assistant** and **Tool 1 — System eval (HTTP)** tabs. **Windows:** one-click launch via **`Launch-Agent-UI.cmd`** (see `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`).
 - **Memory pipeline (offline)**: `raw_chat.txt` → `import_chat.py` → `imported.json` → OpenAI-based extractor → **`extracted_memory.json` (merge by default)** (`memory/import_chat.py`, `memory/extractors/run_extractor.py`). Optional env `EXTRACT_MESSAGE_LIMIT` (default 50, max 500). Extractor backs up the prior file to `memory/extracted_memory.pre_extract.json` before each write; `--replace` discards existing rows for a clean run.
 - **Legacy simple history** (`memory/memory.py`): reads/writes `memory/history.json` (last 10 entries); parallel to the richer `extracted_memory.json` system.
 
@@ -31,7 +31,8 @@ This project is a **local AI assistant / agent** built around:
 |--------|------|
 | `playground.py` (`main()`) | Interactive REPL/orchestrator: loads state, runs top-level flow, delegates to services. |
 | `main.py` | Minimal placeholder (`print("Hello Jessy")`); not the agent entry. |
-| `app/ui.py` | Streamlit app: session state, themed UI, invokes `playground.handle_user_input`. |
+| `app/ui.py` | Streamlit app: session state, themed UI, invokes `playground.handle_user_input` (Assistant + Tool 1 tabs). |
+| `Launch-Agent-UI.cmd` | **Windows:** starts Streamlit via **`.venv-win\Scripts\python.exe -m streamlit run app\ui.py`** from repo root (same venv convention as `Open-DevShell.cmd`). |
 | `memory/import_chat.py` | CLI: `raw_chat.txt` → `imported.json` (one non-empty line per turn; alternates user/assistant; strips leading `USER:` / `AI:` / `ASSISTANT:` labels from content). |
 | `memory/extractors/run_extractor.py` | CLI: `imported.json` → structured `extracted_memory.json` (OpenAI). **Merges** with existing `extracted_memory.json` on matching category+value keys; reinforces evidence. Server-side filters: noise list, no `?` in values, max value length. Writes `meta.last_extract` stats. |
 | `tests/run_regression.py` | **Protected baseline** regression harness (see `README.md`). |
@@ -71,8 +72,9 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `README.md` | Project tagline, **Testing Workflow**, and short **offline memory import** steps (regression as protected baseline). |
-| `HANDOFF_RECENT_WORK.md` | Human-oriented summary of recent increments for pasting into other chats (not a runtime dependency). |
+| `README.md` | Project tagline, **Testing Workflow**, fetch modes, Streamlit/Tool 1 notes, and short **offline memory import** steps (regression as protected baseline). |
+| `Open-DevShell.cmd`, `op.cmd`, `go.cmd` | Windows dev shell entry (PowerShell + **`.venv-win`**). |
+| `docs/handoffs/HANDOFF_RECENT_WORK.md` | Human-oriented summary of recent increments for pasting into other chats (not a runtime dependency). |
 | `requirements.txt` | Pip dependencies for the main app, fetch tool, and offline extractor (see §3). |
 | `playground.py` | Core orchestrator: command handling, deterministic branch ordering, service composition, LLM/tool invocation sequencing, and journaling hooks. |
 | `main.py` | Trivial hello script; not primary entry. |
@@ -92,6 +94,7 @@ Supplemental scripts (not the baseline gate):
 |------|-------------|
 | `llm.py` | `llm_preflight_check`, `ask_ai` / `chat` via Anthropic; default system prompt teaches `TOOL:fetch <url>` pattern. |
 | `persistence.py` | File I/O helpers for state/memory/journal load/save/append/archive paths. |
+| `system_eval.py` | Phase 1 HTTP system-eval: suite validation, deterministic assertions, artifact-shaped results (isolated from `playground.py`). |
 
 ### `services/`
 
@@ -106,7 +109,11 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `fetch_page.py` | `fetch_page(url)`: GET, BeautifulSoup text extraction, strip scripts/styles, cap length, error string on failure. |
+| `fetch_page.py` | `fetch_page(url)`: dispatches to **HTTP** or **browser** backend from env; returns extracted text or classified error string (**`[fetch:tag]`**); browser path may append **`diag=`** details. |
+| `fetch_http.py` | HTTP implementation used by default fetch mode. |
+| `fetch_browser.py` | Playwright/Chromium implementation when **`FETCH_MODE=browser`**; bounded navigation, extraction, and operator **`diag=`** diagnostics. |
+| `system_eval_runner.py` | CLI: run JSON suites against real HTTP; writes `logs/system_eval` artifacts. |
+| `tool1_verify_server.py` | Tiny local HTTP server for Tool 1 manual **PASS** checks (default port **37641**). |
 
 ### `app/`
 
@@ -118,7 +125,7 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; broad scenario coverage (state, memory write/retrieval, journal/outcome flow, routing/strictness, prompt shaping, tool fetch, extractor fixtures, error handling). **Current protected baseline: 173 scenarios. Exit code 1 if any test fails.** |
+| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; broad scenario coverage (state, memory write/retrieval, journal/outcome flow, routing/strictness, prompt shaping, tool fetch + browser mocks, system_eval runner, extractor fixtures, error handling). **Current protected baseline: 215 scenarios. Exit code 1 if any test fails.** Confirm with `README.md` / latest gate run if this drifts. |
 | `run_soak.py` | Long-duration stability runner with progress checkpoints, chunked mode (`--chunk-size`), and synchronized per-run result/checkpoint/aggregate artifacts for reliable interrupted/long runs. |
 | `fixtures/extractor_validation_cases.json` | Offline JSON cases consumed by regression to assert `run_extractor.validate_candidate` accept/reject behavior (no OpenAI call). |
 

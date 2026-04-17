@@ -4,3 +4,4 @@ beautifulsoup4
 streamlit
 requests
 openai
+playwright

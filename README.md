@@ -5,7 +5,7 @@ The creation of a powerful friend and ally.
 
 - CI and nightly soak workflows are now included in `.github/workflows/`.
 - After your first push, add repo badges here (Actions -> workflow -> `Create status badge`) so pass/fail is visible at a glance.
-- Reliability evidence and acceptance criteria: `RELIABILITY_EVIDENCE.md`
+- Reliability evidence and acceptance criteria: `docs/reliability/RELIABILITY_EVIDENCE.md`
 
 ## Current Architecture
 
@@ -16,14 +16,14 @@ The creation of a powerful friend and ally.
 - `services/journal_service.py`: project journal/outcome feedback/recent-answer history helpers
 - `services/routing_service.py`: action typing and routing/control-path detection
 - `services/prompt_builder.py`: prompt assembly + answer-line shaping
-- `app/ui.py`: Streamlit frontend using the same `playground.handle_user_input` path
+- `app/ui.py`: Streamlit frontend using the same `playground.handle_user_input` path. **Windows (Jessy / operators):** double-click **`Launch-Agent-UI.cmd`** at the repo root (uses **`.venv-win`** like `Open-DevShell.cmd`). **Any OS:** from repo root, `streamlit run app/ui.py` or `python -m streamlit run app/ui.py`. Use the **Tool 1 — System eval (HTTP)** tab to run `system_eval` suites without the terminal (same engine as `tools/system_eval_runner.py`). Pinning and relaunch: `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md` → *Windows one-click launch*.
 
 ## Project History
 
 - High-level milestone timeline: `CHANGELOG.md`
-- Reliability audit trail and reproducible gate evidence: `RELIABILITY_EVIDENCE.md`
-- Current build mission and execution sequence: `TEST_ENGINEERING_ROADMAP.md`
-- External ChatGPT collaboration bootstrap/sync: `CHATGPT_COLLAB_SYNC.md`
+- Reliability audit trail and reproducible gate evidence: `docs/reliability/RELIABILITY_EVIDENCE.md`
+- Current build mission and execution sequence: `docs/roadmaps/TEST_ENGINEERING_ROADMAP.md`
+- External ChatGPT collaboration bootstrap/sync: `docs/handoffs/CHATGPT_COLLAB_SYNC.md`
 
 ## Testing Workflow
 
@@ -35,7 +35,7 @@ The creation of a powerful friend and ally.
 - Pytest-based tests are supplemental and can be run for additional coverage.
 - Any code change must keep the regression suite passing before commit.
 - If pytest and regression results differ, treat regression as the release gate and resolve the discrepancy before merge or push.
-- Current baseline size after the latest hardening sequence: `173` regression scenarios.
+- Current baseline size after the latest hardening sequence: `215` regression scenarios.
 - GitHub Actions automation:
   - `.github/workflows/ci.yml` runs regression + quick chunked soak on pull requests and pushes to `main`/`master`.
   - `.github/workflows/nightly-soak.yml` runs a scheduled 10k chunked soak and supports manual trigger (`workflow_dispatch`).
@@ -44,9 +44,12 @@ Live API smoke scripts (`test_openai.py`, `test_claude.py`) call the network and
 
 ## AI System Test Engineering (Phase 1)
 
+- Operator runbook: `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`
 - Runner: `python tools/system_eval_runner.py --suite "system_tests/suites/example_http_suite.json" --output-dir "logs/system_eval" --file-stem "local_eval_run"`
 - Core implementation: `core/system_eval.py`
-- Example suite template: `system_tests/suites/example_http_suite.json`
+- **Tool 1 UI first pass:** `python tools/tool1_verify_server.py` (listens on `http://127.0.0.1:37641`), then `streamlit run app/ui.py` → **Tool 1** tab uses default suite `system_tests/suites/tool1_local_starter_suite.json` → expect **PASS** (details in runbook).
+- Example suite template: `system_tests/suites/example_http_suite.json` (optional per-case `lane`: `stability` | `correctness` | `consistency`; `stability` → optional `stability_attempts` 1–50 (default 3); `consistency` → optional `repeat_count` 1–50 (default 3); repeated attempts must all pass the same assertions; outcomes in artifacts)
+- **Playground fetch modes:** `tools/fetch_page.py` stays the facade. Default `FETCH_MODE` is **http** (`requests` + BeautifulSoup in `tools/fetch_http.py`). Set **`FETCH_MODE=browser`** to use headless Chromium via **Playwright** (`tools/fetch_browser.py`, public `http://` / `https://` only). Navigation uses a bounded **`commit` → `domcontentloaded` → `load`** goto ladder (each step gets an equal slice of the navigation timeout), then short post-goto readiness waits. Extraction prefers **`main` / `[role="main"]` / `article`** (first match each) when they yield more visible text than **`body`**, then one optional bounded scroll and a second extract pass if content is still thin. When structured **`h1` / `h2` / role=heading / scoped header+article headings** yield a stronger compact bundle than thin generic text, that headline line replaces the body slice (deterministic **` | `** join, capped) before merge with the page title. A final bounded **`page.evaluate`** pass walks **text nodes** under **`main` / `[role="main"]` / `body`** (skipping script/style) and may replace the body slice when that string wins the same length / thin-page rule—separate from **`inner_text`** headline collection. On **`browser_timeout`**, **`browser_error`**, and **`low_content`**, responses may end with a compact **` diag=…`** suffix (bounded DOM snapshot / **`exc=`** class / merge length; probe uses JSON + fallbacks including **`fb=1`** pipe / **`fb=2`** micro lengths, or **`st=1`** if every bounded **`evaluate`** path is unusable) for operators—**`[fetch:tag]`** names unchanged. **Token glossary:** `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md` → section *Operator reference: `diag=` suffix*. Optional **`FETCH_BROWSER_TIMEOUT_SECONDS`** (integer, clamped **5–120**, default **20**) bounds that navigation budget for browser mode only. Install browser deps once: `pip install playwright` then `playwright install chromium`. Failures use the same `[fetch:tag]` pattern as HTTP mode.
 - Artifacts written per run:
   - `logs/system_eval/<file_stem>.json`
   - `logs/system_eval/<file_stem>.md`
@@ -59,7 +62,7 @@ From the repo root, with `OPENAI_API_KEY` in `.env`:
 2. `python memory/import_chat.py` → writes `memory/imported.json`.
 3. `python memory/extractors/run_extractor.py` → **merges** new facts into `memory/extracted_memory.json` (use `--replace` to discard existing rows for that run only). A copy of the previous `extracted_memory.json` is saved as `memory/extracted_memory.pre_extract.json` before each write.
 
-Optional: set `EXTRACT_MESSAGE_LIMIT` in `.env` to process more than the default 50 messages per extract (hard cap 500 in code). Full file layout and behavior are in `PROJECT_SPECIFICATION.md`.
+Optional: set `EXTRACT_MESSAGE_LIMIT` in `.env` to process more than the default 50 messages per extract (hard cap 500 in code). Full file layout and behavior are in `docs/specs/PROJECT_SPECIFICATION.md`.
 
 ## Recent behavior updates
 

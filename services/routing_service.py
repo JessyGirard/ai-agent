@@ -434,7 +434,7 @@ def build_specific_next_step(user_input, focus, stage, action_type):
     if is_meta_system_override_question(user_input, focus, stage):
         return "Open `playground.py`, pick one concrete path (`build_messages` context rules, memory retrieval, or tool fallback), and implement one targeted improvement before re-running `python tests/run_regression.py`."
     if subtarget == "agent_purpose":
-        return "Open `HANDOFF_RECENT_WORK.md` or `PROJECT_SPECIFICATION.md`, pick one subsystem (memory, journal, tools, or regression), and ask your next question about only that piece."
+        return "Open `docs/handoffs/HANDOFF_RECENT_WORK.md` or `docs/specs/PROJECT_SPECIFICATION.md`, pick one subsystem (memory, journal, tools, or regression), and ask your next question about only that piece."
     if subtarget == "agent_meta":
         return "Open `core/llm.py` and `config/settings.py` and confirm `ANTHROPIC_MODEL` / `ANTHROPIC_API_KEY` in `.env` match how you want this agent to call Anthropic."
     if subtarget == "agent_tools":

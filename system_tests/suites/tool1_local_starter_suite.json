@@ -1,27 +1,25 @@
 {
-  "suite_name": "example-http-target-suite",
-  "target_name": "replace-with-your-target-name",
+  "suite_name": "tool1-local-starter",
+  "target_name": "tool1-verify-localhost",
   "cases": [
     {
       "name": "basic-health-check",
       "lane": "stability",
       "stability_attempts": 3,
       "method": "POST",
-      "url": "https://example.com/replace-with-endpoint",
-      "headers": {
-        "Authorization": "Bearer REPLACE_ME"
-      },
+      "url": "http://127.0.0.1:37641/tool1/health",
+      "headers": {},
       "payload": {
-        "input": "Respond with EXACTLY: healthy"
+        "note": "ignored by verify server; body is fixed"
       },
       "timeout_seconds": 20,
       "assertions": {
         "status_code": 200,
         "contains_all": [
-          "healthy"
+          "TOOL1_HEALTH_OK"
         ],
         "not_contains": [
-          "error"
+          "TOOL1_ERROR"
         ]
       }
     },
@@ -29,13 +27,9 @@
       "name": "structured-response-check",
       "lane": "correctness",
       "method": "POST",
-      "url": "https://example.com/replace-with-endpoint",
-      "headers": {
-        "Authorization": "Bearer REPLACE_ME"
-      },
-      "payload": {
-        "input": "Return JSON with fields status and message"
-      },
+      "url": "http://127.0.0.1:37641/tool1/structured",
+      "headers": {},
+      "payload": {},
       "timeout_seconds": 20,
       "assertions": {
         "status_code": 200,
@@ -51,18 +45,14 @@
       "lane": "consistency",
       "repeat_count": 3,
       "method": "POST",
-      "url": "https://example.com/replace-with-endpoint",
-      "headers": {
-        "Authorization": "Bearer REPLACE_ME"
-      },
-      "payload": {
-        "input": "Respond with EXACTLY: consistent"
-      },
+      "url": "http://127.0.0.1:37641/tool1/consistent",
+      "headers": {},
+      "payload": {},
       "timeout_seconds": 20,
       "assertions": {
         "status_code": 200,
         "contains_all": [
-          "consistent"
+          "TOOL1_CONSISTENCY_OK"
         ]
       }
     }
