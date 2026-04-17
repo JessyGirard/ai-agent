@@ -401,4 +401,12 @@
 
 ---
 
+### 2026-04-17 — Push to GitHub + local gates (regression + quick soak 1000)
+
+**Gates:** `python tests/run_regression.py` → **215 / 215** PASS. `python tests/run_soak.py --iterations 1000 --chunk-size 250 --progress-interval 125 --result-path "logs/test_runs/ci_soak_1000.json" --checkpoint-path "logs/test_runs/ci_soak_1000_checkpoint.json" --aggregate-path "logs/test_runs/ci_soak_1000_aggregate.json"` → **pass** (`all_ok: true`, four chunks). **Not run:** 10k nightly soak.
+
+**Git:** Commit **`cfb748b`** on **`main`**, pushed to **`origin/main`** (`JessyGirard/ai-agent`). **Unstaged:** `.vscode/` (left local only).
+
+---
+
 *(Add new entries below this line.)*
