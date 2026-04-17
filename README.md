@@ -1,12 +1,24 @@
 # ai-agent
 The creation of a powerful friend and ally.
 
+## Current Architecture
+
+- `playground.py`: top-level orchestration and runtime flow (input handling, deterministic branch ordering, tool flow, service wiring)
+- `core/llm.py`: Anthropic call path and preflight
+- `core/persistence.py`: state/memory/journal file persistence helpers
+- `services/memory_service.py`: memory normalization, scoring, retrieval, runtime write logic
+- `services/journal_service.py`: project journal/outcome feedback/recent-answer history helpers
+- `services/routing_service.py`: action typing and routing/control-path detection
+- `services/prompt_builder.py`: prompt assembly + answer-line shaping
+- `app/ui.py`: Streamlit frontend using the same `playground.handle_user_input` path
+
 ## Testing Workflow
 
 - The protected baseline test suite is: `python tests/run_regression.py`
 - Pytest-based tests are supplemental and can be run for additional coverage.
 - Any code change must keep the regression suite passing before commit.
 - If pytest and regression results differ, treat regression as the release gate and resolve the discrepancy before merge or push.
+- Current baseline size after the latest extraction sequence: `154` regression scenarios.
 
 Live API smoke scripts (`test_openai.py`, `test_claude.py`) call the network and require keys. Run them only when you intend to: set `RUN_LIVE_API_TESTS=1` in the environment; otherwise they print a skip message and exit without calling the APIs.
 
@@ -22,8 +34,10 @@ Optional: set `EXTRACT_MESSAGE_LIMIT` in `.env` to process more than the default
 
 ## Recent behavior updates
 
-- Command parsing now ignores narrative/hypothetical command discussion (e.g. quoted `set focus:` examples) and only executes direct command lines.
-- Tool execution is guarded so assistant `TOOL:fetch` output is ignored when the user is clearly vetoing tools or quoting tool syntax.
-- Strict canned workflow mode is now limited to explicit next-step prompts and a small actionable set; most analytical questions run in open conversation mode.
-- System-risk reasoning is grounded in repo components (`detect_subtarget`, routing gates, strict-mode behavior) instead of generic architecture phrasing.
-- Memory retrieval uses stronger rows by default (weak rows filtered at retrieval time), and reinforced memories with `evidence_count >= 3` get a small scoring bonus.
+- Completed structural stabilization extraction sequence with regression parity preserved:
+  - persistence helpers -> `core/persistence.py`
+  - journal/outcome-feedback helpers -> `services/journal_service.py`
+  - memory scoring/retrieval/write helpers -> `services/memory_service.py`
+  - routing/control-path logic -> `services/routing_service.py`
+  - prompt/answer assembly -> `services/prompt_builder.py`
+- `playground.py` is now focused on orchestration and is substantially smaller than before the extraction sequence.

@@ -92,14 +92,19 @@ From repo root:
 python tests/run_regression.py
 ```
 
-At last full run in this work session, this passed **50 / 50** tests. Re-run after any local edits.
+At last full run in this work session, this passed **154 / 154** tests. Re-run after any local edits.
 
 ---
 
 ## Files most touched in this phase
 
-- `playground.py` — routing/strictness guards, command/tool interpretation gates, answer-construction focus, memory retrieval/scoring refinements, safety/risk reasoning
-- `tests/run_regression.py` — regression coverage (50 scenarios including extractor, safety, command/tool/routing guards)
+- `playground.py` — now narrowed to orchestration/runtime control flow and service wiring
+- `core/persistence.py` — extracted state/memory/journal file I/O helpers
+- `services/memory_service.py` — extracted memory retrieval/scoring/runtime write logic
+- `services/journal_service.py` — extracted journal/outcome/recent-answer logic
+- `services/routing_service.py` — extracted action/routing/control-path logic
+- `services/prompt_builder.py` — extracted answer-line and prompt/message assembly logic
+- `tests/run_regression.py` — regression coverage now at 154 scenarios and still green
 - `tests/fixtures/extractor_validation_cases.json` — offline extractor validation cases
 - `memory/import_chat.py`, `memory/extractors/run_extractor.py`
 - `PROJECT_SPECIFICATION.md`, `.gitignore`
@@ -114,6 +119,7 @@ At last full run in this work session, this passed **50 / 50** tests. Re-run aft
 - Tune negation / overlap thresholds if real usage shows false positives/negatives.
 - Optional: score-only “time decay” if you add real timestamps later (still avoid silent JSON mutation unless intended).
 - Optional: golden **live** extractor snapshots (mocked OpenAI) if you want prompt changes fully regression-gated without API cost.
+- Optional: introduce a lightweight service context/container to reduce verbose dependency injection between `playground.py` and service modules while keeping behavior unchanged.
 
 ---
 

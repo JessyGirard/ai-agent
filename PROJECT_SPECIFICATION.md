@@ -9,7 +9,13 @@
 
 This project is a **local AI assistant / agent** built around:
 
-- **CLI loop** (`playground.py`): state commands, journaling, optional web fetch via tools, Anthropic chat, and a JSON-backed **memory store** with runtime extraction and deduplication.
+- **Orchestration loop** (`playground.py`): top-level input flow, deterministic branch ordering, service wiring, LLM/tool call ordering.
+- **Service modules**:
+  - `services/memory_service.py` (memory normalization/scoring/retrieval/runtime-write)
+  - `services/journal_service.py` (journal, outcome feedback, recent-answer context)
+  - `services/routing_service.py` (action typing and control-path routing)
+  - `services/prompt_builder.py` (answer-line shaping and prompt/message assembly)
+- **Persistence layer** (`core/persistence.py`): file I/O for state, memory payload, journal, and archive.
 - **LLM layer** (`core/llm.py`): Anthropic client, default tool-routing system prompt, preflight checks.
 - **Config** (`config/settings.py`): `.env` loading, model name, max tokens, API key accessor.
 - **Web tool** (`tools/fetch_page.py`): HTTP fetch + HTML-to-text (truncated).
@@ -23,7 +29,7 @@ This project is a **local AI assistant / agent** built around:
 
 | Entry | Role |
 |--------|------|
-| `playground.py` (`main()`) | Interactive REPL: loads state, optional LLM preflight warnings, `handle_user_input` loop. |
+| `playground.py` (`main()`) | Interactive REPL/orchestrator: loads state, runs top-level flow, delegates to services. |
 | `main.py` | Minimal placeholder (`print("Hello Jessy")`); not the agent entry. |
 | `app/ui.py` | Streamlit app: session state, themed UI, invokes `playground.handle_user_input`. |
 | `memory/import_chat.py` | CLI: `raw_chat.txt` → `imported.json` (one non-empty line per turn; alternates user/assistant; strips leading `USER:` / `AI:` / `ASSISTANT:` labels from content). |
@@ -63,7 +69,7 @@ Supplemental scripts (not the baseline gate):
 | `README.md` | Project tagline, **Testing Workflow**, and short **offline memory import** steps (regression as protected baseline). |
 | `HANDOFF_RECENT_WORK.md` | Human-oriented summary of recent increments for pasting into other chats (not a runtime dependency). |
 | `requirements.txt` | Pip dependencies for the main app, fetch tool, and offline extractor (see §3). |
-| `playground.py` | Core agent: state load/save, project journal (append, flush, archive, compaction), memory load/save, retrieval/scoring (including **safety / stability** phrasing tied to regression-harness memory, strong-memory retrieval filter, reinforced-evidence bonus), runtime memory extraction/write with normalization (`normalize_memory_display_value`, `canonicalize_memory_key_value`, dedupe on load), routing and prompts, `handle_user_input` orchestration (commands → memory write → LLM → optional fetch tool loop → journal), plus guards for command-discussion text and tool-meta/veto text. |
+| `playground.py` | Core orchestrator: command handling, deterministic branch ordering, service composition, LLM/tool invocation sequencing, and journaling hooks. |
 | `main.py` | Trivial hello script; not primary entry. |
 | `test_playground_memory.py` | Pytest-oriented tests for memory normalization / keys / transient identity (supplemental). |
 | `test_openai.py` | Calls OpenAI Responses API; prints output (manual verification). |
@@ -80,6 +86,16 @@ Supplemental scripts (not the baseline gate):
 | File | Description |
 |------|-------------|
 | `llm.py` | `llm_preflight_check`, `ask_ai` / `chat` via Anthropic; default system prompt teaches `TOOL:fetch <url>` pattern. |
+| `persistence.py` | File I/O helpers for state/memory/journal load/save/append/archive paths. |
+
+### `services/`
+
+| File | Description |
+|------|-------------|
+| `memory_service.py` | Memory-related runtime logic: tokenization, key canonicalization/dedupe, retrieval scoring/ranking, durable/personal context selection, runtime write conflict handling, and memory item updates. |
+| `journal_service.py` | Journal and outcome-feedback logic: append/flush/compaction coordination, retrieval/formatting helpers, anti-repeat guard, recent-answer history helpers. |
+| `routing_service.py` | Routing/control logic: action type detection, subtarget detection, strict-mode/override checks, vague research intent classification, and specific next-step selection. |
+| `prompt_builder.py` | Prompt composition layer: post-fetch prompt build, answer-line construction, and full `build_messages` system/user prompt assembly. |
 
 ### `tools/`
 
@@ -97,7 +113,7 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; full list of scenario tests (state, memory write, journal, tool fetch, LLM errors, memory key canonicalization, identity edge cases, command/tool-meta guards, **extractor merge/limit/validation fixtures**, etc.). **Exit code 1 if any test fails.** |
+| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; broad scenario coverage (state, memory write/retrieval, journal/outcome flow, routing/strictness, prompt shaping, tool fetch, extractor fixtures, error handling). **Current protected baseline: 154 scenarios. Exit code 1 if any test fails.** |
 | `fixtures/extractor_validation_cases.json` | Offline JSON cases consumed by regression to assert `run_extractor.validate_candidate` accept/reject behavior (no OpenAI call). |
 
 ### `memory/` — code
@@ -135,14 +151,14 @@ Supplemental scripts (not the baseline gate):
 ## 6. Data flow (high level)
 
 1. **Optional import:** `raw_chat.txt` → `import_chat.py` → `imported.json` → `run_extractor.py` → **`extracted_memory.json` merged** with prior rows (same category+value key reinforces evidence); `run_extractor.py --replace` starts from an empty in-memory map instead.
-2. **Runtime:** User input → `playground.handle_user_input` → state commands / journal / runtime memory merge → LLM → optional `fetch_page` follow-up → journal append.
+2. **Runtime:** User input → `playground.handle_user_input` (orchestration) → service-layer routing/memory/journal/prompt logic → LLM → optional `fetch_page` follow-up → journal append.
 3. **UI:** Same handler as CLI, via Streamlit.
 
 ---
 
 ## 7. Known structural notes (non-blocking)
 
-- Two memory mechanisms coexist: **`memory/memory.py` + `history.json`** vs **`extracted_memory.json` + playground runtime**. Intentional or legacy; worth documenting owner-of-truth per feature.
+- Two memory mechanisms coexist: **`memory/memory.py` + `history.json`** vs **`extracted_memory.json` + service/runtime memory flow**. Intentional or legacy; worth documenting owner-of-truth per feature.
 - Dependency versions are not pinned; add a lockfile or version caps when you formalize production installs.
 
 ---
