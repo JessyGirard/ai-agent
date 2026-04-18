@@ -409,4 +409,179 @@
 
 ---
 
+### 2026-04-17 — UI Increment 2: Streamlit cockpit layout scaffolding (`app/ui.py` only)
+
+**What changed:** **`app/ui.py`** — top-level **Operator cockpit** heading + caption above tabs. Tabs: **Assistant** (first), **Tool 1 — System eval (HTTP)** (unchanged panel logic), **Tool 2 (placeholder)** / **Tool 3 (placeholder)** (coming soon + disabled Run), **Terminal access** (title + reserved slot blurb + existing launcher/copy-paste). **Assistant** tab split into **Assistant** block (status, New Chat, quick prompts) and **Agent access (direct)** section (divider + heading + chat thread + `chat_input`); same `playground.handle_user_input` path, no backend edits. Minor CSS **`.cockpit-slot`** for terminal reserved blurb only. Renamed **`render_chat`** → **`render_assistant_tab`**.
+
+**Must not (verified):** No `playground.py`, fetch, system_eval internals, memory logic, Tool 2/3 behavior.
+
+**Regression:** **`215 / 215`** PASS with **`FETCH_MODE`** unset (if `FETCH_MODE=browser` is left in the shell, clear it before the gate — HTTP fetch tests assume default mode).
+
+**Manual UI smoke:** Operator should confirm in Streamlit: Assistant tab primary, Tool 1 runnable, placeholders visible, Agent access + Terminal access regions visible.
+
+**Next (UI Increment 3 suggestion):** Per-tab intros / operator checklist; optional `st.error` try/wrap around `run_query`; memory panel polish without new persistence.
+
+---
+
+### 2026-04-17 — UI Increment 3: Sidebar / cockpit status refinement (`app/ui.py` only)
+
+**What changed:** **`app/ui.py`** — Sidebar title **Operator cockpit** + orientation caption. **Current state:** clearer **Focus** / **Stage** blocks (markdown + monospace values, empty shown as `_empty_`). **Environment:** effective **fetch mode** (`http` vs `browser`) from `os.environ` only, mirroring `fetch_page` rule; optional caption for raw `FETCH_MODE` when set; optional `FETCH_BROWSER_TIMEOUT_SECONDS` caption when in browser mode. **Quick actions** / **Update focus & stage** / **Memory snapshot** labels normalized; short hints on form. **`st.sidebar.divider()`** before quick actions. **Main column:** **`render_cockpit_status_strip()`** — one-line **Focus · Stage · Fetch** under Operator cockpit caption (same getters + env mirror; no new backend).
+
+**Must not:** No `playground.py`, fetch internals, system_eval, memory logic, new tools.
+
+**Regression:** **`215 / 215`** PASS with **`FETCH_MODE`** unset.
+
+**Manual UI smoke:** Operator confirms sidebar + strip legible; tabs unchanged functionally.
+
+**Next (UI Increment 4 idea):** `try`/`except` around `run_query` + sidebar `handle_user_input` for graceful UI errors; optional link to `Create-Agent-UI-Shortcut.ps1` in Terminal tab.
+
+---
+
+### 2026-04-17 — UI Increment 4: Tool-panel clarity & placeholder polish (`app/ui.py` only)
+
+**What changed:** **`app/ui.py`** — **Assistant:** intro caption (**Shortcuts** vs **Conversation**); **### Shortcuts** + **### Conversation** with moved **New Chat** + status pill under Conversation; helper captions only. **Tool 1:** clearer title/caption, **`st.info`** “when to use” blurb; inputs/buttons/results unchanged. **Tools 2–3:** tab labels **Tool N · Planned**; panel title **Tool N — planned**; roadmap-pointer **`st.info`** copy per slot + “not broken” caption; disabled Run unchanged. **Terminal:** purpose caption + cockpit-slot blurb; **### Launchers** (was “One-click”); tab label **Terminal**. **Main:** cockpit caption lists tab roles left-to-right.
+
+**Must not:** No backend, playground, fetch, system_eval, memory logic.
+
+**Regression:** **`215 / 215`** PASS (`FETCH_MODE` unset).
+
+**Next (UI Increment 5 idea):** `try`/`except` around `run_query` + sidebar `handle_user_input`; optional Terminal line for `Create-Agent-UI-Shortcut.ps1`.
+
+---
+
+### 2026-04-17 — UI Increment 5: Landing layout correction — agent-first cockpit (`app/ui.py` only)
+
+**What changed:** **`app/ui.py`** — **Removed `st.tabs` + main “Operator cockpit” header strip.** **Left rail:** `st.sidebar` **`st.radio`** (`key=ui_surface`, options **Agent / Tool 1 / Tool 2 / Tool 3 / Terminal**) under **Navigate**; default **`ui_surface`** = **Agent** via `init_session_state`. **Center:** **`render_main_surface()`** routes to existing panels only. **Agent center:** **`render_agent_center_minimal()`** — status pill + **New chat**, **Shortcuts** in collapsed **`st.expander`**, then messages + **`st.chat_input`** (minimal chrome, no large title block). **Sidebar below nav:** compact focus/stage line + effective fetch caption + **Show state** / **Reset state**; **Adjust focus / stage**, **Fetch environment**, **Memory snapshot** moved into **expanders** (same `playground` / `load_memory_items` behavior). **Tool 1 / placeholders / Terminal:** **`st.subheader`** instead of **`st.title`** where applicable; Tool 1 “about” + Terminal “why” in **expanders** to reduce vertical grab. **Removed:** `render_cockpit_status_strip`, old **`render_sidebar`** / **`render_assistant_tab`**.
+
+**Must not:** No `playground.py`, fetch, system_eval, memory logic, new backends, Tool 2/3 implementation, embedded terminal.
+
+**Regression:** **`215 / 215`** PASS (`FETCH_MODE` unset).
+
+**Next (UI Increment 6 idea):** `try`/`except` around `run_query` + sidebar `handle_user_input`; document sidebar-vs-center in **`SYSTEM_EVAL_RUNBOOK.md`** one paragraph.
+
+---
+
+### 2026-04-17 — UI Increment 6: Sidebar strip-down — minimal navigation rail (`app/ui.py` only)
+
+**What changed:** **`app/ui.py`** — Sidebar is **radio only** (no **Navigate** heading/captions, no **`st.sidebar.divider()`**). **One-line** focus/stage via **`.sidebar-status-line`** CSS + **`html.escape`**. **Show** / **Reset** as compact **`type="secondary"`** buttons with **`help=`** for full commands. **Single** collapsed **`st.expander("Advanced")`** bundles former **Adjust focus/stage** form, **Fetch** mirror (`st.text` lines only), **Memory** list (minimal captions). **Removed** default-visible fetch caption, triple expanders, instructional paragraphs. **`import html`** for safe status line.
+
+**Must not:** No center layout redesign, no playground/fetch/system_eval/memory logic changes.
+
+**Regression:** **`215 / 215`** PASS (`FETCH_MODE` unset).
+
+**Docs:** **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`** — operator sentence updated for **Surface** radio + **Advanced** expander.
+
+**Next (UI Increment 7 idea):** `try`/`except` around **`run_query`** + sidebar **`handle_user_input`**; optional **toast** on surface change.
+
+---
+
+### 2026-04-17 — UI Increment 7: Agent-first landing — clean center (`app/ui.py` only)
+
+**What changed:** **`app/ui.py`** — **Agent** center no longer shows status row, **New chat** beside pill, or **Shortcuts** expander above the thread. All moved into **`st.popover("⋯")`** (fallback **`st.expander("Menu")`** if `popover` missing) via **`_render_agent_menu_controls()`** — status caption, **New chat**, quick-prompt buttons. Main column order: **one** popover trigger → **chat_message** loop → **`st.chat_input`**. **No** navigation in center (unchanged: radio stays sidebar only). **Sidebar** untouched structurally (Inc 6 rail).
+
+**Must not:** No playground/fetch/system_eval/memory changes; no new nav system; no top bar.
+
+**Regression:** **`215 / 215`** PASS (`FETCH_MODE` unset).
+
+**Next (UI Increment 8 idea):** `try`/`except` around **`run_query`** + sidebar **`handle_user_input`** for graceful failures.
+
+---
+
+### 2026-04-17 — UI Increment 8: Top surface bar only (`app/ui.py` + doc accuracy)
+
+**What changed:** **`app/ui.py`** — **`_SURFACE_NAV`** operator labels **Agent · API · Prompt · Regression · Terminal** mapped to existing **`ui_surface`** keys **`Agent` / `Tool 1` / `Tool 2` / `Tool 3` / `Terminal`**. **`render_top_surface_bar()`**: one row of five **`st.columns`** buttons (primary = selected, secondary otherwise); **`_go_surface()`** updates state + rerun. **`main()`** calls top bar **before** sidebar + **`render_main_surface()`**. **Sidebar:** radio removed; **Surface · backup** caption + **2-column** compact duplicate buttons (same mapping). **Center:** Agent still popover-first (Inc 7 unchanged). **API** panel title **`API — System eval (HTTP)`**; placeholders titled **Prompt — planned** / **Regression — planned** with copy tweaks only.
+
+**Docs:** **`README.md`**, **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`** — Tool 1 wording → **API** / top bar.
+
+**Must not:** No playground/fetch/system_eval/memory/backend changes; Prompt/Regression remain placeholders.
+
+**Regression:** **`215 / 215`** PASS (`FETCH_MODE` unset).
+
+**Next (UI Increment 9 idea):** `try`/`except` around **`run_query`** + sidebar **`handle_user_input`**; optional slim **`st.segmented_control`** if you want even less vertical than five buttons.
+
+---
+
+### 2026-04-17 — Doc alignment: HANDOFF_RECENT_WORK + CHATGPT_COLLAB_SYNC (no product code)
+
+**What changed:** **`docs/handoffs/HANDOFF_RECENT_WORK.md`** — top **Aligned / Lanes** snapshot refreshed for **UI Inc 8** (top surface bar, agent popover, minimal sidebar, **`Create-Agent-UI-Shortcut.ps1`**, **`FETCH_MODE`** gate note); **UI Inc 1** bullet corrected; **Files most touched** + **Suggested next moves** updated. **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`** — precision map, **Current Project Snapshot**, and **bootstrap paste** block updated for same UI + **`FETCH_MODE`** discipline.
+
+**Regression:** not run (docs only).
+
+**Next:** UI Increment 9 when approved (`try`/`except` chat path).
+
+---
+
+### 2026-04-17 — Tool 1: assertions (engine) + operator UX + durable run log (UI / operator / log module)
+
+**Implemented:**
+
+- **`core/system_eval.py` (Inc 10):** minimal response assertions **`expected_status`**, **`body_contains`**, **`header_contains`**; suite key validation; harness tests (see prior Cursor SYNC).
+- **`app/ui.py` (Inc 11–15, 17 wiring):** single-request **Bearer / Basic / API key** auth header merge; per-case **outcome** + customer **run summary**; **rerun last request** + **copyable** plain summary + approximate **curl**; **`run_log_error`** / **`tool1_run_log_error`** warnings if log append fails.
+- **`app/system_eval_operator.py`:** after every **`run_tool1_system_eval_http`** return path, append **suite** run record; bundle includes **`run_log_error`** when logging fails.
+- **`app/tool1_run_log.py` (new):** append-only **`logs/tool1_runs.jsonl`** (schema v1): timestamp, run type, suite/target, configuration, **`requests`** (planned HTTP), **`cases_outcome`** (results + bodies/headers as in bundle), **`artifact_paths`**, **`error`**, optional **`request_input_snapshot`** / **`auth_mode`** for single-request.
+
+**Files:** `core/system_eval.py` (Inc 10 only), `app/ui.py`, `app/system_eval_operator.py`, `app/tool1_run_log.py`, `tests/run_regression.py`, `docs/handoffs/HANDOFF_RECENT_WORK.md`, `docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`, `docs/handoffs/CHATGPT_COLLAB_SYNC.md`, `README.md`, `docs/reliability/RELIABILITY_EVIDENCE.md`, this log.
+
+**Regression:** **`236 / 236`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset). **`system_eval_runner` smoke:** yes (via regression). **Manual:** send single request + suite run once; confirm **`logs/tool1_runs.jsonl`** gains lines (repo `logs/` is gitignored).
+
+**Must not (verified for UI/operator/log slice):** No **`playground.py`**, fetch, memory, or **`playground`**-coupled changes in this increment batch beyond doc cross-refs.
+
+**Next:** Optional **Increment B/C** from test-logging plan (UI pointer polish; read-only recent runs list) only if Jessy approves; or **UI Inc 9** chat **`try`/`except`**.
+
+---
+
+### 2026-04-17 — Tool 1 Increment 18: Human-readable `summary` on each JSONL log line (`app/tool1_run_log.py`)
+
+**What changed:** Each append-only record in **`logs/tool1_runs.jsonl`** now includes a plain-text **`summary`** field (one short paragraph: method/URL, pass/fail, check tallies, first failure line when relevant, timing). Built by **`compose_tool1_run_human_summary()`** after **`build_tool1_run_record_suite`** / **`build_tool1_run_record_single`** — **additive only**; all existing structured fields unchanged. Safe on missing/partial data (transport errors, empty body, no cases).
+
+**Must not:** No **`core/system_eval.py`**, **`app/ui.py`**, **`playground.py`**, fetch, or memory changes.
+
+**Regression:** **`236 / 236`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** Optional UI surfacing of recent log rows; or Tool 1 / UI increments as approved.
+
+---
+
+### 2026-04-17 — Tool 1 Increment 19: Public demo scenario pack (fixtures + minimal docs)
+
+**What changed:** **`system_tests/suites/tool1_public_demo/`** — three runnable suite JSONs (JSONPlaceholder smoke + intentional failures + httpbin header/Bearer echo), folder **`README.md`**. **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`** § *4a. Public demo scenario pack*; **`README.md`** one bullet under AI System Test Engineering. No engine/UI/playground/fetch/memory code.
+
+**Regression:** **`236 / 236`** PASS.
+
+**Next:** Same as above; demo suites for portfolio/practice runs only.
+
+---
+
+### 2026-04-17 — **Milestone:** Tool 1 proven on live public suite — pivot to engine capability (Inc 20+)
+
+**Verified (operator / real network):** Suite **`system_tests/suites/tool1_public_demo/tool1_demo_public_smoke.json`** ran end-to-end through Tool 1 (**API** UI and/or **`tools/system_eval_runner.py`**). **Outcome: PASS — 3 / 3 cases** (status, body substring, response header checks against JSONPlaceholder).
+
+**What this proves (lock-in):** The **full stack** is operational in real use: suite load → HTTP execution → assertions → artifacts → UI pass/fail and customer-readable summaries → durable **`logs/tool1_runs.jsonl`** with human **`summary`**. The **public demo pack** is validated as usable practice/demo material. This is the **first confirmed live suite success** for Tool 1 as a working API testing path (not only a built interface).
+
+**Decision:** We are **not** pausing in demo-only mode. **Next lane:** **Tool 1 — smarter testing power** — return priority to **`core/system_eval.py`** (assertion intelligence, precision validation) in **thin increments**. Recommended **Increment 20:** strengthen the **precision assertion surface** already partially present in engine code: e.g. suite-time **validation** + **regression coverage** for existing **`equals`** and **`regex`** body assertions (today implemented in **`_assert_output_matches`** but lightly exercised in harness); then follow with JSON-canonical equality or header-precision keys only as separate small slices after 20 is green.
+
+**Regression baseline:** **`236 / 236`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) — reconfirm after any engine change.
+
+**Next:** Implement **Tool 1 Increment 20** (or adjusted scope) on **`core/system_eval.py`** + **`tests/run_regression.py`** only unless UI copy is explicitly required; avoid bundling UI + engine + logging in one step.
+
+---
+
+### 2026-04-17 — Tool 1 Increments 42–46: scenario engine, variables, templates, step reporting, markdown artifacts
+
+**What shipped (engine + harness + docs; no `app/ui.py` / `playground.py` / fetch / memory changes in these increments):**
+
+- **Inc 42 — Variable substitution:** `{{variable_name}}` in **`url`**, header values, and payload strings; missing variable → `variable not found` + `{"variable":…}`; variables from **`extract`** in the same case; legacy two-hop via **`request_url_initial`** / **`payload_initial`** / **`headers_initial`** when **`steps`** is absent; **`stability`**/**`consistency`** reject request placeholders.
+- **Inc 43 — `steps`:** ordered multi-step execution; assertions + **`extract`** per step; shared **`variables`**; failures prefixed **`step failed`** + step id JSON; **`stability`**/**`consistency`** reject **`steps`**.
+- **Inc 44 — `step_templates`:** case-level **`step_templates`**; steps use **`use`** + optional overrides; unknown template → **`template not found`** at validate time.
+- **Inc 45 — `step_results`:** JSON case rows list per-step **`PASS`**/**`FAIL`**, substituted **`url`**, **`latency_ms`**, optional **`reason`**.
+- **Inc 46 — Markdown:** **`write_result_artifacts`** **`.md`** output includes **`### Steps`** bullets (compact lines + **`Reason:`** when failed).
+
+**Files:** `core/system_eval.py`, `tests/run_regression.py`, `README.md`, `CHANGELOG.md`, `docs/reliability/RELIABILITY_EVIDENCE.md`, `docs/specs/PROJECT_SPECIFICATION.md`, `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`, `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`, `docs/handoffs/CHATGPT_COLLAB_SYNC.md`, `docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`, `docs/handoffs/HANDOFF_RECENT_WORK.md`, this log.
+
+**Regression:** **`297 / 297`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** Optional UI surfacing of **`step_results`**; further engine slices only as approved.
+
+---
+
 *(Add new entries below this line.)*

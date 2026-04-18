@@ -109,7 +109,7 @@ If system Python lacks `playwright`, all three URLs return **`[fetch:browser_una
 ## What worked
 
 - **example.com** in browser mode: full static text extracted; confirms Playwright path end-to-end.
-- **Regression:** **215 / 215** PASS when **`FETCH_MODE` is not set to `browser`** during `python tests/run_regression.py` (HTTP mocks).
+- **Regression:** confirm with latest gate (e.g. **297 / 297** when **`FETCH_MODE` is not set to `browser`** during `python tests/run_regression.py` — HTTP mocks).
 
 ## What failed (real browser this run)
 

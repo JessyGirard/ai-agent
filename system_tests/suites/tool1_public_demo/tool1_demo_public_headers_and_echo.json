@@ -1,0 +1,34 @@
+{
+  "suite_name": "Tool 1 demo — custom headers and echo",
+  "target_name": "httpbin.org",
+  "cases": [
+    {
+      "name": "Header echo — custom client header reflected in body",
+      "method": "GET",
+      "url": "https://httpbin.org/headers",
+      "headers": {
+        "X-Tool1-Demo-Client": "PortfolioScenarioPack"
+      },
+      "payload": {},
+      "timeout_seconds": 30,
+      "assertions": {
+        "expected_status": 200,
+        "body_contains": "PortfolioScenarioPack"
+      }
+    },
+    {
+      "name": "Auth-style header — Bearer demo token echoed (not a secret)",
+      "method": "GET",
+      "url": "https://httpbin.org/bearer",
+      "headers": {
+        "Authorization": "Bearer tool1-demo-public-bearer-not-a-secret"
+      },
+      "payload": {},
+      "timeout_seconds": 30,
+      "assertions": {
+        "expected_status": 200,
+        "body_contains": "tool1-demo-public-bearer-not-a-secret"
+      }
+    }
+  ]
+}

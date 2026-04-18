@@ -51,6 +51,9 @@ def _goto_with_bounded_retries(page, url: str, timeout_ms: int) -> None:
 
     Uses ``commit`` first (earliest navigation commit), then ``domcontentloaded``, then
     ``load``. Each attempt gets an equal slice of ``timeout_ms`` so total work stays bounded.
+
+    If all three attempts fail, performs **one** bounded recovery ``goto`` with
+    ``wait_until=domcontentloaded`` and a larger cap (still bounded) for slow shells.
     """
     wait_sequence = ("commit", "domcontentloaded", "load")
     n = len(wait_sequence)
@@ -63,7 +66,15 @@ def _goto_with_bounded_retries(page, url: str, timeout_ms: int) -> None:
         except Exception as exc:
             last_exc = exc
             if idx == n - 1:
-                raise last_exc
+                break
+    recovery_ms = min(20_000, max(8000, int(timeout_ms)))
+    try:
+        page.goto(url, timeout=recovery_ms, wait_until="domcontentloaded")
+        return
+    except Exception:
+        if last_exc is not None:
+            raise last_exc
+        raise
 
 
 def _bounded_post_goto_waits(page, cap_ms: int) -> None:
@@ -84,6 +95,68 @@ def _bounded_post_goto_waits(page, cap_ms: int) -> None:
             page.wait_for_load_state(state, timeout=t)
         except Exception:
             pass
+    # Second bounded network settle (many SPAs keep long-polling); ignore failures.
+    tail = max(600, min(3500, budget // 4))
+    try:
+        page.wait_for_load_state("networkidle", timeout=tail)
+    except Exception:
+        pass
+
+
+def _bounded_spa_readiness_waits(page, budget_ms: int) -> None:
+    """
+    Extra **load / hydration** readiness only (no extraction selectors).
+
+    Bounded: ``document.readyState``, optional ``networkidle``, short deterministic
+    DOM-shape stability poll (child counts only), then a micro idle slice.
+    """
+    b = int(budget_ms)
+    if b < 400:
+        return
+    slice_ready = min(4500, max(1200, b // 3))
+    try:
+        page.wait_for_function(
+            "() => document.readyState === 'complete'",
+            timeout=slice_ready,
+        )
+    except Exception:
+        pass
+    slice_net = min(5000, max(800, b // 3))
+    try:
+        page.wait_for_load_state("networkidle", timeout=slice_net)
+    except Exception:
+        pass
+    stability_budget = min(3200, max(600, b // 3))
+    step = min(450, max(200, stability_budget // 8))
+    elapsed = 0
+    last_count = None
+    stable_ticks = 0
+    while elapsed + step <= stability_budget:
+        try:
+            cnt = page.evaluate(
+                "() => { const b = document.body; return b ? b.childElementCount : 0; }",
+                timeout=min(1800, step * 4),
+            )
+        except Exception:
+            break
+        if not isinstance(cnt, int):
+            break
+        if last_count is not None and cnt == last_count and cnt > 0:
+            stable_ticks += 1
+            if stable_ticks >= 2:
+                break
+        else:
+            stable_ticks = 0
+        last_count = cnt
+        try:
+            page.wait_for_timeout(step)
+        except Exception:
+            break
+        elapsed += step
+    try:
+        page.wait_for_timeout(min(250, max(120, b // 20)))
+    except Exception:
+        pass
 
 
 def _inner_text_first_locator(page, selector: str, timeout_ms: int) -> str:
@@ -504,6 +577,8 @@ def fetch_via_browser(url: str, timeout_seconds: int = 20) -> str:
                 page = browser.new_page()
                 _goto_with_bounded_retries(page, url, timeout_ms)
                 _bounded_post_goto_waits(page, timeout_ms)
+                spa_budget = min(6000, max(1500, timeout_ms // 5))
+                _bounded_spa_readiness_waits(page, spa_budget)
                 probe_attempted = True
                 dom_probe = _bounded_dom_probe_via_eval(page, inner_timeout)
                 title = (page.title() or "").strip()

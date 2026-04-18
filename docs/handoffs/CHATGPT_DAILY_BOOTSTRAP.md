@@ -4,7 +4,7 @@
 
 **The solution:** A **living log** plus this page. ChatGPT does not “remember” yesterday; the **repo remembers** in `docs/handoffs/SESSION_SYNC_LOG.md`.
 
-**Latest target (ChatGPT sync):** **`SESSION_SYNC_LOG.md` (bottom entries) always wins.** As of last alignment: **FETCH (browser) lane** complete through **Increment 13** — Playwright path behind **`FETCH_MODE=browser`**, bounded navigation + extraction + **`diag=`** diagnostics (probe tiers / **`st=1`** / **`exc=`**), operator glossary in **`docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`**. **UI lane active:** **UI Increment 1** — **`Launch-Agent-UI.cmd`** + runbook *Windows one-click launch* for daily Streamlit access (**.venv-win**); **`app/ui.py`** unchanged in that increment. Still in repo: PR #1-style **HTTP system_eval lanes**, **Tool 1** tab + **local verify server**, **`[fetch:tag]`**, optional **`FETCH_BROWSER_TIMEOUT_SECONDS`**, regression **215 / 215**. **Tool 1 feature expansion paused**; **PR #2** not started unless the log says otherwise.
+**Latest target (ChatGPT sync):** **`SESSION_SYNC_LOG.md` (bottom entries) always wins.** As of last alignment: **FETCH (browser) lane** complete through **Increment 13** (**`FETCH_MODE=browser`**, **`diag=`** glossary **`docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`**). **UI + Tool 1 (API surface):** **`Launch-Agent-UI.cmd`** + **`app/ui.py`** — top bar surfaces, single-request **auth helpers** (Bearer/Basic/API key), **customer run summary**, **rerun last request** + copyable request + approximate **curl**, per-case outcome detail; **durable run log** append-only **`logs/tool1_runs.jsonl`** via **`app/tool1_run_log.py`** (each record includes a plain-text **`summary`**; **`run_log_error`** on bundle if append fails). **Milestone:** live run **`tool1_demo_public_smoke.json`** → **PASS 3/3** — Tool 1 **proven on real public HTTP**. **Demo suites:** **`system_tests/suites/tool1_public_demo/`** (runbook §4a). **Engine:** **`core/system_eval.py`** — includes **`steps`** scenarios, **`step_templates`** / **`use`**, **`{{variable}}`** substitution, **`step_results`** in JSON + **`### Steps`** in **`.md`** artifacts (Increments 42–46; see log). Regression **297 / 297**. **PR #2** not started unless the log says otherwise.
 
 ---
 
@@ -30,12 +30,14 @@ Hard rules:
 - If docs conflict: docs/reliability/RELIABILITY_EVIDENCE.md and passing tests beat opinions.
 
 Latest target (verify bottom of docs/handoffs/SESSION_SYNC_LOG.md — log wins):
-- FETCH lane (browser): shipped through Incr. 13; behavior through `fetch_browser.py` + runbook glossary; hard sites may still be `low_content` / `browser_timeout` — read `diag=` + runbook
-- UI lane: Incr. 1 launcher (`Launch-Agent-UI.cmd`, SYSTEM_EVAL runbook); next = incremental Streamlit operator UX (Tool 1 first)
-- HTTP system_eval lanes + runner; Tool 1 Streamlit tab + local verify target for manual UI
-- Fetch facade: HTTP default; optional `FETCH_MODE=browser` (Playwright); `[fetch:…]` tags; optional `FETCH_BROWSER_TIMEOUT_SECONDS` (browser nav budget only)
-- Regression gate: 215 / 215 at last recorded run
-- Paused unless log updates: Tool 1 feature expansion; PR #2 prompt↔response
+- FETCH lane (browser): shipped through Incr. 13; `diag=` + `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`
+- UI + Tool 1 (API): `app/ui.py` — auth helpers, summaries, rerun/copy, outcomes; `app/system_eval_operator.py` logs suite runs
+- Tool 1 durable log: `app/tool1_run_log.py` + `logs/tool1_runs.jsonl` — full JSON plus human `summary` per line (Inc 18); public demo suites `system_tests/suites/tool1_public_demo/` (Inc 19); runbook §4a
+- **Milestone:** `tool1_demo_public_smoke.json` ran live **PASS 3/3** — Tool 1 operationally proven; **next focus = engine/assertion power (Inc 20+)**, not demo expansion
+- HTTP system_eval: `core/system_eval.py` — assertions + **`steps`** / **`step_templates`** / **`{{var}}`** substitution + **`step_results`** (see `README.md` and `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`)
+- Fetch facade: HTTP default; optional `FETCH_MODE=browser`; `[fetch:…]` tags; unset `FETCH_MODE` before regression gate
+- Regression gate: 297 / 297 at last recorded run
+- Not started unless log updates: PR #2 prompt↔response; optional = Tool 1 recent-log UI / chat try/except (see log)
 
 Your job each session:
 - Confirm scope: no phase drift, no unsafe bundling.

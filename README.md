@@ -16,7 +16,7 @@ The creation of a powerful friend and ally.
 - `services/journal_service.py`: project journal/outcome feedback/recent-answer history helpers
 - `services/routing_service.py`: action typing and routing/control-path detection
 - `services/prompt_builder.py`: prompt assembly + answer-line shaping
-- `app/ui.py`: Streamlit frontend using the same `playground.handle_user_input` path. **Windows (Jessy / operators):** double-click **`Launch-Agent-UI.cmd`** at the repo root (uses **`.venv-win`** like `Open-DevShell.cmd`). **Any OS:** from repo root, `streamlit run app/ui.py` or `python -m streamlit run app/ui.py`. Use the **Tool 1 — System eval (HTTP)** tab to run `system_eval` suites without the terminal (same engine as `tools/system_eval_runner.py`). Pinning and relaunch: `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md` → *Windows one-click launch*.
+- `app/ui.py`: Streamlit frontend using the same `playground.handle_user_input` path. **Windows (Jessy / operators):** double-click **`Launch-Agent-UI.cmd`** at the repo root (uses **`.venv-win`** like `Open-DevShell.cmd`). For a **taskbar-ready shortcut**, run **`Create-Agent-UI-Shortcut.ps1`** from the repo root (see `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md` → *Pin to the taskbar*). **Any OS:** from repo root, `streamlit run app/ui.py` or `python -m streamlit run app/ui.py`. In the UI, select **API** (top bar or sidebar backup) to run `system_eval` suites without the terminal (same engine as `tools/system_eval_runner.py`). Relaunch details: `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md` → *Windows one-click launch*.
 
 ## Project History
 
@@ -35,7 +35,7 @@ The creation of a powerful friend and ally.
 - Pytest-based tests are supplemental and can be run for additional coverage.
 - Any code change must keep the regression suite passing before commit.
 - If pytest and regression results differ, treat regression as the release gate and resolve the discrepancy before merge or push.
-- Current baseline size after the latest hardening sequence: `215` regression scenarios.
+- Current baseline size after the latest hardening sequence: **`297`** regression scenarios (`python tests/run_regression.py`; confirm after large merges).
 - GitHub Actions automation:
   - `.github/workflows/ci.yml` runs regression + quick chunked soak on pull requests and pushes to `main`/`master`.
   - `.github/workflows/nightly-soak.yml` runs a scheduled 10k chunked soak and supports manual trigger (`workflow_dispatch`).
@@ -47,12 +47,15 @@ Live API smoke scripts (`test_openai.py`, `test_claude.py`) call the network and
 - Operator runbook: `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`
 - Runner: `python tools/system_eval_runner.py --suite "system_tests/suites/example_http_suite.json" --output-dir "logs/system_eval" --file-stem "local_eval_run"`
 - Core implementation: `core/system_eval.py`
-- **Tool 1 UI first pass:** `python tools/tool1_verify_server.py` (listens on `http://127.0.0.1:37641`), then `streamlit run app/ui.py` → **Tool 1** tab uses default suite `system_tests/suites/tool1_local_starter_suite.json` → expect **PASS** (details in runbook).
+- **Tool 1 UI first pass:** `python tools/tool1_verify_server.py` (listens on `http://127.0.0.1:37641`), then `streamlit run app/ui.py` → surface **API** uses default suite `system_tests/suites/tool1_local_starter_suite.json` → expect **PASS** (details in runbook).
 - Example suite template: `system_tests/suites/example_http_suite.json` (optional per-case `lane`: `stability` | `correctness` | `consistency`; `stability` → optional `stability_attempts` 1–50 (default 3); `consistency` → optional `repeat_count` 1–50 (default 3); repeated attempts must all pass the same assertions; outcomes in artifacts)
+- **Scenario cases (`steps`):** correctness lane only — ordered **`steps`** with per-step **`name`**, **`method`**, **`url`**, optional **`headers`** / **`payload`**, and the same assertion / **`extract`** keys as single-request cases (flat on each step). Shared runtime **`variables`** from **`extract`**; reuse values in URLs / headers / payload with **`{{variable_name}}`**. Optional case-level **`step_templates`** and per-step **`use`** + overrides. Failures are prefixed with **`step failed`** and the step id. Case results include **`step_results`** (per-step PASS/FAIL, substituted URL, **`latency_ms`**, optional **`reason`**). **Markdown artifacts** include a compact **`### Steps`** subsection for operator visibility.
+- **Legacy placeholder two-hop** (no **`steps`**): optional **`request_url_initial`**, **`payload_initial`**, **`headers_initial`** for a single case that uses **`{{...}}`** before variables exist; **`stability`** / **`consistency`** lanes reject request placeholders.
+- **Tool 1 public demo suites** (JSONPlaceholder / httpbin, no credentials): `system_tests/suites/tool1_public_demo/` — see folder `README.md` and `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md` § *Public demo scenario pack*.
 - **Playground fetch modes:** `tools/fetch_page.py` stays the facade. Default `FETCH_MODE` is **http** (`requests` + BeautifulSoup in `tools/fetch_http.py`). Set **`FETCH_MODE=browser`** to use headless Chromium via **Playwright** (`tools/fetch_browser.py`, public `http://` / `https://` only). Navigation uses a bounded **`commit` → `domcontentloaded` → `load`** goto ladder (each step gets an equal slice of the navigation timeout), then short post-goto readiness waits. Extraction prefers **`main` / `[role="main"]` / `article`** (first match each) when they yield more visible text than **`body`**, then one optional bounded scroll and a second extract pass if content is still thin. When structured **`h1` / `h2` / role=heading / scoped header+article headings** yield a stronger compact bundle than thin generic text, that headline line replaces the body slice (deterministic **` | `** join, capped) before merge with the page title. A final bounded **`page.evaluate`** pass walks **text nodes** under **`main` / `[role="main"]` / `body`** (skipping script/style) and may replace the body slice when that string wins the same length / thin-page rule—separate from **`inner_text`** headline collection. On **`browser_timeout`**, **`browser_error`**, and **`low_content`**, responses may end with a compact **` diag=…`** suffix (bounded DOM snapshot / **`exc=`** class / merge length; probe uses JSON + fallbacks including **`fb=1`** pipe / **`fb=2`** micro lengths, or **`st=1`** if every bounded **`evaluate`** path is unusable) for operators—**`[fetch:tag]`** names unchanged. **Token glossary:** `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md` → section *Operator reference: `diag=` suffix*. Optional **`FETCH_BROWSER_TIMEOUT_SECONDS`** (integer, clamped **5–120**, default **20**) bounds that navigation budget for browser mode only. Install browser deps once: `pip install playwright` then `playwright install chromium`. Failures use the same `[fetch:tag]` pattern as HTTP mode.
 - Artifacts written per run:
-  - `logs/system_eval/<file_stem>.json`
-  - `logs/system_eval/<file_stem>.md`
+  - `logs/system_eval/<file_stem>.json` — full structured result (including **`step_results`** when a case used **`steps`**)
+  - `logs/system_eval/<file_stem>.md` — human summary; multi-step cases include a **`### Steps`** block (PASS/FAIL, latency, URL, reason on failure)
 
 ## Offline memory import (optional)
 

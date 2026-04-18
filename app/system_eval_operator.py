@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app import tool1_run_log
 from core import system_eval
 
 
@@ -47,13 +48,27 @@ def run_tool1_system_eval_http(
     out_dir = _resolve_under_root(output_dir, root)
 
     if not suite_file.is_file():
+        err = f"Suite file not found: {suite_file}"
+        log_err = tool1_run_log.try_log_suite_run(
+            suite_path=suite_path,
+            output_dir=output_dir,
+            file_stem=file_stem,
+            fail_fast=fail_fast,
+            default_timeout_seconds=default_timeout_seconds,
+            suite=None,
+            result=None,
+            artifact_paths={},
+            error=err,
+            project_root=root,
+        )
         return {
             "ok": False,
             "result": None,
             "artifact_paths": {},
             "json_preview": "",
             "markdown_preview": "",
-            "error": f"Suite file not found: {suite_file}",
+            "error": err,
+            "run_log_error": log_err,
         }
 
     try:
@@ -94,6 +109,18 @@ def run_tool1_system_eval_http(
     else:
         markdown_preview = md_text
 
+    log_err = tool1_run_log.try_log_suite_run(
+        suite_path=suite_path,
+        output_dir=output_dir,
+        file_stem=file_stem,
+        fail_fast=fail_fast,
+        default_timeout_seconds=default_timeout_seconds,
+        suite=suite,
+        result=result,
+        artifact_paths=artifact_paths,
+        error=None,
+        project_root=root,
+    )
     return {
         "ok": bool(result.get("ok")),
         "result": result,
@@ -101,4 +128,5 @@ def run_tool1_system_eval_http(
         "json_preview": json_preview,
         "markdown_preview": markdown_preview,
         "error": None,
+        "run_log_error": log_err,
     }

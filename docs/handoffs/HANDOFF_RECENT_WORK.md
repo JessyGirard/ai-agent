@@ -8,11 +8,13 @@
 
 **User preferences we followed:** small increments, low risk, no scope creep, regression must stay green before trusting changes.
 
-**Aligned for new ChatGPT session (2026-04-17):** Protected baseline is **`215 / 215`** (`python tests/run_regression.py`) — confirm **`SESSION_SYNC_LOG.md` (bottom)** if newer.
+**Aligned for new ChatGPT session (2026-04-17):** Protected baseline is **`297 / 297`** (`python tests/run_regression.py`) — confirm **`SESSION_SYNC_LOG.md` (bottom)** if newer. Before the gate, **`FETCH_MODE`** should be **unset** in the shell (leaking **`browser`** breaks HTTP fetch regression cases). **Tool 1 engine:** **`core/system_eval.py`** now supports **`steps`** scenarios, **`step_templates`** / **`use`**, **`{{variable}}`** substitution, **`step_results`** on case rows, and **`### Steps`** in markdown artifacts (see **`README.md`** and **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`**).
 
-**Lanes:** The **FETCH (browser)** vertical shipped through **Increment 13** (behavior in **`tools/fetch_browser.py`** through **Increment 12**; **Increment 13** = operator **`diag=`** glossary in **`docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`** only). **Active focus** pivoted to the **UI lane**: **UI Increment 1** adds **`Launch-Agent-UI.cmd`** (Windows one-click Streamlit using **`.venv-win`**) plus runbook pinning steps in **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`**. **Tool 1 expansion paused**; **PR #2** (prompt↔response) not started unless the log says otherwise.
+**Milestone (same day):** **`tool1_demo_public_smoke.json`** (3 cases) was run successfully against **live JSONPlaceholder** (**PASS 3/3**). Tool 1 is **operationally proven** end-to-end (suite path, UI, summaries, durable log + **`summary`**). **Phase lock:** next priority is **engine / assertion strength** (**Increment 20** and follow-ons), not additional demo fixtures unless explicitly requested.
 
-Also in repo (earlier same phase): **HTTP system_eval lanes**, **Tool 1** Streamlit tab + **`tools/tool1_verify_server.py`**, **`FETCH_MODE=browser`** (Playwright) behind **`tools/fetch_page.py`**, **`[fetch:tag]`** classification, optional **`FETCH_BROWSER_TIMEOUT_SECONDS`**, dev shell helpers (**`Open-DevShell.cmd`** / **`.venv-win`**).
+**Lanes:** **FETCH (browser)** is **closed at Increment 13** (code path through **`tools/fetch_browser.py`**; Inc 13 = operator **`diag=`** glossary **`docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`** only). **UI lane** includes **UI Increments 1–8** (launcher, cockpit, top bar) **plus Tool 1 operator UX 10–17** in **`app/ui.py`** (see below). **Tool 1 log + fixtures:** **`app/tool1_run_log.py`** — schema still v1; each line now includes a shareable plain-text **`summary`** (Increment **18**). **Public demo suites** for practice/portfolio: **`system_tests/suites/tool1_public_demo/`** (Increment **19**; JSONPlaceholder + httpbin, no secrets). **Top surface bar:** **Agent / API / Prompt / Regression / Terminal** → same internal **`ui_surface`** keys; **agent-first** center (**`st.popover("⋯")`**); **minimal sidebar** (**Surface · backup** + **Advanced** with **Show state** / **Reset state** — still **`playground`**, unchanged this arc). Windows: **`Launch-Agent-UI.cmd`**, **`Create-Agent-UI-Shortcut.ps1`**, **`Open-DevShell.cmd`** / **`.venv-win`**, **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`**. **Durable run log:** append-only **`logs/tool1_runs.jsonl`** (full JSON + **`summary`**). **PR #2** (prompt↔response) not started unless the log says otherwise.
+
+Also in repo: **HTTP system_eval** (`core/system_eval.py`, **`tools/system_eval_runner.py`**), **`tools/tool1_verify_server.py`**, **`FETCH_MODE=browser`** (Playwright) behind **`tools/fetch_page.py`**, **`[fetch:tag]`**, optional **`FETCH_BROWSER_TIMEOUT_SECONDS`**.
 
 ---
 
@@ -28,7 +30,36 @@ Also in repo (earlier same phase): **HTTP system_eval lanes**, **Tool 1** Stream
 
 ### UI lane — operator cockpit (started 2026-04-17)
 
-- **UI Increment 1:** **`Launch-Agent-UI.cmd`** at repo root; **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`** → *Windows one-click launch* (launch, shortcut → taskbar pin, relaunch). **`app/ui.py`** tabs/Tool 1 behavior unchanged — layout refinements are **next** increments only.
+- **UI Increment 1:** **`Launch-Agent-UI.cmd`** at repo root; **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`** → *Windows one-click launch* (launch, **`Create-Agent-UI-Shortcut.ps1`** → taskbar pin, relaunch). **Increments 2–8** then evolved **`app/ui.py`** only (see bullets + log); no **`playground.py`** coupling.
+- **UI Increment 2:** **`app/ui.py`** — operator cockpit scaffolding: **Assistant** tab first (quick prompts + **Agent access** chat region), **Tool 1** unchanged, **Tool 2/3** placeholders, **Terminal access** tab; see **`SESSION_SYNC_LOG.md`** (bottom).
+- **UI Increment 3:** **`app/ui.py`** — sidebar + main status strip: **Current state** / **Environment** (fetch mode from env), operator hints, **Focus · Stage · Fetch** line above tabs; see log.
+- **UI Increment 4:** **`app/ui.py`** — tab/panel copy only: Assistant **Shortcuts** vs **Conversation**, Tool 1 “when to use”, Tools 2–3 intentional placeholders + shorter tab labels, Terminal wording; see log.
+- **UI Increment 5:** **`app/ui.py`** — agent-first layout: sidebar **radio** navigation replaces tabs; center defaults to **Agent**; context in sidebar expanders; see log.
+- **UI Increment 6:** **`app/ui.py`** — minimal sidebar rail: radio + tiny status + secondary Show/Reset; state/fetch/memory only under **Advanced**; see log.
+- **UI Increment 7:** **`app/ui.py`** — agent center: status/new chat/shortcuts into **`st.popover("⋯")`** (or expander fallback); conversation + input dominate; see log.
+- **UI Increment 8:** **`app/ui.py`** — top surface bar (Agent/API/Prompt/Regression/Terminal) → same router keys; sidebar backup buttons; README + system eval runbook **API** wording; see log.
+
+### Tool 1 — API tab operator slices (**`app/ui.py`** + **`app/system_eval_operator.py`**, **`app/tool1_run_log.py`**; **`core/system_eval.py`** for Inc 10 only)
+
+- **Increment 10 (`core/system_eval.py` + harness):** minimal assertions **`expected_status`**, **`body_contains`**, **`header_contains`**; suite validation + regression coverage (engine; not repeated here).
+- **Increment 11 (`app/ui.py`):** single-request **auth helpers** — None / Bearer / Basic / **API key**; merged headers (helper wins over JSON **`Authorization`** / same-named API key header).
+- **Increment 12 (`app/ui.py`):** per-case **PASS/FAIL** clarity — run summary, transport vs assertion hints, failure text, **`run_log_error`**-style surfacing patterns; table **outcome** column.
+- **Increment 13 (`app/ui.py`):** **API key** mode (header name + value) on top of Inc 11.
+- **Increment 14 (`app/ui.py`):** **customer-readable** run summary + per-case “at a glance” lines; technical expanders preserved.
+- **Increment 15 (`app/ui.py`):** **Rerun last request** (session snapshot), **copyable** plain request summary + approximate **curl** (`shlex`).
+- **Increment 17 (`app/tool1_run_log.py` + wiring):** append-only **`logs/tool1_runs.jsonl`** — one JSON record per suite or single-request completion (or best-effort on early failure); bundle may include **`run_log_error`** if disk append fails; UI warns without blocking results.
+- **Increment 18 (`app/tool1_run_log.py` only):** each log record gains a plain-text **`summary`** (readable paragraph: what was tested, pass/fail, tallies, first failure line, timing). **`compose_tool1_run_human_summary()`**; no removal of structured fields.
+- **Increment 19 (fixtures + docs only):** **`system_tests/suites/tool1_public_demo/`** — three client-style demo suites (smoke PASS, intentional FAIL, header/Bearer echo PASS); **`README.md`** in folder; runbook §4a + **`README.md`** pointer. No engine/UI changes.
+
+### Tool 1 — scenario engine + reporting (`core/system_eval.py` + harness only; 2026-04-17, Increments 42–46)
+
+- **42 — Variable substitution:** `{{variable_name}}` in request **`url`** / header values / **`payload`** strings; variables from **`extract`** in the same case; missing → `variable not found` + JSON detail; without **`steps`**, optional **`request_url_initial`** / **`payload_initial`** / **`headers_initial`** for implicit two-hop; **`stability`**/**`consistency`** reject placeholders in requests.
+- **43 — `steps`:** explicit ordered steps; per-step assertions + **`extract`**; shared **`variables`**; **`step failed`** + step id on failure; **`stability`**/**`consistency`** reject **`steps`**.
+- **44 — `step_templates`:** reusable templates + **`use`**; merge / override rules; **`template not found`** when **`use`** is invalid (validate time).
+- **45 — `step_results`:** JSON case output lists per-step **`PASS`**/**`FAIL`**, substituted **`url`**, **`latency_ms`**, optional **`reason`**.
+- **46 — Markdown artifacts:** **`write_result_artifacts`** adds **`### Steps`** under each multi-step case in the **`.md`** file.
+
+**Harness:** all coverage in **`tests/run_regression.py`**; baseline **`297 / 297`**.
 
 ### Structural stabilization sequence (architecture extraction; earlier phase)
 - Extracted persistence/file I/O helpers into `core/persistence.py`.
@@ -37,7 +68,7 @@ Also in repo (earlier same phase): **HTTP system_eval lanes**, **Tool 1** Stream
 - Extracted routing/control-path logic into `services/routing_service.py`.
 - Extracted prompt/answer assembly logic into `services/prompt_builder.py`.
 - Kept orchestration and deterministic call ordering in `playground.py`.
-- Preserved behavior through each step under the protected regression gate (baseline grew afterward; see top “Aligned” note — **215 / 215** at last full run).
+- Preserved behavior through each step under the protected regression gate (baseline grew afterward; see top “Aligned” note — **297 / 297** at last full run).
 - Added resilient soak execution in `tests/run_soak.py`:
   - progress checkpoints
   - chunked mode (`--chunk-size`)
@@ -129,7 +160,7 @@ From repo root:
 python tests/run_regression.py
 ```
 
-At last full Cursor alignment (see `SESSION_SYNC_LOG.md` bottom), regression was **215 / 215** PASS. Re-run after any local edits.
+At last full Cursor alignment (see `SESSION_SYNC_LOG.md` bottom), regression was **297 / 297** PASS. Re-run after any local edits.
 
 ---
 
@@ -141,7 +172,7 @@ At last full Cursor alignment (see `SESSION_SYNC_LOG.md` bottom), regression was
 - `services/journal_service.py` — extracted journal/outcome/recent-answer logic
 - `services/routing_service.py` — extracted action/routing/control-path logic
 - `services/prompt_builder.py` — extracted answer-line and prompt/message assembly logic
-- `tests/run_regression.py` — regression harness **215** scenarios at last recorded run (see log)
+- `tests/run_regression.py` — regression harness **297** scenarios at last recorded run (see log)
 - `tests/run_soak.py` — chunked soak and artifact synchronization
 - `.github/workflows/ci.yml`, `.github/workflows/nightly-soak.yml` — automated reliability gates
 - `tests/fixtures/extractor_validation_cases.json` — offline extractor validation cases
@@ -151,13 +182,16 @@ At last full Cursor alignment (see `SESSION_SYNC_LOG.md` bottom), regression was
 - `test_openai.py`, `test_claude.py`
 - `README.md`
 - **FETCH / browser:** `tools/fetch_page.py`, `tools/fetch_http.py`, `tools/fetch_browser.py`; operator runbook `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`
-- **UI / operator launch:** `app/ui.py` (unchanged in Incr. 1), `Launch-Agent-UI.cmd`, `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`
+- **UI / operator launch:** `app/ui.py` (Increments 2–8 + Tool 1 UX Inc 11–17: auth, summaries, rerun, logging), `app/system_eval_operator.py`, `app/tool1_run_log.py` (Inc 17–18: durable log + **`summary`**), `Launch-Agent-UI.cmd`, `Create-Agent-UI-Shortcut.ps1`, `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`
+- **Tool 1 demo fixtures:** `system_tests/suites/tool1_public_demo/*.json`, folder `README.md` (Inc 19)
 
 ---
 
 ## Suggested “next moves” (not implemented here; optional)
 
-- **UI lane:** incremental Streamlit layout/operator clarity (Tool 1 first); keep Assistant and room for future regression / prompt-analysis surfaces without clutter.
+- **Tool 1 engine (priority):** **Increment 20** — precision assertions: validate + regression-harden existing **`equals`** / **`regex`** body checks in **`core/system_eval.py`**, then thin follow-ups (e.g. JSON-canonical body equality or header-precision keys) **one slice at a time**. See **`SESSION_SYNC_LOG.md` (bottom)** milestone entry.
+- **UI lane (Inc 9+):** `try`/`except` around **`run_query`** and sidebar **`playground.handle_user_input`** (graceful errors, state reset UX unchanged); optional **`st.segmented_control`** instead of five top buttons if desired.
+- **Tool 1 log (optional):** read-only UI list of recent **`tool1_runs.jsonl`** rows (showing **`summary`** + timestamp) — keep thin; no dashboard explosion.
 - **FETCH lane:** further slices only when approved (hard sites may still yield `low_content` / `browser_timeout`; use **`diag=`** + runbook to interpret).
 - Tune negation / overlap thresholds if real usage shows false positives/negatives.
 - Optional: score-only “time decay” if you add real timestamps later (still avoid silent JSON mutation unless intended).

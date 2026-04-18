@@ -9,6 +9,8 @@ It complements:
 
 ## 2026-04-17
 
+- `uncommitted` - **Tool 1 / `core/system_eval.py` — scenario engine (Increments 42–46):** request **`{{variable}}`** substitution (url / header values / payload strings) with shared **`extract`** variables; optional legacy two-hop via **`request_url_initial`** / **`payload_initial`** / **`headers_initial`** (correctness lane only; not with **`steps`**). **Multi-step cases:** case-level **`steps`** array (sequential HTTP, **`step failed`** errors with step id), optional **`step_templates`** + step **`use`** merge, **`step_results`** on each case result row, and **`### Steps`** subsection in markdown artifacts. Regression coverage in **`tests/run_regression.py`**; protected baseline **`297`** scenarios.
+
 - `uncommitted` - Reliability gate automation, soak resilience, FETCH browser lane, UI launcher, and doc alignment
   - **CI / soak:** `.github/workflows/ci.yml`, `.github/workflows/nightly-soak.yml`; `tests/run_soak.py` chunked execution, synchronized artifacts, compact retention defaults; 10k chunked soak proof artifact (`logs/test_runs/soak_10000_aggregate.json`).
   - **Fetch (browser):** `tools/fetch_browser.py` — bounded Playwright navigation (`goto` ladder, post-goto waits), landmark + scroll extraction, headline and text-node `evaluate` passes, compact **`diag=`** diagnostics (probe tiers, **`exc=`**, **`st=1`** / fallbacks), optional **`FETCH_BROWSER_TIMEOUT_SECONDS`**; **`tools/fetch_page.py`** remains the facade (`FETCH_MODE=browser` vs HTTP). **`[fetch:tag]`** classification preserved for downstream prompt shaping.

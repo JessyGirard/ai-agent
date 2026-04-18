@@ -1397,9 +1397,10 @@ def test_goto_bounded_retries_raises_after_three_failures():
     try:
         _goto_with_bounded_retries(page, "https://example.com/", 9000)
     except RuntimeError:
-        assert page.goto.call_count == 3
+        # Ladder (commit, domcontentloaded, load) then one domcontentloaded recovery.
+        assert page.goto.call_count == 4
     else:
-        raise AssertionError("expected raise after three failures")
+        raise AssertionError("expected raise after ladder + recovery failures")
 
 
 def test_fetch_page_browser_mode_dispatches_to_browser_backend():
@@ -2621,6 +2622,411 @@ def test_run_tool1_system_eval_operator_missing_suite_file():
         assert "not found" in bundle["error"].lower()
 
 
+def test_tool1_run_log_jsonl_written_for_suite_success_and_failure():
+    from app import tool1_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        log_path = tool1_run_log.tool1_run_log_path(root)
+        assert not log_path.exists()
+
+        bundle_bad = run_tool1_system_eval_http(
+            str(root / "missing.json"),
+            str(root / "out"),
+            "x",
+            project_root=root,
+            adapter=None,
+        )
+        assert bundle_bad.get("error")
+        assert log_path.is_file(), "append-only log should be created on first suite attempt"
+        lines_bad = log_path.read_text(encoding="utf-8").strip().splitlines()
+        rec_bad = json.loads(lines_bad[-1])
+        assert rec_bad["schema_version"] == tool1_run_log.TOOL1_RUN_LOG_SCHEMA_VERSION
+        assert rec_bad["run_type"] == "suite_run"
+        assert rec_bad["error"] is not None
+        assert rec_bad["requests"] == []
+
+        suite_path = root / "suite.json"
+        suite_path.write_text(
+            json.dumps(
+                {
+                    "suite_name": "log-test-suite",
+                    "target_name": "t",
+                    "cases": [
+                        {
+                            "name": "a",
+                            "method": "GET",
+                            "url": "http://f/x",
+                            "payload": {},
+                            "assertions": {},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        class FakeAdapter:
+            def run_case(self, case):
+                _ = case
+                return system_eval_core.AdapterResult(
+                    ok=True, status_code=200, output_text="{}", latency_ms=1
+                )
+
+        bundle_ok = run_tool1_system_eval_http(
+            str(suite_path),
+            str(root / "out2"),
+            "stem",
+            project_root=root,
+            adapter=FakeAdapter(),
+        )
+        assert bundle_ok.get("error") in (None, "")
+        lines_all = log_path.read_text(encoding="utf-8").strip().splitlines()
+        rec_ok = json.loads(lines_all[-1])
+        assert rec_ok["run_type"] == "suite_run"
+        assert rec_ok["error"] is None
+        assert rec_ok["suite_name"] == "log-test-suite"
+        assert rec_ok["result_summary"]["overall_ok"] is True
+        assert rec_ok["artifact_paths"].get("json_path")
+        assert len(rec_ok.get("requests") or []) == 1
+        assert len(rec_ok.get("cases_outcome") or []) == 1
+
+
+def test_http_target_adapter_get_omits_json_keyword():
+    adapter = system_eval_core.HttpTargetAdapter(default_timeout_seconds=5)
+    case = {
+        "name": "g",
+        "method": "GET",
+        "url": "http://example.test/get",
+        "headers": {},
+        "payload": {"must_not": "appear_as_requests_json_kwarg"},
+        "timeout_seconds": 5,
+        "assertions": {},
+    }
+    mock_resp = Mock()
+    mock_resp.text = "ok"
+    mock_resp.status_code = 200
+    with patch("core.system_eval.requests.request", return_value=mock_resp) as p_req:
+        result = adapter.run_case(case)
+    assert result.ok is True, result
+    assert result.status_code == 200
+    p_req.assert_called_once()
+    assert "json" not in p_req.call_args.kwargs, p_req.call_args.kwargs
+
+
+def test_http_target_adapter_head_omits_json_keyword():
+    adapter = system_eval_core.HttpTargetAdapter(default_timeout_seconds=5)
+    case = {
+        "name": "h",
+        "method": "HEAD",
+        "url": "http://example.test/r",
+        "headers": {},
+        "payload": {"x": 1},
+        "timeout_seconds": 5,
+        "assertions": {},
+    }
+    mock_resp = Mock()
+    mock_resp.text = ""
+    mock_resp.status_code = 204
+    with patch("core.system_eval.requests.request", return_value=mock_resp) as p_req:
+        result = adapter.run_case(case)
+    assert result.ok is True
+    assert "json" not in p_req.call_args.kwargs
+
+
+def test_http_target_adapter_post_passes_json_payload():
+    adapter = system_eval_core.HttpTargetAdapter(default_timeout_seconds=5)
+    payload = {"a": 1, "b": "two"}
+    case = {
+        "name": "p",
+        "method": "POST",
+        "url": "http://example.test/post",
+        "headers": {},
+        "payload": payload,
+        "timeout_seconds": 5,
+        "assertions": {},
+    }
+    mock_resp = Mock()
+    mock_resp.text = '{"ok":true}'
+    mock_resp.status_code = 200
+    with patch("core.system_eval.requests.request", return_value=mock_resp) as p_req:
+        result = adapter.run_case(case)
+    assert result.ok is True
+    assert p_req.call_args.kwargs.get("json") == payload
+
+
+def test_http_target_adapter_post_body_null_omits_json_keyword():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "body-null",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "no-json-body",
+                    "method": "POST",
+                    "url": "http://example.test/p",
+                    "body": None,
+                    "payload": {"ignored": True},
+                    "assertions": {"status_code": 200},
+                }
+            ],
+        }
+    )
+    case = suite["cases"][0]
+    adapter = system_eval_core.HttpTargetAdapter(default_timeout_seconds=5)
+    mock_resp = Mock()
+    mock_resp.text = ""
+    mock_resp.status_code = 200
+    with patch("core.system_eval.requests.request", return_value=mock_resp) as p_req:
+        result = adapter.run_case(case)
+    assert result.ok is True
+    assert "json" not in p_req.call_args.kwargs
+
+
+def test_http_target_adapter_get_send_json_body_passes_json():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "get-json-escape",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "rare-get-json",
+                    "method": "GET",
+                    "url": "http://example.test/g",
+                    "send_json_body": True,
+                    "payload": {"q": 1},
+                    "assertions": {"status_code": 200},
+                }
+            ],
+        }
+    )
+    case = suite["cases"][0]
+    adapter = system_eval_core.HttpTargetAdapter(default_timeout_seconds=5)
+    mock_resp = Mock()
+    mock_resp.text = "{}"
+    mock_resp.status_code = 200
+    with patch("core.system_eval.requests.request", return_value=mock_resp) as p_req:
+        result = adapter.run_case(case)
+    assert result.ok is True
+    assert p_req.call_args.kwargs.get("json") == {"q": 1}
+
+
+def test_http_target_adapter_populates_response_headers_from_requests():
+    adapter = system_eval_core.HttpTargetAdapter(default_timeout_seconds=5)
+    case = {
+        "name": "h",
+        "method": "GET",
+        "url": "http://example.test/r",
+        "headers": {},
+        "payload": {},
+        "timeout_seconds": 5,
+        "assertions": {},
+    }
+    mock_resp = Mock()
+    mock_resp.text = "ok"
+    mock_resp.status_code = 200
+    mock_resp.headers = {"Content-Type": "application/json", "X-Custom": "abc"}
+    with patch("core.system_eval.requests.request", return_value=mock_resp):
+        result = adapter.run_case(case)
+    assert result.ok is True
+    assert result.response_headers.get("Content-Type") == "application/json"
+    assert result.response_headers.get("X-Custom") == "abc"
+
+
+def test_http_target_adapter_request_exception_has_empty_response_headers():
+    adapter = system_eval_core.HttpTargetAdapter(default_timeout_seconds=5)
+    case = {
+        "name": "x",
+        "method": "GET",
+        "url": "http://example.test/nope",
+        "headers": {},
+        "payload": {},
+        "timeout_seconds": 5,
+        "assertions": {},
+    }
+    with patch("core.system_eval.requests.request", side_effect=RequestsConnectionError("boom")):
+        result = adapter.run_case(case)
+    assert result.ok is False
+    assert result.response_headers == {}
+
+
+def test_execute_suite_and_artifact_include_response_headers():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "hdr-suite",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "one",
+                    "method": "POST",
+                    "url": "http://fake.local/z",
+                    "payload": {},
+                    "assertions": {"status_code": 200},
+                }
+            ],
+        }
+    )
+
+    class HeaderAdapter:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=2,
+                response_headers={"X-RateLimit-Remaining": "59", "Content-Type": "text/plain"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=HeaderAdapter())
+    assert result["cases"][0]["response_headers"].get("X-RateLimit-Remaining") == "59"
+    assert result["cases"][0]["response_headers"].get("Content-Type") == "text/plain"
+
+    with tempfile.TemporaryDirectory() as td:
+        paths = system_eval_core.write_result_artifacts(result, td, file_stem="hdr_run")
+        written = json.loads(Path(paths["json_path"]).read_text(encoding="utf-8"))
+        assert written["cases"][0]["response_headers"]["X-RateLimit-Remaining"] == "59"
+
+
+def test_execute_suite_stability_attempts_include_response_headers():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "hdr-stability",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "s",
+                    "lane": "stability",
+                    "stability_attempts": 2,
+                    "method": "POST",
+                    "url": "http://fake.local/s",
+                    "payload": {},
+                    "assertions": {"status_code": 200},
+                }
+            ],
+        }
+    )
+
+    class H:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="",
+                latency_ms=1,
+                response_headers={"Etag": '"abc"'},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=H())
+    assert result["cases"][0]["response_headers"].get("Etag") == '"abc"'
+    assert len(result["cases"][0]["attempts"]) == 2
+    assert result["cases"][0]["attempts"][0]["response_headers"].get("Etag") == '"abc"'
+    assert result["cases"][0]["attempts"][1]["response_headers"].get("Etag") == '"abc"'
+
+
+def test_normalize_response_headers_caps_items_and_truncates_long_values():
+    many = {f"Header-{i}": str(i) for i in range(70)}
+    capped = system_eval_core._normalize_response_headers(many)
+    assert system_eval_core._RESPONSE_HEADERS_OMITTED_KEY in capped
+    assert capped[system_eval_core._RESPONSE_HEADERS_OMITTED_KEY] == "6"
+    assert len(capped) == 65
+
+    long_val = "z" * 10000
+    truncated = system_eval_core._normalize_response_headers({"X": long_val})
+    assert len(truncated["X"]) < len(long_val)
+    assert "...[truncated]" in truncated["X"]
+
+
+def test_execute_suite_stores_output_full_for_short_body():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "full-body-short",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "POST",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["hello"]},
+                }
+            ],
+        }
+    )
+
+    class ShortBodyAdapter:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world payload",
+                latency_ms=2,
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=ShortBodyAdapter())
+    c0 = result["cases"][0]
+    assert c0["output_preview"] == "hello world payload"
+    assert c0["output_full"] == "hello world payload"
+
+
+def test_execute_suite_output_full_truncates_large_body():
+    cap = system_eval_core._OUTPUT_FULL_MAX_CHARS
+    long_body = "Q" * (cap + 5000)
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "full-body-long",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "big",
+                    "method": "POST",
+                    "url": "http://fake.local/big",
+                    "payload": {},
+                    "assertions": {"status_code": 200},
+                }
+            ],
+        }
+    )
+
+    class LongBodyAdapter:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text=long_body, latency_ms=1
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=LongBodyAdapter())
+    full = result["cases"][0]["output_full"]
+    assert len(full) == cap, len(full)
+    assert full.endswith(system_eval_core._OUTPUT_FULL_TRUNC_MARKER), full[-40:]
+    assert len(result["cases"][0]["output_preview"]) <= 600
+
+
+def test_system_eval_validate_suite_rejects_body_non_null():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "bad-body",
+                "target_name": "t",
+                "cases": [
+                    {
+                        "name": "c",
+                        "method": "POST",
+                        "url": "http://x",
+                        "body": {},
+                        "assertions": {},
+                    }
+                ],
+            }
+        )
+    except ValueError as exc:
+        assert "body" in str(exc).lower()
+    else:
+        raise AssertionError("expected ValueError for non-null body")
+
+
 def test_system_eval_stability_runs_default_three_times():
     suite = system_eval_core.validate_suite(
         {
@@ -2830,6 +3236,2487 @@ def test_system_eval_execute_suite_records_assertion_failures():
     assert result["failed_cases"] == 1, result
     assert result["cases"][0]["ok"] is False, result["cases"][0]
     assert any("missing required token" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_expected_status_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "exp-status-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"expected_status": 201},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=201, output_text="", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_expected_status_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "exp-status-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"expected_status": 404},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_status=404" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_expected_response_time_ms_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "resp-time-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "response_time_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"expected_response_time_ms": 200},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=100, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_expected_response_time_ms_fail():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "resp-time-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "response_time_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"expected_response_time_ms": 200},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=300, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_response_time_ms exceeded" in f for f in result["cases"][0]["failures"]), (
+        result["cases"][0]
+    )
+    joined = " ".join(result["cases"][0]["failures"])
+    assert "200" in joined and "300" in joined, result["cases"][0]
+
+
+def test_system_eval_expected_response_time_ms_equal():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "resp-time-eq",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "response_time_equal",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"expected_response_time_ms": 200},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=200, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_extract_simple():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "extract-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "extract_simple",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {
+                        "body_json_has_key": ["user.id"],
+                        "extract": {"user_id": "user.id"},
+                    },
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"user": {"id": 42}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+    assert result["cases"][0].get("variables") == {"user_id": 42}, result["cases"][0]
+
+
+def test_system_eval_extract_missing_path():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "extract-miss",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "extract_missing_path",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"extract": {"user_id": "user.id"}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"user": {}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("extract missing path" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_variable_substitution_url_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "var-sub-url",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "sub_url_chain",
+                    "method": "GET",
+                    "request_url_initial": "https://example.com/login",
+                    "url": "https://example.com/users/{{user_id}}",
+                    "payload": {},
+                    "assertions": {
+                        "status_code": 200,
+                        "extract": {"user_id": "user.id"},
+                    },
+                }
+            ],
+        }
+    )
+
+    class ChainAdapter:
+        def __init__(self):
+            self.urls = []
+
+        def run_case(self, case):
+            self.urls.append(case["url"])
+            if case["url"].endswith("/login"):
+                return system_eval_core.AdapterResult(
+                    ok=True,
+                    status_code=200,
+                    output_text='{"user": {"id": 42}}',
+                    latency_ms=1,
+                    response_headers={},
+                )
+            if case["url"] == "https://example.com/users/42":
+                return system_eval_core.AdapterResult(
+                    ok=True,
+                    status_code=200,
+                    output_text='{"phase":"second-hop","user":{"id":42}}',
+                    latency_ms=2,
+                    response_headers={},
+                )
+            return system_eval_core.AdapterResult(
+                ok=False,
+                status_code=500,
+                output_text="unexpected url",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    adapter = ChainAdapter()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert result["ok"] is True, result
+    assert adapter.urls == [
+        "https://example.com/login",
+        "https://example.com/users/42",
+    ], adapter.urls
+    assert result["cases"][0].get("variables") == {"user_id": 42}, result["cases"][0]
+
+
+def test_system_eval_variable_substitution_missing_var():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "var-sub-miss",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "missing_placeholder",
+                    "method": "GET",
+                    "url": "https://example.com/{{missing}}",
+                    "payload": {},
+                    "assertions": {"status_code": 200},
+                }
+            ],
+        }
+    )
+
+    class NoCallAdapter:
+        def run_case(self, case):
+            raise AssertionError("adapter should not run when substitution fails")
+
+    result = system_eval_core.execute_suite(suite, adapter=NoCallAdapter())
+    assert result["ok"] is False, result
+    fails = result["cases"][0]["failures"]
+    assert any("variable not found" in f for f in fails), fails
+    assert any('"missing"' in f for f in fails), fails
+
+
+def test_system_eval_variable_substitution_payload_string_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "var-sub-body-str",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "sub_payload_json_string",
+                    "method": "POST",
+                    "url": "https://example.com/api",
+                    "payload_initial": {},
+                    "payload": {"raw": '{"user_id": "{{user_id}}"}'},
+                    "assertions": {
+                        "status_code": 200,
+                        "extract": {"user_id": "user_id"},
+                    },
+                }
+            ],
+        }
+    )
+
+    class PayloadAdapter:
+        def __init__(self):
+            self.second_payload = None
+
+        def run_case(self, case):
+            if case["payload"] == {}:
+                return system_eval_core.AdapterResult(
+                    ok=True,
+                    status_code=200,
+                    output_text='{"user_id": 7}',
+                    latency_ms=1,
+                    response_headers={},
+                )
+            self.second_payload = case["payload"]
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"status":"applied"}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    adapter = PayloadAdapter()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert result["ok"] is True, result
+    assert adapter.second_payload is not None
+    assert adapter.second_payload["raw"] == '{"user_id": "7"}', adapter.second_payload
+    assert result["cases"][0].get("variables") == {"user_id": 7}, result["cases"][0]
+
+
+def test_system_eval_steps_two_step_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "steps-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "scenario_token",
+                    "assertions": {},
+                    "steps": [
+                        {
+                            "name": "login",
+                            "method": "POST",
+                            "url": "https://example.com/login",
+                            "payload": {},
+                            "extract": {"token": "auth.token"},
+                        },
+                        {
+                            "name": "get_user",
+                            "method": "GET",
+                            "url": "https://example.com/users/{{token}}",
+                            "payload": {},
+                            "status_code": 200,
+                            "body_json_has_key": ["id"],
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class StepsAdapter:
+        def __init__(self):
+            self.urls = []
+
+        def run_case(self, case):
+            self.urls.append(case["url"])
+            if case["url"].endswith("/login"):
+                return system_eval_core.AdapterResult(
+                    ok=True,
+                    status_code=200,
+                    output_text='{"auth": {"token": "tok99"}}',
+                    latency_ms=1,
+                    response_headers={},
+                )
+            if case["url"] == "https://example.com/users/tok99":
+                return system_eval_core.AdapterResult(
+                    ok=True,
+                    status_code=200,
+                    output_text='{"id": 1, "name": "x"}',
+                    latency_ms=2,
+                    response_headers={},
+                )
+            return system_eval_core.AdapterResult(
+                ok=False, status_code=500, output_text="bad", latency_ms=1, response_headers={}
+            )
+
+    adapter = StepsAdapter()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert result["ok"] is True, result
+    assert adapter.urls == [
+        "https://example.com/login",
+        "https://example.com/users/tok99",
+    ], adapter.urls
+    assert result["cases"][0].get("variables") == {"token": "tok99"}, result["cases"][0]
+
+
+def test_system_eval_steps_fail_step1_extract():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "steps-f1",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "bad_extract",
+                    "assertions": {},
+                    "steps": [
+                        {
+                            "name": "login",
+                            "method": "GET",
+                            "url": "https://example.com/login",
+                            "payload": {},
+                            "extract": {"token": "auth.token"},
+                        },
+                        {
+                            "name": "get_user",
+                            "method": "GET",
+                            "url": "https://example.com/users/{{token}}",
+                            "payload": {},
+                            "status_code": 200,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="{}", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    fails = result["cases"][0]["failures"]
+    assert any("step failed" in f for f in fails), fails
+    assert any("login" in f for f in fails), fails
+    assert any("extract missing path" in f for f in fails), fails
+
+
+def test_system_eval_steps_fail_step2_assertion():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "steps-f2",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "bad_assert",
+                    "assertions": {},
+                    "steps": [
+                        {
+                            "name": "login",
+                            "method": "GET",
+                            "url": "https://example.com/login",
+                            "payload": {},
+                            "extract": {"token": "t"},
+                        },
+                        {
+                            "name": "get_user",
+                            "method": "GET",
+                            "url": "https://example.com/x",
+                            "payload": {},
+                            "body_json_has_key": ["missing.leaf"],
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.n = 0
+
+        def run_case(self, case):
+            self.n += 1
+            if self.n == 1:
+                return system_eval_core.AdapterResult(
+                    ok=True, status_code=200, output_text='{"t": "ok"}', latency_ms=1, response_headers={}
+                )
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text='{"id": 1}', latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    fails = result["cases"][0]["failures"]
+    assert any("step failed" in f for f in fails), fails
+    assert any("get_user" in f for f in fails), fails
+
+
+def test_system_eval_step_templates_use_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "tmpl-use",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "with_template",
+                    "assertions": {},
+                    "step_templates": {
+                        "login": {
+                            "method": "POST",
+                            "url": "https://example.com/login",
+                            "payload": {},
+                            "extract": {"token": "auth.token"},
+                        }
+                    },
+                    "steps": [
+                        {"name": "do_login", "use": "login"},
+                        {
+                            "name": "get_user",
+                            "method": "GET",
+                            "url": "https://example.com/users/{{token}}",
+                            "payload": {},
+                            "status_code": 200,
+                            "body_json_has_key": ["id"],
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class StepsAdapter:
+        def __init__(self):
+            self.urls = []
+
+        def run_case(self, case):
+            self.urls.append(case["url"])
+            if case["url"].endswith("/login"):
+                return system_eval_core.AdapterResult(
+                    ok=True,
+                    status_code=200,
+                    output_text='{"auth": {"token": "tok99"}}',
+                    latency_ms=1,
+                    response_headers={},
+                )
+            if case["url"] == "https://example.com/users/tok99":
+                return system_eval_core.AdapterResult(
+                    ok=True,
+                    status_code=200,
+                    output_text='{"id": 1}',
+                    latency_ms=2,
+                    response_headers={},
+                )
+            return system_eval_core.AdapterResult(
+                ok=False, status_code=500, output_text="bad", latency_ms=1, response_headers={}
+            )
+
+    adapter = StepsAdapter()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert result["ok"] is True, result
+    assert adapter.urls == [
+        "https://example.com/login",
+        "https://example.com/users/tok99",
+    ], adapter.urls
+    assert result["cases"][0].get("variables") == {"token": "tok99"}, result["cases"][0]
+
+
+def test_system_eval_step_templates_override_url_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "tmpl-override",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "override_url",
+                    "assertions": {},
+                    "step_templates": {
+                        "hit": {
+                            "method": "GET",
+                            "url": "https://example.com/from-template",
+                            "payload": {},
+                            "status_code": 200,
+                        }
+                    },
+                    "steps": [
+                        {
+                            "name": "first",
+                            "use": "hit",
+                            "url": "https://example.com/overridden",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.seen_url = None
+
+        def run_case(self, case):
+            self.seen_url = case["url"]
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="{}", latency_ms=1, response_headers={}
+            )
+
+    adapter = A()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert result["ok"] is True, result
+    assert adapter.seen_url == "https://example.com/overridden", adapter.seen_url
+
+
+def test_system_eval_step_results_all_pass_two_steps():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "step-results-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "two_steps",
+                    "assertions": {},
+                    "steps": [
+                        {
+                            "name": "login",
+                            "method": "GET",
+                            "url": "https://example.com/login",
+                            "payload": {},
+                            "extract": {"token": "t"},
+                        },
+                        {
+                            "name": "get_user",
+                            "method": "GET",
+                            "url": "https://example.com/users/{{token}}",
+                            "payload": {},
+                            "status_code": 200,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.n = 0
+
+        def run_case(self, case):
+            self.n += 1
+            if self.n == 1:
+                return system_eval_core.AdapterResult(
+                    ok=True, status_code=200, output_text='{"t": "ab"}', latency_ms=10, response_headers={}
+                )
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="{}", latency_ms=20, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+    sr = result["cases"][0].get("step_results")
+    assert sr is not None and len(sr) == 2, sr
+    assert sr[0]["step"] == "login" and sr[0]["status"] == "PASS", sr[0]
+    assert sr[0]["url"] == "https://example.com/login" and sr[0]["latency_ms"] == 10, sr[0]
+    assert "reason" not in sr[0], sr[0]
+    assert sr[1]["step"] == "get_user" and sr[1]["status"] == "PASS", sr[1]
+    assert sr[1]["url"] == "https://example.com/users/ab" and sr[1]["latency_ms"] == 20, sr[1]
+
+
+def test_system_eval_step_results_second_step_fail():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "step-results-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "fail_on_two",
+                    "assertions": {},
+                    "steps": [
+                        {
+                            "name": "login",
+                            "method": "GET",
+                            "url": "https://example.com/login",
+                            "payload": {},
+                            "extract": {"token": "t"},
+                        },
+                        {
+                            "name": "get_user",
+                            "method": "GET",
+                            "url": "https://example.com/x",
+                            "payload": {},
+                            "body_json_has_key": ["missing.leaf"],
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.n = 0
+
+        def run_case(self, case):
+            self.n += 1
+            if self.n == 1:
+                return system_eval_core.AdapterResult(
+                    ok=True, status_code=200, output_text='{"t": "ok"}', latency_ms=5, response_headers={}
+                )
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text='{"id": 1}', latency_ms=7, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    sr = result["cases"][0].get("step_results")
+    assert sr is not None and len(sr) == 2, sr
+    assert sr[0]["status"] == "PASS" and sr[0]["step"] == "login", sr[0]
+    assert sr[1]["status"] == "FAIL" and sr[1]["step"] == "get_user", sr[1]
+    assert sr[1].get("reason"), sr[1]
+    assert "body_json_path" in sr[1]["reason"] or "missing" in sr[1]["reason"].lower(), sr[1]["reason"]
+
+
+def test_write_result_artifacts_markdown_includes_step_results_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "md-steps-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "scenario_md",
+                    "assertions": {},
+                    "steps": [
+                        {
+                            "name": "login",
+                            "method": "GET",
+                            "url": "https://example.com/login",
+                            "payload": {},
+                            "extract": {"token": "t"},
+                        },
+                        {
+                            "name": "get_user",
+                            "method": "GET",
+                            "url": "https://example.com/users/{{token}}",
+                            "payload": {},
+                            "status_code": 200,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.n = 0
+
+        def run_case(self, case):
+            self.n += 1
+            if self.n == 1:
+                return system_eval_core.AdapterResult(
+                    ok=True, status_code=200, output_text='{"t": "ab"}', latency_ms=120, response_headers={}
+                )
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="{}", latency_ms=90, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+    with tempfile.TemporaryDirectory() as td:
+        paths = system_eval_core.write_result_artifacts(result, td, file_stem="steps_md_pass")
+        md_text = Path(paths["markdown_path"]).read_text(encoding="utf-8")
+    assert "### Steps" in md_text, md_text
+    assert "login" in md_text and "get_user" in md_text, md_text
+    assert "PASS" in md_text, md_text
+    assert "https://example.com/login" in md_text, md_text
+    assert "https://example.com/users/ab" in md_text, md_text
+    assert "120 ms" in md_text and "90 ms" in md_text, md_text
+
+
+def test_write_result_artifacts_markdown_includes_step_results_fail():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "md-steps-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "scenario_md_fail",
+                    "assertions": {},
+                    "steps": [
+                        {
+                            "name": "login",
+                            "method": "GET",
+                            "url": "https://example.com/login",
+                            "payload": {},
+                            "extract": {"token": "t"},
+                        },
+                        {
+                            "name": "get_user",
+                            "method": "GET",
+                            "url": "https://example.com/x",
+                            "payload": {},
+                            "body_json_has_key": ["missing.leaf"],
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.n = 0
+
+        def run_case(self, case):
+            self.n += 1
+            if self.n == 1:
+                return system_eval_core.AdapterResult(
+                    ok=True, status_code=200, output_text='{"t": "ok"}', latency_ms=5, response_headers={}
+                )
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text='{"id": 1}', latency_ms=7, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    with tempfile.TemporaryDirectory() as td:
+        paths = system_eval_core.write_result_artifacts(result, td, file_stem="steps_md_fail")
+        md_text = Path(paths["markdown_path"]).read_text(encoding="utf-8")
+    assert "### Steps" in md_text, md_text
+    assert "FAIL" in md_text, md_text
+    assert "Reason:" in md_text, md_text
+    assert "missing.leaf" in md_text or "body_json_path" in md_text, md_text
+
+
+def test_system_eval_step_templates_missing_raises():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "tmpl-miss",
+                "target_name": "fake",
+                "cases": [
+                    {
+                        "name": "bad_template_ref",
+                        "assertions": {},
+                        "step_templates": {},
+                        "steps": [
+                            {"name": "only_use", "use": "ghost"},
+                        ],
+                    }
+                ],
+            }
+        )
+    except ValueError as e:
+        msg = str(e)
+        assert "template not found" in msg, msg
+        assert "ghost" in msg, msg
+    else:
+        raise AssertionError("expected ValueError for missing template")
+
+
+def test_system_eval_body_contains_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "body-sub-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_contains": "ell"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="hello", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_contains_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "body-sub-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_contains": "zzz"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="hello", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body did not contain substring" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_equals_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "body-eq-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_equals_pass_exact_match",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_equals": "hello world"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="  hello   world\n",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_equals_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "body-eq-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_equals_fail_mismatch",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_equals": "hello world!"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="hello world", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_equals mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_regex_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "body-regex-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_regex_pass",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_regex": r"userId:\s*\d+"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="userId: 42",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_regex_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "body-regex-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_regex_fail",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_regex": r"userId:\s*\d+"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="no match here",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_regex mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_regex_invalid_pattern():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "body-regex-bad",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_regex_invalid_pattern",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_regex": "[unclosed"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="anything",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_regex invalid pattern" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_header_equals_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "hdr-eq-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "header_equals_pass",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"header_equals": {"Content-Type": "application/json"}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"Content-Type": "application/json"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_header_equals_fail_value():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "hdr-eq-fail-val",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "header_equals_fail_value",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"header_equals": {"Content-Type": "application/json"}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"Content-Type": "text/html"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("header_equals mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_header_equals_fail_missing():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "hdr-eq-fail-miss",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "header_equals_fail_missing",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"header_equals": {"Content-Type": "application/json"}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("header_equals missing header" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_header_regex_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "hdr-re-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "header_regex_pass",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"header_regex": {"Content-Type": "application/json"}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"Content-Type": "application/json; charset=utf-8"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_header_regex_fail_value():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "hdr-re-fail-val",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "header_regex_fail_value",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"header_regex": {"Content-Type": "application/json"}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"Content-Type": "text/html"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("header_regex mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_header_regex_fail_missing():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "hdr-re-fail-miss",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "header_regex_fail_missing",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"header_regex": {"Content-Type": "application/json"}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("header_regex missing header" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_header_regex_invalid_pattern():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "hdr-re-bad",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "header_regex_invalid_pattern",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"header_regex": {"Content-Type": "[invalid"}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"Content-Type": "application/json"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("header_regex invalid pattern" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_path_equals_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-path-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_path_equals_pass",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_json_path_equals": {"userId": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"userId": 1, "id": 2}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_json_path_equals_fail_value():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-path-fail-val",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_path_equals_fail_value",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_json_path_equals": {"userId": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"userId": 2}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_path_equals mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_path_equals_fail_missing():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-path-fail-miss",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_path_equals_fail_missing",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_json_path_equals": {"userId": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"id": 2}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_path missing path" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+    assert any("userId" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_path_equals_invalid_json():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-path-bad-json",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_path_equals_invalid_json",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_json_path_equals": {"userId": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="not json",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_path_equals invalid json" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_path_nested_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-path-nested-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_path_nested_pass",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_json_path_equals": {"user.id": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"user": {"id": 1}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_json_path_nested_fail_value():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-path-nested-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_path_nested_fail_value",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_json_path_equals": {"user.id": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"user": {"id": 2}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_path_equals mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_path_nested_missing():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-path-nested-miss",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_path_nested_missing",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_json_path_equals": {"user.id": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"user": {}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_path missing path" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+    assert any("user.id" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_has_key_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-has-key-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_has_key_pass",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_json_has_key": ["user.id"]},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"user": {"id": 1}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_json_has_key_fail():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-has-key-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_has_key_fail",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_json_has_key": ["user.id"]},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"user": {}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_path missing path" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+    assert any("user.id" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_has_key_invalid_json():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-has-key-bad",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_has_key_invalid_json",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"body_json_has_key": ["user.id"]},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="not json",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_has_key invalid json" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_path_invalid_empty():
+    suite = {
+        "suite_name": "json-path-invalid-empty",
+        "target_name": "fake",
+        "cases": [
+            {
+                "name": "body_json_path_invalid_empty",
+                "method": "GET",
+                "url": "https://example.com",
+                "payload": {},
+                "assertions": {"body_json_has_key": [""]},
+            }
+        ],
+    }
+    try:
+        system_eval_core.validate_suite(suite)
+    except ValueError as e:
+        msg = str(e)
+        assert "body_json_path_invalid_empty" in msg, msg
+        assert "body_json_path_* paths must be non-empty strings" in msg, msg
+    else:
+        raise AssertionError("expected ValueError for empty JSON path")
+
+
+def test_system_eval_body_json_path_invalid_whitespace():
+    suite = {
+        "suite_name": "json-path-invalid-ws",
+        "target_name": "fake",
+        "cases": [
+            {
+                "name": "body_json_path_invalid_whitespace",
+                "method": "GET",
+                "url": "https://example.com",
+                "payload": {},
+                "assertions": {"body_json_path_equals": {"   ": 1}},
+            }
+        ],
+    }
+    try:
+        system_eval_core.validate_suite(suite)
+    except ValueError as e:
+        msg = str(e)
+        assert "body_json_path_invalid_whitespace" in msg, msg
+        assert "body_json_path_* paths must be non-empty strings" in msg, msg
+    else:
+        raise AssertionError("expected ValueError for whitespace-only JSON path key")
+
+
+def test_system_eval_body_json_path_missing_nested():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-path-missing-nested",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_path_missing_nested",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_has_key": ["user.id"]},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"user": {}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    failures_joined = " ".join(result["cases"][0]["failures"])
+    assert "missing path" in failures_joined.lower(), result["cases"][0]
+    assert "user.id" in failures_joined, result["cases"][0]
+
+
+def test_system_eval_body_json_array_index_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-idx-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_index_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_path_equals": {"items[0].id": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": [{"id": 1}]}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_json_array_index_fail_range():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-idx-range",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_index_fail_range",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_path_equals": {"items[0].id": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": []}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_path missing path" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+    assert any("items[0].id" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_array_index_not_list():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-idx-not-list",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_index_not_list",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_path_equals": {"items[0].id": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": {"id": 1}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_path missing path" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+    assert any("items[0].id" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_array_length_equals_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-len-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_equals_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_equals": {"items": 3}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": [1, 2, 3]}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_json_array_length_equals_fail_mismatch():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-len-mismatch",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_equals_fail_mismatch",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_equals": {"items": 3}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": [1, 2]}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_array_length_equals mismatch" in f for f in result["cases"][0]["failures"]), (
+        result["cases"][0]
+    )
+    joined = " ".join(result["cases"][0]["failures"])
+    assert "items" in joined and "3" in joined and "2" in joined, result["cases"][0]
+
+
+def test_system_eval_body_json_array_length_equals_fail_not_array():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-len-not-list",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_equals_fail_not_array",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_equals": {"items": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": {"a": 1}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_array_length_equals not array" in f for f in result["cases"][0]["failures"]), (
+        result["cases"][0]
+    )
+    assert any("items" in f and "dict" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_array_length_equals_fail_missing():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-len-missing",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_equals_fail_missing",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_equals": {"items": 0}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"other": []}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_path missing path" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+    assert any("items" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_array_length_equals_nested_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-len-nested",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_equals_nested_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_equals": {"data.users": 2}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"data": {"users": [{"id": 1}, {"id": 2}]}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_json_array_length_at_least_pass_equal():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-min-eq",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_at_least_pass_equal",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_at_least": {"items": 2}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": [1, 2]}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_json_array_length_at_least_pass_greater():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-min-gt",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_at_least_pass_greater",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_at_least": {"items": 2}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": [1, 2, 3]}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_json_array_length_at_least_fail_mismatch():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-min-bad",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_at_least_fail_mismatch",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_at_least": {"items": 2}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": [1]}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any(
+        "body_json_array_length_at_least mismatch" in f for f in result["cases"][0]["failures"]
+    ), result["cases"][0]
+    joined = " ".join(result["cases"][0]["failures"])
+    assert "items" in joined and "2" in joined and "1" in joined, result["cases"][0]
+
+
+def test_system_eval_body_json_array_length_at_least_fail_not_array():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-min-not-list",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_at_least_fail_not_array",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_at_least": {"items": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": {"a": 1}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any(
+        "body_json_array_length_at_least not array" in f for f in result["cases"][0]["failures"]
+    ), result["cases"][0]
+    assert any("items" in f and "dict" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_array_length_at_least_fail_missing():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-min-miss",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_at_least_fail_missing",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_at_least": {"items": 0}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"other": []}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_path missing path" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+    assert any("items" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_array_length_at_most_pass_equal():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-max-eq",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_at_most_pass_equal",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_at_most": {"items": 2}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": [1, 2]}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_json_array_length_at_most_pass_less():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-max-less",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_at_most_pass_less",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_at_most": {"items": 2}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": [1]}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_body_json_array_length_at_most_fail():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-max-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_at_most_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_at_most": {"items": 2}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": [1, 2, 3]}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any(
+        "body_json_array_length_at_most mismatch" in f for f in result["cases"][0]["failures"]
+    ), result["cases"][0]
+    joined = " ".join(result["cases"][0]["failures"])
+    assert "items" in joined and "3" in joined and "2" in joined, result["cases"][0]
+
+
+def test_system_eval_body_json_array_length_at_most_not_array():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-max-not-list",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_at_most_not_array",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_at_most": {"items": 1}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"items": {"a": 1}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any(
+        "body_json_array_length_at_most not array" in f for f in result["cases"][0]["failures"]
+    ), result["cases"][0]
+    assert any("items" in f and "dict" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_body_json_array_length_at_most_missing():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "json-array-max-miss",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "body_json_array_length_at_most_missing",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_json_array_length_at_most": {"items": 0}},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"other": []}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("body_json_path missing path" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+    assert any("items" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_header_contains_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "hdr-sub-ok",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"header_contains": "X-Custom: token-value"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="",
+                latency_ms=1,
+                response_headers={"X-Custom": "token-value", "Other": "x"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_header_contains_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "hdr-sub-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"header_contains": "Not-Present-Header-Substring"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="",
+                latency_ms=1,
+                response_headers={"X-Custom": "token-value"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("response headers did not contain substring" in f for f in result["cases"][0]["failures"]), (
+        result["cases"][0]
+    )
+
+
+def test_system_eval_minimal_assertion_invalid_types_rejected():
+    def case_with(assertions):
+        return {
+            "suite_name": "bad-types",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "c",
+                    "method": "GET",
+                    "url": "http://f/x",
+                    "payload": {},
+                    "assertions": assertions,
+                }
+            ],
+        }
+
+    for bad_assertions, fragment in (
+        ({"expected_status": "200"}, "expected_status"),
+        ({"expected_status": True}, "expected_status"),
+        ({"expected_response_time_ms": "200"}, "expected_response_time_ms"),
+        ({"expected_response_time_ms": True}, "expected_response_time_ms"),
+        ({"expected_response_time_ms": -1}, "expected_response_time_ms"),
+        ({"body_contains": 99}, "body_contains"),
+        ({"body_equals": 99}, "body_equals"),
+        ({"body_regex": 99}, "body_regex"),
+        ({"header_equals": "not-a-dict"}, "header_equals"),
+        ({"header_equals": {"Content-Type": 1}}, "header_equals"),
+        ({"header_equals": {1: "a"}}, "header_equals"),
+        ({"header_regex": "not-a-dict"}, "header_regex"),
+        ({"header_regex": {"Content-Type": 1}}, "header_regex"),
+        ({"header_regex": {1: "x"}}, "header_regex"),
+        ({"body_json_path_equals": "not-a-dict"}, "body_json_path_equals"),
+        ({"body_json_path_equals": {1: 1}}, "body_json_path_equals"),
+        ({"body_json_has_key": "not-a-list"}, "body_json_has_key"),
+        ({"body_json_has_key": [1]}, "body_json_has_key"),
+        ({"body_json_array_length_equals": "not-a-dict"}, "body_json_array_length_equals"),
+        ({"body_json_array_length_equals": {1: 0}}, "body_json_array_length_equals"),
+        ({"body_json_array_length_equals": {"": 0}}, "body_json_array_length_equals"),
+        ({"body_json_array_length_equals": {"   ": 0}}, "body_json_array_length_equals"),
+        ({"body_json_array_length_equals": {"items": "3"}}, "body_json_array_length_equals"),
+        ({"body_json_array_length_equals": {"items": True}}, "body_json_array_length_equals"),
+        ({"body_json_array_length_equals": {"items": -1}}, "body_json_array_length_equals"),
+        ({"body_json_array_length_at_least": "not-a-dict"}, "body_json_array_length_at_least"),
+        ({"body_json_array_length_at_least": {1: 0}}, "body_json_array_length_at_least"),
+        ({"body_json_array_length_at_least": {"": 0}}, "body_json_array_length_at_least"),
+        ({"body_json_array_length_at_least": {"   ": 0}}, "body_json_array_length_at_least"),
+        ({"body_json_array_length_at_least": {"items": "2"}}, "body_json_array_length_at_least"),
+        ({"body_json_array_length_at_least": {"items": True}}, "body_json_array_length_at_least"),
+        ({"body_json_array_length_at_least": {"items": -1}}, "body_json_array_length_at_least"),
+        ({"body_json_array_length_at_most": "not-a-dict"}, "body_json_array_length_at_most"),
+        ({"body_json_array_length_at_most": {1: 0}}, "body_json_array_length_at_most"),
+        ({"body_json_array_length_at_most": {"": 0}}, "body_json_array_length_at_most"),
+        ({"body_json_array_length_at_most": {"   ": 0}}, "body_json_array_length_at_most"),
+        ({"body_json_array_length_at_most": {"items": "2"}}, "body_json_array_length_at_most"),
+        ({"body_json_array_length_at_most": {"items": True}}, "body_json_array_length_at_most"),
+        ({"body_json_array_length_at_most": {"items": -1}}, "body_json_array_length_at_most"),
+        ({"extract": "not-a-dict"}, "extract"),
+        ({"extract": {"": "user.id"}}, "extract"),
+        ({"extract": {"user_id": ""}}, "extract"),
+        ({"extract": {"user_id": 1}}, "extract"),
+        ({"header_contains": ["a"]}, "header_contains"),
+    ):
+        try:
+            system_eval_core.validate_suite(case_with(bad_assertions))
+        except ValueError as e:
+            msg = str(e)
+            assert "Case 'c'" in msg, msg
+            assert fragment in msg, msg
+            assert "invalid" in msg.lower(), msg
+        else:
+            raise AssertionError(f"Expected ValueError for assertions={bad_assertions!r}")
 
 
 def test_system_eval_runner_script_smoke_with_fake_http():
@@ -4827,6 +7714,20 @@ def main():
         ("run_soak_script_smoke", test_run_soak_script_smoke),
         ("run_tool1_system_eval_operator_helper_with_fake_adapter", test_run_tool1_system_eval_operator_helper_with_fake_adapter),
         ("run_tool1_system_eval_operator_missing_suite_file", test_run_tool1_system_eval_operator_missing_suite_file),
+        ("tool1_run_log_jsonl_written_for_suite_success_and_failure", test_tool1_run_log_jsonl_written_for_suite_success_and_failure),
+        ("http_target_adapter_get_omits_json_keyword", test_http_target_adapter_get_omits_json_keyword),
+        ("http_target_adapter_head_omits_json_keyword", test_http_target_adapter_head_omits_json_keyword),
+        ("http_target_adapter_post_passes_json_payload", test_http_target_adapter_post_passes_json_payload),
+        ("http_target_adapter_post_body_null_omits_json_keyword", test_http_target_adapter_post_body_null_omits_json_keyword),
+        ("http_target_adapter_get_send_json_body_passes_json", test_http_target_adapter_get_send_json_body_passes_json),
+        ("http_target_adapter_populates_response_headers_from_requests", test_http_target_adapter_populates_response_headers_from_requests),
+        ("http_target_adapter_request_exception_has_empty_response_headers", test_http_target_adapter_request_exception_has_empty_response_headers),
+        ("execute_suite_and_artifact_include_response_headers", test_execute_suite_and_artifact_include_response_headers),
+        ("execute_suite_stability_attempts_include_response_headers", test_execute_suite_stability_attempts_include_response_headers),
+        ("normalize_response_headers_caps_items_and_truncates_long_values", test_normalize_response_headers_caps_items_and_truncates_long_values),
+        ("execute_suite_stores_output_full_for_short_body", test_execute_suite_stores_output_full_for_short_body),
+        ("execute_suite_output_full_truncates_large_body", test_execute_suite_output_full_truncates_large_body),
+        ("system_eval_validate_suite_rejects_body_non_null", test_system_eval_validate_suite_rejects_body_non_null),
         ("system_eval_validate_suite_requires_non_empty_cases", test_system_eval_validate_suite_requires_non_empty_cases),
         ("system_eval_validate_suite_rejects_invalid_lane", test_system_eval_validate_suite_rejects_invalid_lane),
         ("system_eval_lane_preserved_in_results_and_artifacts", test_system_eval_lane_preserved_in_results_and_artifacts),
@@ -4841,6 +7742,122 @@ def main():
         ("system_eval_invalid_stability_attempts_rejected", test_system_eval_invalid_stability_attempts_rejected),
         ("system_eval_execute_suite_success_with_fake_adapter", test_system_eval_execute_suite_success_with_fake_adapter),
         ("system_eval_execute_suite_records_assertion_failures", test_system_eval_execute_suite_records_assertion_failures),
+        ("system_eval_expected_status_passes", test_system_eval_expected_status_passes),
+        ("system_eval_expected_status_fails", test_system_eval_expected_status_fails),
+        ("system_eval_expected_response_time_ms_pass", test_system_eval_expected_response_time_ms_pass),
+        ("system_eval_expected_response_time_ms_fail", test_system_eval_expected_response_time_ms_fail),
+        ("system_eval_expected_response_time_ms_equal", test_system_eval_expected_response_time_ms_equal),
+        ("system_eval_extract_simple", test_system_eval_extract_simple),
+        ("system_eval_extract_missing_path", test_system_eval_extract_missing_path),
+        ("system_eval_variable_substitution_url_pass", test_system_eval_variable_substitution_url_pass),
+        ("system_eval_variable_substitution_missing_var", test_system_eval_variable_substitution_missing_var),
+        (
+            "system_eval_variable_substitution_payload_string_pass",
+            test_system_eval_variable_substitution_payload_string_pass,
+        ),
+        ("system_eval_steps_two_step_pass", test_system_eval_steps_two_step_pass),
+        ("system_eval_steps_fail_step1_extract", test_system_eval_steps_fail_step1_extract),
+        ("system_eval_steps_fail_step2_assertion", test_system_eval_steps_fail_step2_assertion),
+        ("system_eval_step_templates_use_pass", test_system_eval_step_templates_use_pass),
+        ("system_eval_step_templates_override_url_pass", test_system_eval_step_templates_override_url_pass),
+        ("system_eval_step_templates_missing_raises", test_system_eval_step_templates_missing_raises),
+        ("system_eval_step_results_all_pass_two_steps", test_system_eval_step_results_all_pass_two_steps),
+        ("system_eval_step_results_second_step_fail", test_system_eval_step_results_second_step_fail),
+        (
+            "write_result_artifacts_markdown_includes_step_results_pass",
+            test_write_result_artifacts_markdown_includes_step_results_pass,
+        ),
+        (
+            "write_result_artifacts_markdown_includes_step_results_fail",
+            test_write_result_artifacts_markdown_includes_step_results_fail,
+        ),
+        ("system_eval_body_contains_passes", test_system_eval_body_contains_passes),
+        ("system_eval_body_contains_fails", test_system_eval_body_contains_fails),
+        ("system_eval_body_equals_passes", test_system_eval_body_equals_passes),
+        ("system_eval_body_equals_fails", test_system_eval_body_equals_fails),
+        ("system_eval_body_regex_passes", test_system_eval_body_regex_passes),
+        ("system_eval_body_regex_fails", test_system_eval_body_regex_fails),
+        ("system_eval_body_regex_invalid_pattern", test_system_eval_body_regex_invalid_pattern),
+        ("system_eval_header_equals_passes", test_system_eval_header_equals_passes),
+        ("system_eval_header_equals_fail_value", test_system_eval_header_equals_fail_value),
+        ("system_eval_header_equals_fail_missing", test_system_eval_header_equals_fail_missing),
+        ("system_eval_header_regex_passes", test_system_eval_header_regex_passes),
+        ("system_eval_header_regex_fail_value", test_system_eval_header_regex_fail_value),
+        ("system_eval_header_regex_fail_missing", test_system_eval_header_regex_fail_missing),
+        ("system_eval_header_regex_invalid_pattern", test_system_eval_header_regex_invalid_pattern),
+        ("system_eval_body_json_path_equals_passes", test_system_eval_body_json_path_equals_passes),
+        ("system_eval_body_json_path_equals_fail_value", test_system_eval_body_json_path_equals_fail_value),
+        ("system_eval_body_json_path_equals_fail_missing", test_system_eval_body_json_path_equals_fail_missing),
+        ("system_eval_body_json_path_equals_invalid_json", test_system_eval_body_json_path_equals_invalid_json),
+        ("system_eval_body_json_path_nested_pass", test_system_eval_body_json_path_nested_pass),
+        ("system_eval_body_json_path_nested_fail_value", test_system_eval_body_json_path_nested_fail_value),
+        ("system_eval_body_json_path_nested_missing", test_system_eval_body_json_path_nested_missing),
+        ("system_eval_body_json_has_key_pass", test_system_eval_body_json_has_key_pass),
+        ("system_eval_body_json_has_key_fail", test_system_eval_body_json_has_key_fail),
+        ("system_eval_body_json_has_key_invalid_json", test_system_eval_body_json_has_key_invalid_json),
+        ("system_eval_body_json_path_invalid_empty", test_system_eval_body_json_path_invalid_empty),
+        ("system_eval_body_json_path_invalid_whitespace", test_system_eval_body_json_path_invalid_whitespace),
+        ("system_eval_body_json_path_missing_nested", test_system_eval_body_json_path_missing_nested),
+        ("system_eval_body_json_array_index_pass", test_system_eval_body_json_array_index_pass),
+        ("system_eval_body_json_array_index_fail_range", test_system_eval_body_json_array_index_fail_range),
+        ("system_eval_body_json_array_index_not_list", test_system_eval_body_json_array_index_not_list),
+        ("system_eval_body_json_array_length_equals_pass", test_system_eval_body_json_array_length_equals_pass),
+        (
+            "system_eval_body_json_array_length_equals_fail_mismatch",
+            test_system_eval_body_json_array_length_equals_fail_mismatch,
+        ),
+        (
+            "system_eval_body_json_array_length_equals_fail_not_array",
+            test_system_eval_body_json_array_length_equals_fail_not_array,
+        ),
+        (
+            "system_eval_body_json_array_length_equals_fail_missing",
+            test_system_eval_body_json_array_length_equals_fail_missing,
+        ),
+        (
+            "system_eval_body_json_array_length_equals_nested_pass",
+            test_system_eval_body_json_array_length_equals_nested_pass,
+        ),
+        (
+            "system_eval_body_json_array_length_at_least_pass_equal",
+            test_system_eval_body_json_array_length_at_least_pass_equal,
+        ),
+        (
+            "system_eval_body_json_array_length_at_least_pass_greater",
+            test_system_eval_body_json_array_length_at_least_pass_greater,
+        ),
+        (
+            "system_eval_body_json_array_length_at_least_fail_mismatch",
+            test_system_eval_body_json_array_length_at_least_fail_mismatch,
+        ),
+        (
+            "system_eval_body_json_array_length_at_least_fail_not_array",
+            test_system_eval_body_json_array_length_at_least_fail_not_array,
+        ),
+        (
+            "system_eval_body_json_array_length_at_least_fail_missing",
+            test_system_eval_body_json_array_length_at_least_fail_missing,
+        ),
+        (
+            "system_eval_body_json_array_length_at_most_pass_equal",
+            test_system_eval_body_json_array_length_at_most_pass_equal,
+        ),
+        (
+            "system_eval_body_json_array_length_at_most_pass_less",
+            test_system_eval_body_json_array_length_at_most_pass_less,
+        ),
+        ("system_eval_body_json_array_length_at_most_fail", test_system_eval_body_json_array_length_at_most_fail),
+        (
+            "system_eval_body_json_array_length_at_most_not_array",
+            test_system_eval_body_json_array_length_at_most_not_array,
+        ),
+        (
+            "system_eval_body_json_array_length_at_most_missing",
+            test_system_eval_body_json_array_length_at_most_missing,
+        ),
+        ("system_eval_header_contains_passes", test_system_eval_header_contains_passes),
+        ("system_eval_header_contains_fails", test_system_eval_header_contains_fails),
+        ("system_eval_minimal_assertion_invalid_types_rejected", test_system_eval_minimal_assertion_invalid_types_rejected),
         ("system_eval_runner_script_smoke_with_fake_http", test_system_eval_runner_script_smoke_with_fake_http),
         ("system_eval_execute_suite_multiple_cases_mixed_results", test_system_eval_execute_suite_multiple_cases_mixed_results),
         ("system_eval_execute_suite_fail_fast_stops_after_first_failure", test_system_eval_execute_suite_fail_fast_stops_after_first_failure),

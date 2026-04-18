@@ -1,0 +1,29 @@
+{
+  "suite_name": "Tool 1 demo — intentional validation failures",
+  "target_name": "jsonplaceholder.typicode.com",
+  "cases": [
+    {
+      "name": "Validation — wrong status expectation",
+      "method": "GET",
+      "url": "https://jsonplaceholder.typicode.com/posts/1",
+      "headers": {},
+      "payload": {},
+      "timeout_seconds": 25,
+      "assertions": {
+        "expected_status": 404
+      }
+    },
+    {
+      "name": "Validation — body substring not in response",
+      "method": "GET",
+      "url": "https://jsonplaceholder.typicode.com/posts/1",
+      "headers": {},
+      "payload": {},
+      "timeout_seconds": 25,
+      "assertions": {
+        "expected_status": 200,
+        "body_contains": "___TOOL1_DEMO_IMPOSSIBLE_TOKEN___"
+      }
+    }
+  ]
+}

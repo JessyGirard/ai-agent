@@ -33,9 +33,10 @@ When starting any new ChatGPT session, use these docs in order:
 - **Current test harness and gate implementation:** `tests/run_regression.py`, `tests/run_soak.py`
 - **Phase 1 system-test runtime path:** `core/system_eval.py`, `tools/system_eval_runner.py`
 - **Example suite input shape:** `system_tests/suites/example_http_suite.json`
-- **Operator runbook (HTTP system eval + Streamlit launch on Windows):** `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`
+- **Operator runbook (HTTP system eval + Streamlit + top bar surfaces on Windows):** `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`
+- **Tool 1 durable run log (append-only JSONL):** `app/tool1_run_log.py` → `logs/tool1_runs.jsonl` (gitignored under `logs/`); each record includes plain-text **`summary`** plus full structured fields. **Public demo suites:** `system_tests/suites/tool1_public_demo/` (runbook §4a).
 - **Browser fetch manual checks + `diag=` token glossary:** `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`
-- **One-click Streamlit (Windows):** `Launch-Agent-UI.cmd` (repo root; uses `.venv-win`)
+- **One-click Streamlit (Windows):** `Launch-Agent-UI.cmd` (repo root; uses `.venv-win`); taskbar shortcuts: `Create-Agent-UI-Shortcut.ps1`
 - **CI/automation policy and schedule:** `.github/workflows/ci.yml`, `.github/workflows/nightly-soak.yml`
 - **Core orchestration boundary (must remain decoupled):** `playground.py`
 
@@ -57,14 +58,14 @@ Use these exact prompt styles when you want precise help:
   - `services/journal_service.py`
   - `services/routing_service.py`
   - `services/prompt_builder.py`
-- Protected regression gate currently: **`215`** scenarios (`python tests/run_regression.py`). Confirm with latest log if this drifts.
+- Protected regression gate currently: **`297`** scenarios (`python tests/run_regression.py`). Confirm with latest log if this drifts.
 - **Fetch:** `tools/fetch_page.py` facades HTTP (`tools/fetch_http.py`) and optional browser mode (`FETCH_MODE=browser` → `tools/fetch_browser.py`); operator diagnostics use compact **`diag=`** suffixes documented in `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`.
-- **Operator UI:** Streamlit `app/ui.py`; Windows daily launch via `Launch-Agent-UI.cmd` (see `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`).
+- **Operator UI:** Streamlit `app/ui.py` (Agent + **API** Tool 1: single-request auth merge, summaries, rerun/copy, run-log warnings); Windows daily launch via `Launch-Agent-UI.cmd` (see `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`). **Tool 1 evidence:** `tool1_runs.jsonl` human **`summary`** lines; runnable **`system_tests/suites/tool1_public_demo/`** packs for demos.
 - Soak reliability is enforced with chunked runs and artifact outputs.
 - CI and nightly automation are configured via:
   - `.github/workflows/ci.yml`
   - `.github/workflows/nightly-soak.yml`
-- Phase 1 (V0.1) system eval is implemented; further test-engineering work must stay one small vertical slice at a time. **Active product attention:** UI cockpit increments (after FETCH lane closure through Incr. 13).
+- Phase 1 (V0.1) system eval is implemented; further test-engineering work must stay one small vertical slice at a time. **Active product attention:** Tool 1 **proven on live public smoke suite** (PASS 3/3); engine now includes **`steps`**, **`step_templates`**, **`{{var}}`** substitution, **`step_results`**, and markdown **`.md`** step summaries (Inc 42–46); operator polish + durable log + **`summary`** remain shipped; UI cockpit (FETCH lane closed at Incr. 13).
 
 ## Non-Negotiable Constraints
 
@@ -114,7 +115,8 @@ Ground truth is the local repo docs in this order:
 
 Important constraints:
 - Phase 1 (V0.1) HTTP system eval is implemented and recorded in docs/reliability/RELIABILITY_EVIDENCE.md; optional next steps are real staging runs (docs/runbooks/SYSTEM_EVAL_RUNBOOK.md) or deliberately small Phase 2 slices.
-- FETCH browser work is documented in docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md; UI launch on Windows uses Launch-Agent-UI.cmd + that runbook’s Windows section.
+- FETCH browser work is documented in docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md (lane closed at Inc 13 per SESSION_SYNC_LOG). UI: Launch-Agent-UI.cmd + runbook; **API** = Tool 1 (system eval + single-request helpers + append-only logs/tool1_runs.jsonl with human summary per line + demo suites under system_tests/suites/tool1_public_demo/). **Milestone:** live smoke suite PASS 3/3 — next engine/assertion increments per SESSION_SYNC_LOG bottom. **Prompt** / **Regression** = placeholders until approved increments.
+- Regression gate: unset FETCH_MODE in the shell before python tests/run_regression.py unless a test intentionally sets it. Latest baseline: 297 scenarios — confirm SESSION_SYNC_LOG.md bottom if drift.
 - Do not bundle adapter expansion, evaluation expansion, and reporting redesign in one change.
 - Keep system_tests isolated from playground orchestration.
 - Keep recommendations bounded to evidence in docs/reliability/RELIABILITY_EVIDENCE.md.

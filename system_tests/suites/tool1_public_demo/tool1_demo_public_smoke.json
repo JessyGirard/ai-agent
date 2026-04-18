@@ -1,0 +1,41 @@
+{
+  "suite_name": "Tool 1 demo — public API smoke",
+  "target_name": "jsonplaceholder.typicode.com",
+  "cases": [
+    {
+      "name": "Smoke — GET post returns 200",
+      "method": "GET",
+      "url": "https://jsonplaceholder.typicode.com/posts/1",
+      "headers": {},
+      "payload": {},
+      "timeout_seconds": 25,
+      "assertions": {
+        "expected_status": 200
+      }
+    },
+    {
+      "name": "Body check — response includes userId field",
+      "method": "GET",
+      "url": "https://jsonplaceholder.typicode.com/posts/1",
+      "headers": {},
+      "payload": {},
+      "timeout_seconds": 25,
+      "assertions": {
+        "expected_status": 200,
+        "body_contains": "\"userId\":"
+      }
+    },
+    {
+      "name": "Header check — JSON content type present",
+      "method": "GET",
+      "url": "https://jsonplaceholder.typicode.com/posts/1",
+      "headers": {},
+      "payload": {},
+      "timeout_seconds": 25,
+      "assertions": {
+        "expected_status": 200,
+        "header_contains": "application/json"
+      }
+    }
+  ]
+}

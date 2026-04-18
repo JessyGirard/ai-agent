@@ -94,7 +94,7 @@ Supplemental scripts (not the baseline gate):
 |------|-------------|
 | `llm.py` | `llm_preflight_check`, `ask_ai` / `chat` via Anthropic; default system prompt teaches `TOOL:fetch <url>` pattern. |
 | `persistence.py` | File I/O helpers for state/memory/journal load/save/append/archive paths. |
-| `system_eval.py` | Phase 1 HTTP system-eval: suite validation, deterministic assertions, artifact-shaped results (isolated from `playground.py`). |
+| `system_eval.py` | Phase 1 HTTP system-eval: suite validation, deterministic assertions, artifact-shaped results (isolated from `playground.py`). Supports **`steps`** scenarios, **`step_templates`** / **`use`**, **`{{variable}}`** substitution, **`step_results`** in JSON results, and per-step summaries in **`.md`** artifacts. |
 
 ### `services/`
 
@@ -125,7 +125,7 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; broad scenario coverage (state, memory write/retrieval, journal/outcome flow, routing/strictness, prompt shaping, tool fetch + browser mocks, system_eval runner, extractor fixtures, error handling). **Current protected baseline: 215 scenarios. Exit code 1 if any test fails.** Confirm with `README.md` / latest gate run if this drifts. |
+| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; broad scenario coverage (state, memory write/retrieval, journal/outcome flow, routing/strictness, prompt shaping, tool fetch + browser mocks, system_eval runner, extractor fixtures, error handling). **Current protected baseline: 297 scenarios. Exit code 1 if any test fails.** Confirm with `README.md` / latest `SESSION_SYNC_LOG.md` gate run if this drifts. |
 | `run_soak.py` | Long-duration stability runner with progress checkpoints, chunked mode (`--chunk-size`), and synchronized per-run result/checkpoint/aggregate artifacts for reliable interrupted/long runs. |
 | `fixtures/extractor_validation_cases.json` | Offline JSON cases consumed by regression to assert `run_extractor.validate_candidate` accept/reject behavior (no OpenAI call). |
 
