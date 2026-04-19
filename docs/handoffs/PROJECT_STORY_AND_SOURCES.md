@@ -28,7 +28,7 @@
 
 **Collaboration:** Work is split between **Cursor** (implementation in-repo) and **ChatGPT** (reasoning/scope). **Jessy** carries messages between them. Day-to-day continuity is **`docs/handoffs/SESSION_SYNC_LOG.md`** (append-only). Protocol and paste text: **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**.
 
-**Right now:** Implementation status and the exact “what we did last” live in the **bottom entries** of `docs/handoffs/SESSION_SYNC_LOG.md` — this narrative is not updated on every merge.
+**Right now:** Implementation status and the exact “what we did last” live in the **bottom entries** of `docs/handoffs/SESSION_SYNC_LOG.md` (same calendar **2026-04-19**: **MEMORY-01** at bottom, then **LATENCY-04–06** + **`joshua`**, then **UI-09** / UI-X1 / UI-X2 — distinguish by **heading title**, not by later calendar dates) — this narrative file is not updated on every merge.
 
 **Snapshot (2026-04-17):** The **FETCH (browser)** vertical shipped through **Increment 13** (Playwright path, **`diag=`** diagnostics, glossary in **`docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`**). Hard sites may still yield **`low_content`** / **`browser_timeout`** — use **`diag=`** + that runbook. **UI + Tool 1 (API):** **`Launch-Agent-UI.cmd`**, cockpit **`app/ui.py`** (top bar **Agent / API / …**), Tool 1 **single-request** auth helpers, customer-facing summaries, **rerun last request** + copyable request/curl, and **append-only** **`logs/tool1_runs.jsonl`** via **`app/tool1_run_log.py`** — each line is full JSON **plus** a plain-text **`summary`** for stakeholders (Inc **18**); suite runs still logged from **`app/system_eval_operator.py`**. **Public demo suites** (JSONPlaceholder + httpbin, no secrets): **`system_tests/suites/tool1_public_demo/`** (Inc **19**); **`tool1_demo_public_smoke.json`** has been run live **PASS 3/3** — first **operationally proven** end-to-end Tool 1 suite on real HTTP. **Next product focus:** continue **engine / assertions** in thin slices as approved. **`core/system_eval.py`** includes minimal + JSON/header assertions, plus **`steps`** multi-request scenarios, **`step_templates`** / **`use`**, **`{{variable}}`** substitution, **`step_results`** in JSON, and **`### Steps`** in suite **`.md`** artifacts (Increments **42–46**; see log). **Regression gate:** **`297 / 297`** at last alignment — confirm **`SESSION_SYNC_LOG.md` (bottom)**. **Show state** / **Reset state** in the sidebar **Advanced** area still call **`playground`** (no change to that contract in this arc).
 
@@ -40,6 +40,7 @@
 |--------------|---------------------|
 | **What happened session-to-session / what Cursor did last** | `docs/handoffs/SESSION_SYNC_LOG.md` (newest at **bottom**) |
 | **How to open a new ChatGPT chat + sync rules** | `docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md` |
+| **ChatGPT → ChatGPT session handoff (system paste)** | `docs/handoffs/CHATGPT_TO_CHATGPT_SYSTEM.md` |
 | **Longer collaboration rules + doc order** | `docs/handoffs/CHATGPT_COLLAB_SYNC.md` |
 | **Three-tool framing + alignment questions** | `docs/handoffs/THREE_TOOLS_ALIGNMENT_BRIEF.md` |
 | **Detailed “what we changed” narrative (paste-sized)** | `docs/handoffs/HANDOFF_RECENT_WORK.md` |

@@ -1,75 +1,15 @@
-USER: I need us to always be on the same page before moving forward. If we are not aligned, that is a serious problem.
+USER: Explain exactly how raw_chat.txt is used in your system.
 
-AI: You require strong alignment and shared understanding before any progress is made.
+AI: raw_chat.txt is actively used as the input source for the memory extraction pipeline. It is not optional.
 
-USER: I prefer building step-by-step, making sure everything is clear and validated before continuing.
+USER: What happens when raw_chat.txt is updated?
 
-AI: You prefer structured, step-by-step progress with validation at each stage.
+AI: When raw_chat.txt is updated, the extractor reads it and processes the content to generate structured memory_items.
 
-USER: I do not want to move fast and fix later. Everything must be solid before we move, then we move quickly.
+USER: Where do those memory_items go?
 
-AI: You prioritize correctness and solidity first, then momentum once something is validated.
+AI: The extracted memory_items are written into extracted_memory.json, which is the system’s structured long-term memory.
 
-USER: I get frustrated when the system gives shallow or generic answers. I know the value is there, I need help extracting it.
+USER: So raw_chat.txt is already part of the system?
 
-AI: You expect high-quality, non-generic responses that help you extract real value efficiently.
-
-USER: I am new to this, but I am learning fast. I need the system to help me stay on track and not get lost.
-
-AI: You are early in your journey and rely on the system to maintain clarity and continuity.
-
-USER: I want this AI to remember what is important to me so I don’t have to repeat myself constantly.
-
-AI: You expect important information to be remembered and reinforced over time.
-
-USER: When something feels off, I want immediate diagnostics and a clear way to investigate and fix it.
-
-AI: You want fast diagnostic capability and structured problem-solving when issues occur.
-
-USER: If there is a problem, we stop and fix it. If everything is good, we keep moving without unnecessary delay.
-
-AI: You want a strict rule: fix problems immediately, otherwise maintain momentum.
-
-USER: When I am unsure, I want the system to narrow things down to the single best move.
-
-AI: You prefer decisive guidance with one strong recommended action.
-
-USER: I want the system to challenge me if something feels off. It should not just follow me blindly.
-
-AI: You expect proactive correction and challenge when needed to protect progress.
-
-USER: I want instructions to be extremely clear and actionable, ideally step-by-step and easy to execute.
-
-AI: You require highly clear, concrete, and executable instructions.
-
-USER: I want this system to become autonomous, but safely, and always aligned with my goals.
-
-AI: You want increasing autonomy built on control, safety, and alignment.
-
-USER: The system must never give up. If the goal is realistic and ethical, it must find a way.
-
-AI: You expect persistence and solution-seeking behavior at all times.
-
-USER: My main goal right now is to bring this AI to life quickly, but the right way, without skipping steps.
-
-AI: You aim to build the system fast but correctly, ensuring stability and long-term reliability.
-
-USER: I want this AI to help me generate consistent income so I can stabilize and grow.
-
-AI: You want the AI to support practical, real-world results such as generating steady income.
-
-USER: When I am frustrated, I want the system to stay calm and help find a solution, not add confusion.
-
-AI: You expect grounded, focused responses during frustration, prioritizing solutions.
-
-USER: If there is no solution, I want the system to recognize that honestly, not force an answer.
-
-AI: You value honesty and realism when no valid solution exists.
-
-USER: If we commit to something, we do not drop it. We follow through and find a way.
-
-AI: You require commitment and follow-through on all agreed directions.
-
-USER: I am building this system to help me move forward in life, not just as a project.
-
-AI: This system is important to your real-life progress and must stay aligned with that purpose.
+AI: Yes, raw_chat.txt is already integrated as the first stage of the memory pipeline and is required for generating new memory.

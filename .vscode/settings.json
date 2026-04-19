@@ -1,0 +1,23 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv-win/Scripts/python.exe",
+  "python.terminal.activateEnvironment": true,
+  "terminal.integrated.defaultProfile.windows": "PowerShell (Bypass)",
+  "terminal.integrated.profiles.windows": {
+    "PowerShell (Bypass)": {
+      "source": "PowerShell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass"]
+    }
+  },
+  "explorer.compactFolders": true,
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/*.bak": true,
+    "**/*backup*.json": true,
+    "**/logs/test_runs/*.json": true
+  },
+  "search.exclude": {
+    "**/test_runs": true,
+    "**/__pycache__": true
+  }
+}

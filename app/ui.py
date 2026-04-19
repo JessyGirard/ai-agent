@@ -39,6 +39,19 @@ _SURFACE_NAV: tuple[tuple[str, str], ...] = (
     ("Terminal", "Terminal"),
 )
 
+# UI-07: optional `?ui_surface=Agent` (or any top-bar label / internal key) for bookmarks / shortcuts.
+_SURFACE_QUERY_ALIASES: dict[str, str] = {
+    "agent": "Agent",
+    "tool1": "Tool 1",
+    "tool_1": "Tool 1",
+    "api": "Tool 1",
+    "prompt": "Tool 2",
+    "tool2": "Tool 2",
+    "regression": "Tool 3",
+    "tool3": "Tool 3",
+    "terminal": "Terminal",
+}
+
 
 def load_memory_items(limit=8):
     if not MEMORY_FILE.exists():
@@ -81,6 +94,38 @@ def init_session_state():
     st.session_state.setdefault("tool1_fail_fast", False)
     st.session_state.setdefault("tool1_timeout", 20)
     st.session_state.setdefault("ui_surface", "Agent")
+    st.session_state.setdefault("voice_draft_text", "")
+    st.session_state.setdefault("voice_draft_clear_pending", False)
+    st.session_state.setdefault("agent_voice_composer_open", False)
+
+
+def _bootstrap_surface_from_query_params() -> None:
+    """One-shot: apply `?ui_surface=…` then remove it so reruns do not override the user's surface."""
+    qp = getattr(st, "query_params", None)
+    if qp is None or "ui_surface" not in qp:
+        return
+    raw = qp.get("ui_surface")
+    if isinstance(raw, list):
+        raw = raw[0] if raw else ""
+    token = str(raw).strip()
+    if not token:
+        return
+    key = token.lower().replace(" ", "_").replace("-", "_")
+    token_norm = _SURFACE_QUERY_ALIASES.get(key, token)
+    internal_by_label = {lbl: intr for lbl, intr in _SURFACE_NAV}
+    allowed_internal = {intr for _, intr in _SURFACE_NAV}
+    target = internal_by_label.get(token_norm) or (
+        token_norm if token_norm in allowed_internal else None
+    )
+    if target:
+        st.session_state.ui_surface = target
+    try:
+        qp.pop("ui_surface", None)
+    except Exception:
+        try:
+            del qp["ui_surface"]
+        except Exception:
+            pass
 
 
 def apply_theme():
@@ -129,6 +174,16 @@ def apply_theme():
         .top-surface-bar {
             margin: 0 0 0.45rem 0;
         }
+        .agent-ready-banner {
+            font-size: 0.84rem;
+            color: #b8e6c4;
+            margin: 0 0 0.65rem 0;
+            padding: 0.4rem 0.65rem;
+            border-radius: 9px;
+            border: 1px solid rgba(130, 200, 150, 0.32);
+            background: rgba(24, 44, 34, 0.35);
+            line-height: 1.35;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -140,11 +195,36 @@ def push_assistant_message(content):
 
 
 def run_query(user_input):
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    st.session_state.status = "Thinking"
-    response = playground.handle_user_input(user_input)
-    st.session_state.status = "Ready"
+    """Defer append to next run (drain queue at top of chat) so user line paints before Thinking… (LATENCY-01)."""
+    st.session_state["_chat_submit_queue"] = user_input
+    st.rerun()
+
+
+def _process_agent_reply_pending_in_chat() -> None:
+    """If a reply was queued, show an assistant placeholder immediately, then fill when ready."""
+    pending = st.session_state.get("_agent_reply_pending")
+    if pending is None:
+        return
+    with st.chat_message("assistant"):
+        ph = st.empty()
+        ph.caption("Thinking…")
+        try:
+            response = playground.handle_user_input(pending)
+        except Exception as exc:
+            st.session_state.status = "Ready"
+            st.session_state.pop("_agent_reply_pending", None)
+            ph.empty()
+            st.error(str(exc))
+            push_assistant_message(f"Something went wrong: {exc}")
+            st.rerun()
+            return
+        st.session_state.status = "Ready"
+        st.session_state.pop("_agent_reply_pending", None)
+        ph.empty()
+        # LATENCY-06: do not render the final answer here — the next rerun redraws it once from
+        # st.session_state.messages (avoids duplicate markdown work discarded by st.rerun()).
     push_assistant_message(response)
+    st.rerun()
 
 
 def render_formatted_assistant_message(content):
@@ -173,31 +253,10 @@ def render_formatted_assistant_message(content):
 def _go_surface(internal: str) -> None:
     if st.session_state.get("ui_surface") != internal:
         st.session_state.ui_surface = internal
-        st.rerun()
+        # No st.rerun: main() runs sidebar/top bar before render_main_surface in the same pass.
 
 
-def render_top_surface_bar():
-    """Compact primary surface switch (main column). Maps labels → existing ui_surface keys."""
-    current = st.session_state.get("ui_surface", "Agent")
-    st.markdown('<div class="top-surface-bar">', unsafe_allow_html=True)
-    cols = st.columns(5, gap="small")
-    for i, (label, internal) in enumerate(_SURFACE_NAV):
-        with cols[i]:
-            selected = current == internal
-            if st.button(
-                label,
-                key=f"top_bar_{internal}",
-                use_container_width=True,
-                type="primary" if selected else "secondary",
-            ):
-                if not selected:
-                    _go_surface(internal)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def render_sidebar_rail_and_context():
-    """Secondary rail: same surfaces as top bar, compact; status + actions + Advanced."""
-    st.caption("Surface · backup")
+def _sidebar_surface_nav_buttons():
     s1, s2 = st.sidebar.columns(2)
     for idx, (label, internal) in enumerate(_SURFACE_NAV):
         col = s1 if idx % 2 == 0 else s2
@@ -212,6 +271,8 @@ def render_sidebar_rail_and_context():
                 if not selected:
                     _go_surface(internal)
 
+
+def _sidebar_focus_stage_caption():
     current_focus = playground.get_current_focus()
     current_stage = playground.get_current_stage()
     f_line = " ".join(str(current_focus or "—").split())
@@ -221,6 +282,8 @@ def render_sidebar_rail_and_context():
         unsafe_allow_html=True,
     )
 
+
+def _sidebar_show_reset_row():
     q1, q2 = st.sidebar.columns(2)
     if q1.button(
         "Show",
@@ -239,39 +302,94 @@ def render_sidebar_rail_and_context():
     ):
         push_assistant_message(playground.handle_user_input("reset state"))
 
+
+def _sidebar_advanced_panel_body():
+    current_focus = playground.get_current_focus()
+    current_stage = playground.get_current_stage()
+    eff = _fetch_mode_effective()
+    raw = os.environ.get("FETCH_MODE")
+
+    st.markdown("**Adjust state**")
+    with st.form("state_form"):
+        new_focus = st.text_input("Focus", value=current_focus)
+        new_stage = st.text_input("Stage", value=current_stage)
+        submitted = st.form_submit_button("Apply")
+        if submitted:
+            if new_focus.strip() and new_focus.strip() != current_focus:
+                playground.handle_user_input(f"set focus: {new_focus.strip()}")
+            if new_stage.strip() and new_stage.strip() != current_stage:
+                playground.handle_user_input(f"set stage: {new_stage.strip()}")
+            push_assistant_message(playground.handle_user_input("show state"))
+
+    st.markdown("**Fetch**")
+    if raw is None or not str(raw).strip():
+        st.text(f"effective={eff}")
+    else:
+        st.text(f"effective={eff}  env={str(raw).strip()}")
+    if eff == "browser" and os.environ.get("FETCH_BROWSER_TIMEOUT_SECONDS"):
+        st.text(f"FETCH_BROWSER_TIMEOUT_SECONDS={os.environ.get('FETCH_BROWSER_TIMEOUT_SECONDS')}")
+
+    st.markdown("**Memory**")
+    mem_items = load_memory_items()
+    if mem_items:
+        for item in mem_items:
+            category = item.get("category", "unknown")
+            value = item.get("value", "")
+            st.caption(f"({category}) {value}")
+    else:
+        st.caption("— no rows —")
+
+
+def render_top_surface_bar():
+    """Primary surface switch. On Agent: one quiet horizontal row; elsewhere: full button bar."""
+    current = st.session_state.get("ui_surface", "Agent")
+    if current == "Agent":
+        # UI-06B: keep Agent landing calm by removing top-strip navigation
+        # from the main visual track. Surface switching remains available in
+        # the sidebar "Tools · navigation · state" panel.
+        return
+
+    st.markdown('<div class="top-surface-bar">', unsafe_allow_html=True)
+    cols = st.columns(5, gap="small")
+    for i, (label, internal) in enumerate(_SURFACE_NAV):
+        with cols[i]:
+            selected = current == internal
+            if st.button(
+                label,
+                key=f"top_bar_{internal}",
+                use_container_width=True,
+                type="primary" if selected else "secondary",
+            ):
+                if not selected:
+                    _go_surface(internal)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_sidebar_rail_and_context():
+    """Sidebar: on Agent, tuck backup nav + state behind one expander; other surfaces keep full rail."""
+    current = st.session_state.get("ui_surface", "Agent")
+    if current == "Agent":
+        with st.sidebar.expander("Tools · navigation · state", expanded=False):
+            _sidebar_focus_stage_caption()
+            _sidebar_surface_nav_buttons()
+            _sidebar_show_reset_row()
+            st.divider()
+            st.caption("Advanced")
+            _sidebar_advanced_panel_body()
+            st.divider()
+            st.caption("Agent input tools")
+            with st.expander("Menu & shortcuts", expanded=False):
+                _render_agent_menu_controls()
+            _render_agent_long_paste_panel()
+        return
+
+    st.caption("Surface · backup")
+    _sidebar_surface_nav_buttons()
+    _sidebar_focus_stage_caption()
+    _sidebar_show_reset_row()
+
     with st.sidebar.expander("Advanced", expanded=False):
-        eff = _fetch_mode_effective()
-        raw = os.environ.get("FETCH_MODE")
-
-        st.markdown("**Adjust state**")
-        with st.form("state_form"):
-            new_focus = st.text_input("Focus", value=current_focus)
-            new_stage = st.text_input("Stage", value=current_stage)
-            submitted = st.form_submit_button("Apply")
-            if submitted:
-                if new_focus.strip() and new_focus.strip() != current_focus:
-                    playground.handle_user_input(f"set focus: {new_focus.strip()}")
-                if new_stage.strip() and new_stage.strip() != current_stage:
-                    playground.handle_user_input(f"set stage: {new_stage.strip()}")
-                push_assistant_message(playground.handle_user_input("show state"))
-
-        st.markdown("**Fetch**")
-        if raw is None or not str(raw).strip():
-            st.text(f"effective={eff}")
-        else:
-            st.text(f"effective={eff}  env={str(raw).strip()}")
-        if eff == "browser" and os.environ.get("FETCH_BROWSER_TIMEOUT_SECONDS"):
-            st.text(f"FETCH_BROWSER_TIMEOUT_SECONDS={os.environ.get('FETCH_BROWSER_TIMEOUT_SECONDS')}")
-
-        st.markdown("**Memory**")
-        mem_items = load_memory_items()
-        if mem_items:
-            for item in mem_items:
-                category = item.get("category", "unknown")
-                value = item.get("value", "")
-                st.caption(f"({category}) {value}")
-        else:
-            st.caption("— no rows —")
+        _sidebar_advanced_panel_body()
 
 
 def _tool1_attempts_summary(case_row):
@@ -1185,42 +1303,171 @@ def render_terminal_panel():
 
 def _render_agent_menu_controls():
     """Status, new chat, shortcuts — lives inside popover or expander (not above chat)."""
-    st.caption(f"Status: {html.escape(str(st.session_state.status))}")
+    st_label = str(st.session_state.status)
+    if st_label.strip().lower() == "ready":
+        st.caption("Agent: **ready to chat** (local session — sends when you use Send or chat input).")
+    else:
+        st.caption(f"Agent: {html.escape(st_label)}")
     if st.button("New chat", use_container_width=True, key="agent_new_chat"):
         st.session_state.messages = []
-        st.rerun()
+        st.session_state.pop("_agent_reply_pending", None)
+        st.session_state.pop("_chat_submit_queue", None)
+        # No st.rerun: render_main_surface runs later in the same script pass with cleared state.
     st.divider()
     qp_col1, qp_col2, qp_col3 = st.columns(3)
     for i, prompt in enumerate(QUICK_PROMPTS):
         col = [qp_col1, qp_col2, qp_col3][i]
         if col.button(prompt, key=f"quick_prompt_{i}", use_container_width=True):
             run_query(prompt)
-            st.rerun()
+
+
+def _inject_ui_x2_chat_viewport_css() -> None:
+    """UI-X2: fixed-height scroll region for chat + composer (input stays outside)."""
+    st.markdown(
+        """
+<style>
+.chat-wrapper {
+    height: 70vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def _agent_streamlit_mic_available() -> bool:
+    try:
+        from streamlit_mic_recorder import speech_to_text  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _render_agent_long_paste_panel():
+    with st.expander("Paste / Long Input", expanded=False):
+        st.text_area(
+            "Long-form paste",
+            height=320,
+            key="long_input_text",
+            label_visibility="collapsed",
+            placeholder="Paste multi-line text or a document here, then click Send pasted text.",
+        )
+        if st.button("Send pasted text", use_container_width=True, key="long_input_submit"):
+            raw = st.session_state.get("long_input_text", "")
+            if raw.strip():
+                st.session_state["long_input_text"] = ""
+                run_query(raw)
+
+
+def _render_agent_speech_to_text_inner(*, draft_height: int = 260, append_segments: bool = True):
+    """Speech-to-text body (single mount per run — shared widget keys). Same pipeline as chat/paste."""
+    from streamlit_mic_recorder import speech_to_text
+
+    # UI-05A: clear draft on the next rerun, before widgets bind to session_state.
+    if st.session_state.get("voice_draft_clear_pending"):
+        st.session_state["voice_draft_text"] = ""
+        st.session_state["voice_draft_clear_pending"] = False
+
+    st.caption(
+        "Chrome or Edge recommended. Allow the microphone when the browser asks. "
+        "Record in **segments** (each **Stop** adds to the draft below). Edit anytime, then **Send draft** once."
+    )
+    spoken = speech_to_text(
+        language="en",
+        start_prompt="🎤 Record",
+        stop_prompt="■ Stop",
+        just_once=True,
+        use_container_width=True,
+        key="agent_speech_to_text",
+    )
+    if spoken:
+        seg = str(spoken).strip()
+        if seg:
+            if append_segments:
+                prev = (st.session_state.get("voice_draft_text") or "").strip()
+                st.session_state["voice_draft_text"] = f"{prev} {seg}".strip() if prev else seg
+            else:
+                st.session_state["voice_draft_text"] = seg
+
+    st.text_area(
+        "Voice draft",
+        height=int(draft_height),
+        key="voice_draft_text",
+        label_visibility="collapsed",
+        placeholder="Transcript builds here after each recording. Type or edit before sending.",
+    )
+    if st.button("Send draft", use_container_width=True, key="voice_transcript_submit"):
+        raw = st.session_state.get("voice_draft_text", "")
+        if raw.strip():
+            st.session_state["voice_draft_clear_pending"] = True
+            run_query(raw)
 
 
 def render_agent_center_minimal():
-    """Agent-first: one minimal menu control, then conversation + input (no dashboard chrome)."""
-    if hasattr(st, "popover"):
-        with st.popover("⋯"):
-            _render_agent_menu_controls()
-    else:
-        with st.expander("Menu", expanded=False):
-            _render_agent_menu_controls()
+    """Agent-first: messages, optional voice composer, then mic + chat input row (UI-06D).
 
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            if message["role"] == "assistant":
-                render_formatted_assistant_message(message["content"])
-            else:
-                st.markdown(message["content"])
+    UI-X1: conversation rows render inside a single persistent ``st.container()`` to test
+    whether anchoring reduces visible scroll/jump on reruns. Nothing else is interleaved there.
 
-    user_input = st.chat_input("Message Mimi…")
-    if not user_input:
-        return
+    UI-X2: chat + composer sit in a fixed-height ``.chat-wrapper`` (scroll inside); input row
+    stays outside the wrapper so the page chrome does not grow with thread length or voice UI.
+    """
+    _inject_ui_x2_chat_viewport_css()
+    queued = st.session_state.pop("_chat_submit_queue", None)
+    if queued is not None:
+        st.session_state.messages.append({"role": "user", "content": queued})
+        st.session_state.status = "Thinking"
+        st.session_state["_agent_reply_pending"] = queued
 
-    with st.spinner("Thinking..."):
+    st.markdown('<div class="chat-wrapper">', unsafe_allow_html=True)
+
+    chat_container = st.container()
+    with chat_container:
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                if message["role"] == "assistant":
+                    render_formatted_assistant_message(message["content"])
+                else:
+                    st.markdown(message["content"])
+        _process_agent_reply_pending_in_chat()
+
+    composer_open = bool(st.session_state.get("agent_voice_composer_open"))
+    speech_ok = _agent_streamlit_mic_available()
+
+    if composer_open and speech_ok:
+        try:
+            voice_shell = st.container(border=True)
+        except TypeError:
+            voice_shell = st.container()
+        with voice_shell:
+            st.markdown("**Voice draft**")
+            _render_agent_speech_to_text_inner(draft_height=280, append_segments=True)
+    elif composer_open and not speech_ok:
+        st.info(
+            "Voice needs **streamlit-mic-recorder** (see README). Install in your venv, restart Streamlit, then try again."
+        )
+        if st.button("Close voice panel", key="agent_voice_composer_close_err"):
+            st.session_state["agent_voice_composer_open"] = False
+            st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    col_mic, col_chat = st.columns([1, 14], gap="small")
+    with col_mic:
+        mic_help = "Open or close the voice draft composer (large transcript area)."
+        if st.button("🎤", key="agent_voice_toggle", help=mic_help, type="secondary"):
+            st.session_state["agent_voice_composer_open"] = not bool(
+                st.session_state.get("agent_voice_composer_open")
+            )
+            st.rerun()
+    with col_chat:
+        user_input = st.chat_input("Message Joshua…")
+    if user_input:
         run_query(user_input)
-    st.rerun()
 
 
 def render_main_surface():
@@ -1242,9 +1489,11 @@ def main():
         page_title="Mimi AI Agent",
         page_icon="✨",
         layout="wide",
+        initial_sidebar_state="collapsed",
     )
 
     init_session_state()
+    _bootstrap_surface_from_query_params()
     apply_theme()
     render_top_surface_bar()
     render_sidebar_rail_and_context()

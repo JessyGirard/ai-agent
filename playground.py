@@ -1,6 +1,9 @@
 import re
+from concurrent.futures import ThreadPoolExecutor
 from os import getenv
 from pathlib import Path
+from typing import Optional
+from urllib.parse import urlparse
 
 from core.llm import ask_ai, llm_preflight_check
 from core.persistence import (
@@ -17,7 +20,7 @@ from core.persistence import (
 from services import journal_service, memory_service
 from services import prompt_builder
 from services import routing_service
-from tools.fetch_page import fetch_page
+from tools.fetch_page import fetch_failure_tag, fetch_page
 
 MEMORY_FILE = Path("memory/extracted_memory.json")
 STATE_FILE = Path("memory/current_state.json")
@@ -36,9 +39,52 @@ ACTION_TYPES = ["build", "test", "review", "research", "fix"]
 
 ALLOWED_MEMORY_CATEGORIES = {"identity", "goal", "preference", "project"}
 
+# UI-04: treat long or multiline input as content, not bare state commands / outcome cues.
+STATE_COMMAND_INPUT_MAX_CHARS = 280
+OUTCOME_FEEDBACK_INPUT_MAX_CHARS = 220
+
+# LATENCY-02: cap payload sizes before API calls (playground-only; build_messages is single-turn today).
+_LATENCY_LLM_USER_MESSAGE_MAX_CHARS = 28_000
+_LATENCY_POST_FETCH_BODY_MAX_CHARS = 14_000
+
+# LATENCY-10: second LLM skip for valid but tiny fetch bodies (chars + words, deterministic).
+_LATENCY10_TRIVIAL_MAX_CHARS = 100
+_LATENCY10_TRIVIAL_MAX_WORDS = 12
+
+# LATENCY-11: deterministic fetch short-circuit — display cap and empty-body line (compute once per module).
+_LATENCY07_DETERMINISTIC_FETCH_ANSWER_CAP = 1200
+_LATENCY07_EMPTY_FETCH_ANSWER_LINE = "The fetch did not return usable page text."
+
 current_state = {}
 RECENT_ANSWER_HISTORY_MAX = journal_service.RECENT_ANSWER_HISTORY_MAX
 recent_answer_history = journal_service.make_recent_answer_history()
+
+
+def _latency_truncate_text(text: str, limit: int, label: str) -> str:
+    if not isinstance(text, str) or len(text) <= limit:
+        return text
+    return text[:limit] + f"\n\n[{label} truncated for model context — {len(text)} chars total.]"
+
+
+def _latency_limit_message_list(
+    messages, *, max_turns: int = 10, max_chars_per_message: Optional[int] = None
+):
+    """Keep only the last ``max_turns`` chat rows and cap oversized ``content`` strings (Anthropic messages)."""
+    if not messages:
+        return messages
+    cap = max_chars_per_message if max_chars_per_message is not None else _LATENCY_LLM_USER_MESSAGE_MAX_CHARS
+    trimmed = messages[-max_turns:]
+    out = []
+    for m in trimmed:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if isinstance(content, str) and len(content) > cap:
+            content = _latency_truncate_text(content, cap, "Message")
+        out.append({"role": role, "content": content})
+    return out
 
 
 def drain_persistence_health_signals():
@@ -101,11 +147,36 @@ def _user_discussing_state_command(line: str) -> bool:
     return False
 
 
+def _input_shape_allows_direct_state_command(line: str) -> bool:
+    """True only for short, single-line input — not pasted documents or long lines."""
+    if not line:
+        return False
+    if "\n" in line or "\r" in line:
+        return False
+    if len(line) > STATE_COMMAND_INPUT_MAX_CHARS:
+        return False
+    return True
+
+
+def _input_shape_allows_outcome_feedback_heuristic(user_input: str) -> bool:
+    """Outcome heuristics only for plausibly short, single-line operator reflections."""
+    if not user_input:
+        return False
+    if "\n" in user_input or "\r" in user_input:
+        return False
+    if len(user_input) > OUTCOME_FEEDBACK_INPUT_MAX_CHARS:
+        return False
+    return True
+
+
 def update_state_from_command(user_input):
     line = (user_input or "").strip()
     text = line.lower()
 
     if _user_discussing_state_command(line):
+        return None
+
+    if not _input_shape_allows_direct_state_command(line):
         return None
 
     if text.startswith("set stage:"):
@@ -297,6 +368,59 @@ def load_memory():
     return memory_service.load_memory(load_memory_payload)
 
 
+def build_project_memory_snapshot(max_items=12):
+    memory_items = load_memory()
+
+    if not memory_items:
+        return ""
+
+    project_rows = []
+    for mem in memory_items:
+        if mem.get("category") != "project":
+            continue
+        if mem.get("status") != "active":
+            continue
+        project_rows.append(mem)
+
+    def _project_snapshot_sort_key(mem):
+        evidence_count = mem.get("evidence_count", 1)
+        importance = mem.get("importance", 0.0)
+        confidence = mem.get("confidence", 0.0)
+        trend = (mem.get("trend") or "").lower()
+        trend_rank = 1 if trend == "reinforced" else 0
+        return (
+            trend_rank,
+            evidence_count,
+            importance,
+            confidence,
+            mem.get("value", ""),
+        )
+
+    project_rows.sort(key=_project_snapshot_sort_key, reverse=True)
+    project_rows = project_rows[:max_items]
+
+    lines = ["Project memory snapshot:"]
+    for mem in project_rows:
+        value = (mem.get("value") or "").strip()
+        if not value:
+            continue
+        evidence_count = mem.get("evidence_count", 1)
+        confidence = mem.get("confidence", 0.0)
+        lines.append(
+            f"- {value} [evidence={evidence_count}, confidence={confidence:.2f}]"
+        )
+
+    if len(lines) == 1:
+        return ""
+
+    return "\n".join(lines)
+
+
+def show_project_memory_snapshot():
+    snapshot = build_project_memory_snapshot()
+    return snapshot or "No active project memory available."
+
+
 def tokenize_text(text):
     return memory_service.tokenize_text(text)
 
@@ -433,8 +557,446 @@ def make_runtime_memory_candidate(category, text, low):
     return memory_service.make_runtime_memory_candidate(category, text, low)
 
 
+def _memory01_explicit_project_runtime_candidate(user_input):
+    """
+    Narrow second-stage extraction: explicit project/system statements only.
+    Runs after memory_service.extract_runtime_memory_candidate (preference, goal,
+    identity, and existing project prefixes stay unchanged).
+    """
+    raw = (user_input or "").strip()
+    if not raw or "?" in raw:
+        return None
+    prefixes = (
+        "the project is ",
+        "this project is ",
+        "the system is meant to ",
+        "this system is meant to ",
+        "the system is being built to ",
+        "this system is being built to ",
+        "the purpose of this project is ",
+        "the purpose of the project is ",
+    )
+    for line in raw.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        low = text.lower()
+        if memory_service.is_transient_identity_statement(low):
+            continue
+        for p in prefixes:
+            if low.startswith(p):
+                rest = text[len(p) :].strip()
+                if len(rest) < 3:
+                    continue
+                return memory_service.make_runtime_memory_candidate("project", text, low)
+    return None
+
+
+def _memory02_build_intent_runtime_candidate(user_input):
+    raw = (user_input or "").strip()
+    if not raw or "?" in raw:
+        return None
+
+    prefixes = (
+        "i am building ",
+        "i'm building ",
+    )
+
+    for line in raw.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+
+        low = text.lower()
+
+        if memory_service.is_transient_identity_statement(low):
+            continue
+
+        for p in prefixes:
+            if low.startswith(p):
+                rest = text[len(p) :].strip()
+
+                if len(rest) < 5:
+                    continue
+
+                if "maybe" in low or "might" in low or "want to" in low:
+                    continue
+
+                return memory_service.make_runtime_memory_candidate("project", text, low)
+
+    return None
+
+
+def _memory03_project_structure_runtime_candidate(user_input):
+    raw = (user_input or "").strip()
+    if not raw or "?" in raw:
+        return None
+
+    prefixes = (
+        "playground.py ",
+        "memory.py ",
+        "this file ",
+        "this system ",
+        "this part ",
+        "this module ",
+        "this function ",
+        "the memory system ",
+        "the journal ",
+        "the state file ",
+        "the extracted memory ",
+    )
+
+    for line in raw.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+
+        low = text.lower()
+
+        if memory_service.is_transient_identity_statement(low):
+            continue
+
+        for p in prefixes:
+            if low.startswith(p):
+                rest = text[len(p) :].strip()
+
+                # Lines like "playground.py is responsible for …" are owned by MEMORY-05
+                # (stricter tail after the full responsibility prefix).
+                if rest.lower().startswith("is responsible for "):
+                    continue
+
+                # "this system must …" / similar: owned by MEMORY-06 (rule / constraint prefixes).
+                if rest.lower().startswith("must "):
+                    continue
+
+                # "this part is done …" / "this part is complete …": owned by MEMORY-08 (milestone prefixes).
+                if rest.lower().startswith("is done ") or rest.lower().startswith("is complete "):
+                    continue
+
+                if len(rest) < 8:
+                    continue
+
+                return memory_service.make_runtime_memory_candidate("project", text, low)
+
+    return None
+
+
+def _memory04_project_flow_runtime_candidate(user_input):
+    raw = (user_input or "").strip()
+    if not raw or "?" in raw:
+        return None
+
+    prefixes = (
+        "the flow is ",
+        "the workflow is ",
+        "the pipeline is ",
+        "the process is ",
+        "the path is ",
+        "the system flow is ",
+        "the memory flow is ",
+    )
+
+    for line in raw.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+
+        low = text.lower()
+
+        if memory_service.is_transient_identity_statement(low):
+            continue
+
+        for p in prefixes:
+            if low.startswith(p):
+                rest = text[len(p) :].strip()
+
+                if len(rest) < 8:
+                    continue
+
+                return memory_service.make_runtime_memory_candidate("project", text, low)
+
+    return None
+
+
+def _memory05_project_responsibility_runtime_candidate(user_input):
+    raw = (user_input or "").strip()
+    if not raw or "?" in raw:
+        return None
+
+    prefixes = (
+        "playground.py is responsible for ",
+        "memory.py is responsible for ",
+        "this file is responsible for ",
+        "this module is responsible for ",
+        "this function is responsible for ",
+        "the memory system is responsible for ",
+        "the journal is responsible for ",
+        "the state file is responsible for ",
+        "the extracted memory is responsible for ",
+    )
+
+    for line in raw.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+
+        low = text.lower()
+
+        if memory_service.is_transient_identity_statement(low):
+            continue
+
+        for p in prefixes:
+            if low.startswith(p):
+                rest = text[len(p) :].strip()
+
+                if len(rest) < 8:
+                    continue
+
+                return memory_service.make_runtime_memory_candidate("project", text, low)
+
+    return None
+
+
+def _memory06_project_rule_runtime_candidate(user_input):
+    raw = (user_input or "").strip()
+    if not raw or "?" in raw:
+        return None
+
+    prefixes = (
+        "the rule is ",
+        "the rules are ",
+        "the constraint is ",
+        "the constraints are ",
+        "the requirement is ",
+        "the requirements are ",
+        "the system must ",
+        "this system must ",
+        "the project must ",
+        "this project must ",
+    )
+
+    for line in raw.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+
+        low = text.lower()
+
+        if memory_service.is_transient_identity_statement(low):
+            continue
+
+        for p in prefixes:
+            if low.startswith(p):
+                rest = text[len(p) :].strip()
+
+                if len(rest) < 8:
+                    continue
+
+                return memory_service.make_runtime_memory_candidate("project", text, low)
+
+    return None
+
+
+def _memory07_project_decision_runtime_candidate(user_input):
+    raw = (user_input or "").strip()
+    if not raw or "?" in raw:
+        return None
+
+    prefixes = (
+        "the decision is ",
+        "the decision was ",
+        "the choice is ",
+        "the choice was ",
+        "we decided to ",
+        "we chose to ",
+        "the plan is to ",
+        "the plan was to ",
+    )
+
+    for line in raw.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+
+        low = text.lower()
+
+        if memory_service.is_transient_identity_statement(low):
+            continue
+
+        for p in prefixes:
+            if low.startswith(p):
+                rest = text[len(p) :].strip()
+
+                if len(rest) < 8:
+                    continue
+
+                return memory_service.make_runtime_memory_candidate("project", text, low)
+
+    return None
+
+
+def _memory08_project_progress_runtime_candidate(user_input):
+    raw = (user_input or "").strip()
+    if not raw or "?" in raw:
+        return None
+
+    prefixes = (
+        "the milestone is ",
+        "the milestone was ",
+        "the progress is ",
+        "the progress was ",
+        "we completed ",
+        "we finished ",
+        "this is complete ",
+        "this is done ",
+        "this part is complete ",
+        "this part is done ",
+    )
+
+    for line in raw.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+
+        low = text.lower()
+
+        if memory_service.is_transient_identity_statement(low):
+            continue
+
+        for p in prefixes:
+            if low.startswith(p):
+                rest = text[len(p) :].strip()
+
+                if len(rest) < 8:
+                    continue
+
+                return memory_service.make_runtime_memory_candidate("project", text, low)
+
+    return None
+
+
+def _memory09_project_risk_runtime_candidate(user_input):
+    raw = (user_input or "").strip()
+    if not raw or "?" in raw:
+        return None
+
+    prefixes = (
+        "the problem is ",
+        "the risk is ",
+        "the failure mode is ",
+        "the weakness is ",
+        "the issue is ",
+        "the bug is ",
+        "the danger is ",
+        "the biggest risk is ",
+    )
+
+    for line in raw.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+
+        low = text.lower()
+
+        if memory_service.is_transient_identity_statement(low):
+            continue
+
+        for p in prefixes:
+            if low.startswith(p):
+                rest = text[len(p) :].strip()
+
+                if len(rest) < 8:
+                    continue
+
+                return memory_service.make_runtime_memory_candidate("project", text, low)
+
+    return None
+
+
+def _memory10_project_priority_runtime_candidate(user_input):
+    raw = (user_input or "").strip()
+    if not raw or "?" in raw:
+        return None
+
+    prefixes = (
+        "the objective is ",
+        "the objective right now is ",
+        "the priority is ",
+        "the priority right now is ",
+        "the main priority is ",
+        "the focus is to ",
+        "the goal right now is ",
+        "what matters most is ",
+    )
+
+    for line in raw.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+
+        low = text.lower()
+
+        if memory_service.is_transient_identity_statement(low):
+            continue
+
+        for p in prefixes:
+            if low.startswith(p):
+                rest = text[len(p) :].strip()
+
+                if len(rest) < 8:
+                    continue
+
+                return memory_service.make_runtime_memory_candidate("project", text, low)
+
+    return None
+
+
+def _extract_runtime_memory_candidate_chained(user_input):
+    c = memory_service.extract_runtime_memory_candidate(user_input)
+    if c:
+        return c
+
+    c = _memory01_explicit_project_runtime_candidate(user_input)
+    if c:
+        return c
+
+    c = _memory02_build_intent_runtime_candidate(user_input)
+    if c:
+        return c
+
+    c = _memory03_project_structure_runtime_candidate(user_input)
+    if c:
+        return c
+
+    c = _memory04_project_flow_runtime_candidate(user_input)
+    if c:
+        return c
+
+    c = _memory05_project_responsibility_runtime_candidate(user_input)
+    if c:
+        return c
+
+    c = _memory06_project_rule_runtime_candidate(user_input)
+    if c:
+        return c
+
+    c = _memory07_project_decision_runtime_candidate(user_input)
+    if c:
+        return c
+
+    c = _memory08_project_progress_runtime_candidate(user_input)
+    if c:
+        return c
+
+    c = _memory09_project_risk_runtime_candidate(user_input)
+    if c:
+        return c
+
+    return _memory10_project_priority_runtime_candidate(user_input)
+
+
 def extract_runtime_memory_candidate(user_input):
-    return memory_service.extract_runtime_memory_candidate(user_input)
+    return _extract_runtime_memory_candidate_chained(user_input)
 
 
 def next_runtime_memory_id(memory_items):
@@ -451,7 +1013,11 @@ def merge_runtime_memory(existing_item):
 
 def write_runtime_memory(user_input):
     return memory_service.write_runtime_memory(
-        user_input, ALLOWED_MEMORY_CATEGORIES, load_memory_payload, save_memory_payload
+        user_input,
+        ALLOWED_MEMORY_CATEGORIES,
+        load_memory_payload,
+        save_memory_payload,
+        extract_candidate=_extract_runtime_memory_candidate_chained,
     )
 
 
@@ -549,15 +1115,121 @@ def parse_tool_command(response_text):
         return None
 
     response_text = response_text.strip()
+    # LATENCY-07: require a single-line, full-string tool invocation (no extra prose).
+    if "\n" in response_text or "\r" in response_text:
+        return None
     match = re.fullmatch(r"TOOL:fetch\s+(https?://\S+)", response_text)
 
     if not match:
         return None
 
+    url = match.group(1)
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+
     return {
         "tool": "fetch",
-        "url": match.group(1)
+        "url": url,
     }
+
+
+def _latency08_should_skip_second_llm(
+    fetch_raw_norm: str,
+    fetched_stripped: str,
+    *,
+    fetch_raw_has_failure_tag: bool,
+    fetch_stripped_has_failure_tag: bool,
+    fetch_raw_no_alnum: bool,
+    fetched_stripped_is_empty: bool,
+    fetch_raw_is_empty: bool,
+) -> bool:
+    """LATENCY-08/09: skip second ask_ai when fetch output is unusable after normalization/truncation.
+
+    ``fetched_stripped`` must be ``(fetched_for_llm or "").strip()`` — computed once by the caller
+    so this function does not repeat truncate/strip work (LATENCY-09).
+
+    ``fetch_raw_has_failure_tag`` must be ``fetch_failure_tag(fetch_raw_norm) is not None`` (LATENCY-18).
+    ``fetch_stripped_has_failure_tag`` must be ``fetch_failure_tag(fetched_stripped) is not None`` (LATENCY-19).
+    ``fetch_raw_no_alnum`` must be ``not any(ch.isalnum() for ch in fetch_raw_norm)`` (LATENCY-14 scan + LATENCY-17).
+    ``fetched_stripped_is_empty`` must be ``not fetched_stripped`` (LATENCY-15: compute once).
+    ``fetch_raw_is_empty`` must be ``not fetch_raw_norm`` (LATENCY-16: compute once).
+    """
+    if fetch_raw_is_empty:
+        return True
+    if fetch_raw_has_failure_tag:
+        return True
+    if fetched_stripped_is_empty:
+        return True
+    if fetch_stripped_has_failure_tag:
+        return True
+    # No letters/digits at all — punctuation/whitespace-only blobs are not worth a second pass.
+    if fetch_raw_no_alnum:
+        return True
+    return False
+
+
+def _latency10_is_trivially_small(
+    fetch_raw_norm: str,
+    fetched_stripped: str,
+    *,
+    fetch_raw_has_failure_tag: bool,
+    fetch_stripped_has_failure_tag: bool,
+    fetched_stripped_is_empty: bool,
+    fetched_stripped_len: int,
+    fetched_stripped_word_count: int,
+) -> bool:
+    """True when fetch is valid (no failure tag) but too small for a useful second LLM pass (LATENCY-10).
+
+    ``fetch_raw_has_failure_tag`` must be ``fetch_failure_tag(fetch_raw_norm) is not None`` (LATENCY-18).
+    ``fetch_stripped_has_failure_tag`` must be ``fetch_failure_tag(fetched_stripped) is not None`` (LATENCY-19).
+    ``fetched_stripped_len`` must be ``len(fetched_stripped)`` (LATENCY-20).
+    ``fetched_stripped_word_count`` must be ``len(fetched_stripped.split())`` when
+    ``fetched_stripped_len <= _LATENCY10_TRIVIAL_MAX_CHARS``; otherwise a placeholder (never read after char-cap fail) (LATENCY-21).
+    ``fetched_stripped_is_empty`` must be ``not fetched_stripped`` (LATENCY-15).
+    """
+    if fetched_stripped_is_empty:
+        return False
+    if fetch_raw_has_failure_tag or fetch_stripped_has_failure_tag:
+        return False
+
+    if fetched_stripped_len > _LATENCY10_TRIVIAL_MAX_CHARS:
+        return False
+
+    if fetched_stripped_word_count > _LATENCY10_TRIVIAL_MAX_WORDS:
+        return False
+    return True
+
+
+def _latency07_structured_fetch_reply_tail(*, focus: str, stage: str, next_step: str) -> str:
+    """LATENCY-11: ``Current state`` + ``Next step`` block for deterministic post-fetch shape (research)."""
+    return (
+        "Current state:\n"
+        f"Focus: {focus}\n"
+        f"Stage: {stage}\n"
+        "Action type: research\n\n"
+        "Next step:\n"
+        f"{next_step}"
+    )
+
+
+def _latency07_deterministic_fetch_reply(*, fetched_for_llm: str, focus: str, stage: str) -> str:
+    """Structured reply matching the normal post-fetch shape without a second LLM call (LATENCY-07/08/10)."""
+    forced_next_step = choose_post_fetch_next_step(fetched_for_llm)
+    body = (fetched_for_llm or "").strip()
+    if not body:
+        answer_line = _LATENCY07_EMPTY_FETCH_ANSWER_LINE
+    else:
+        cap = _LATENCY07_DETERMINISTIC_FETCH_ANSWER_CAP
+        blen = len(body)
+        if blen > cap:
+            answer_line = body[:cap] + "…"
+        else:
+            answer_line = body
+    tail = _latency07_structured_fetch_reply_tail(
+        focus=focus, stage=stage, next_step=forced_next_step
+    )
+    return f"Answer:\n{answer_line}\n\n{tail}"
 
 
 def user_message_suppresses_tool_fetch(user_input: str) -> bool:
@@ -647,7 +1319,6 @@ def handle_user_input(user_input: str) -> str:
         drain_persistence_health_signals()
 
     user_input = user_input.strip()
-    drain_persistence_health_signals()
 
     if not user_input:
         return "⚠️ Please type something."
@@ -671,7 +1342,9 @@ def handle_user_input(user_input: str) -> str:
         return command_result
 
     write_runtime_memory(user_input)
-    outcome_signal = detect_outcome_feedback_signal(user_input)
+    outcome_signal = None
+    if _input_shape_allows_outcome_feedback_heuristic(user_input):
+        outcome_signal = detect_outcome_feedback_signal(user_input)
     if outcome_signal:
         append_project_journal(
             entry_type="outcome_feedback",
@@ -716,6 +1389,7 @@ def handle_user_input(user_input: str) -> str:
         return response
 
     system_prompt, messages = build_messages(user_input)
+    messages = _latency_limit_message_list(messages, max_turns=10)
     try:
         response = ask_ai(messages=messages, system_prompt=system_prompt)
     except RuntimeError as exc:
@@ -727,14 +1401,81 @@ def handle_user_input(user_input: str) -> str:
         and tool_command["tool"] == "fetch"
         and not user_message_suppresses_tool_fetch(user_input)
     ):
-        fetched_content = fetch_page(tool_command["url"])
-        focus = get_current_focus()
-        stage = get_current_stage()
+        # LATENCY-04: run fetch off the main thread.
+        fetch_url = tool_command["url"]
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(fetch_page, fetch_url)
+            fetched_content = future.result()
+        fetch_raw_norm = (
+            (fetched_content if isinstance(fetched_content, str) else str(fetched_content)).strip()
+        )
+        # LATENCY-16: normalized raw-body emptiness once for ``_latency08``.
+        fetch_raw_is_empty = not fetch_raw_norm
+        fetched_for_llm = _latency_truncate_text(
+            fetch_raw_norm,
+            _LATENCY_POST_FETCH_BODY_MAX_CHARS,
+            "Fetched content",
+        )
+        fetched_stripped = (fetched_for_llm or "").strip()
+        # LATENCY-15: stripped-body emptiness once for skip + trivial helpers.
+        fetched_stripped_is_empty = not fetched_stripped
+        # LATENCY-20: stripped length once for ``_latency10``.
+        fetched_stripped_len = len(fetched_stripped)
+        # LATENCY-21: word count once when under char cap (no ``.split()`` when already over cap).
+        if fetched_stripped_len <= _LATENCY10_TRIVIAL_MAX_CHARS:
+            fetched_stripped_word_count = len(fetched_stripped.split())
+        else:
+            fetched_stripped_word_count = 0  # unused; ``_latency10`` returns on char cap first
+        # LATENCY-12: one fetch_failure_tag pass per payload; reuse in skip + trivial checks.
+        failure_tag_raw = fetch_failure_tag(fetch_raw_norm)
+        failure_tag_stripped = fetch_failure_tag(fetched_stripped)
+        # LATENCY-18: raw failure-tag presence once for skip + trivial helpers.
+        fetch_raw_has_failure_tag = failure_tag_raw is not None
+        # LATENCY-19: stripped failure-tag presence once for skip + trivial helpers.
+        fetch_stripped_has_failure_tag = failure_tag_stripped is not None
+        # LATENCY-14: one alnum scan on normalized raw body; LATENCY-17: negated once for ``_latency08``.
+        fetch_raw_has_alnum = any(ch.isalnum() for ch in fetch_raw_norm)
+        fetch_raw_no_alnum = not fetch_raw_has_alnum
+        # LATENCY-07/08/09/10: settle skip before any second-pass-only prep (build_post_fetch, caps).
+        if _latency08_should_skip_second_llm(
+            fetch_raw_norm,
+            fetched_stripped,
+            fetch_raw_has_failure_tag=fetch_raw_has_failure_tag,
+            fetch_stripped_has_failure_tag=fetch_stripped_has_failure_tag,
+            fetch_raw_no_alnum=fetch_raw_no_alnum,
+            fetched_stripped_is_empty=fetched_stripped_is_empty,
+            fetch_raw_is_empty=fetch_raw_is_empty,
+        ) or _latency10_is_trivially_small(
+            fetch_raw_norm,
+            fetched_stripped,
+            fetch_raw_has_failure_tag=fetch_raw_has_failure_tag,
+            fetch_stripped_has_failure_tag=fetch_stripped_has_failure_tag,
+            fetched_stripped_is_empty=fetched_stripped_is_empty,
+            fetched_stripped_len=fetched_stripped_len,
+            fetched_stripped_word_count=fetched_stripped_word_count,
+        ):
+            final_response = _latency07_deterministic_fetch_reply(
+                fetched_for_llm=fetched_for_llm,
+                focus=focus,
+                stage=stage,
+            )
+            append_project_journal(
+                entry_type="tool_flow",
+                user_input=user_input,
+                response_text=final_response,
+                action_type="research",
+            )
+            append_recent_answer_history(final_response)
+            return final_response
+        post_fetch_max_turns = 6
         post_fetch_system_prompt, post_fetch_messages = build_post_fetch_messages(
             user_input=user_input,
-            fetched_content=fetched_content,
+            fetched_content=fetched_for_llm,
             focus=focus,
             stage=stage,
+        )
+        post_fetch_messages = _latency_limit_message_list(
+            post_fetch_messages, max_turns=post_fetch_max_turns
         )
         try:
             final_response = ask_ai(

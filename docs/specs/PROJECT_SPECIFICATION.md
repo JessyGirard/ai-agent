@@ -19,8 +19,8 @@ This project is a **local AI assistant / agent** built around:
 - **LLM layer** (`core/llm.py`): Anthropic client, default tool-routing system prompt, preflight checks.
 - **Config** (`config/settings.py`): `.env` loading, model name, max tokens, API key accessor.
 - **Web fetch** (`tools/fetch_page.py`): Facade for **HTTP** fetch + HTML-to-text (`tools/fetch_http.py`, truncated) and optional **browser** mode when **`FETCH_MODE=browser`** (Playwright in `tools/fetch_browser.py`, public `http`/`https` only). Optional **`FETCH_BROWSER_TIMEOUT_SECONDS`** bounds browser navigation time. Failure lines may carry **`[fetch:tag]`** and (browser) a compact **`diag=`** suffix; see `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`.
-- **Streamlit UI** (`app/ui.py`): Chat-style front-end that calls `playground.handle_user_input`; includes **Assistant** and **Tool 1 — System eval (HTTP)** tabs. **Windows:** one-click launch via **`Launch-Agent-UI.cmd`** (see `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`).
-- **Memory pipeline (offline)**: `raw_chat.txt` → `import_chat.py` → `imported.json` → OpenAI-based extractor → **`extracted_memory.json` (merge by default)** (`memory/import_chat.py`, `memory/extractors/run_extractor.py`). Optional env `EXTRACT_MESSAGE_LIMIT` (default 50, max 500). Extractor backs up the prior file to `memory/extracted_memory.pre_extract.json` before each write; `--replace` discards existing rows for a clean run.
+- **Streamlit UI** (`app/ui.py`): Chat-style front-end that calls `playground.handle_user_input`; includes **Assistant** and **Tool 1 — System eval (HTTP)** tabs. **Windows:** one-click launch via **`Launch-Agent-UI.cmd`** (see `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`). **Operator input UX + two-lane execution plan** (large paste, microphone, coordinated with memory work): `docs/specs/UX_system.md`.
+- **Memory pipeline (offline)**: `raw_chat.txt` → `import_chat.py` → `imported.json` → OpenAI-based extractor → **`extracted_memory.json` (merge by default)** (`memory/import_chat.py`, `memory/extractors/run_extractor.py`). Optional env `EXTRACT_MESSAGE_LIMIT` (default 50, max 500). Extractor backs up the prior file to `memory/extracted_memory.pre_extract.json` before each write; `--replace` discards existing rows for a clean run. **Full memory architecture, retrieval rules, on-disk layout, verbatim memory plan archive (§14), and two-lane coordination pointer (§15):** `docs/specs/MEMORY_SYSTEM.md`. **Two-lane operator plan** (memory + input UX, verbatim): `docs/specs/UX_system.md`.
 - **Legacy simple history** (`memory/memory.py`): reads/writes `memory/history.json` (last 10 entries); parallel to the richer `extracted_memory.json` system.
 
 ---
@@ -32,7 +32,10 @@ This project is a **local AI assistant / agent** built around:
 | `playground.py` (`main()`) | Interactive REPL/orchestrator: loads state, runs top-level flow, delegates to services. |
 | `main.py` | Minimal placeholder (`print("Hello Jessy")`); not the agent entry. |
 | `app/ui.py` | Streamlit app: session state, themed UI, invokes `playground.handle_user_input` (Assistant + Tool 1 tabs). |
-| `Launch-Agent-UI.cmd` | **Windows:** starts Streamlit via **`.venv-win\Scripts\python.exe -m streamlit run app\ui.py`** from repo root (same venv convention as `Open-DevShell.cmd`). |
+| `Launch-Agent-UI.cmd` | **Windows:** starts Streamlit in a **visible** console (logs, Ctrl+C); default Streamlit port. |
+| `Start-Agent-Server.cmd` | **Windows:** Streamlit on **fixed `--server.port 8501`** (manual server; visible console). |
+| `Launch-Agent-UI-Silent.ps1` | **Windows:** optional **CreateNoWindow** Streamlit start with **pythonw** when available (separate from the Chrome-only desktop **`.lnk`** after **LAUNCH-08**). |
+| `Create-Agent-UI-Shortcut.ps1` | Writes **Mimi AI Agent UI.lnk** on Desktop + Programs with **Target = `chrome.exe`** and **`--app=http://localhost:8501`** only (**LAUNCH-08**); start **`Start-Agent-Server.cmd`** (or another launcher) separately. |
 | `memory/import_chat.py` | CLI: `raw_chat.txt` → `imported.json` (one non-empty line per turn; alternates user/assistant; strips leading `USER:` / `AI:` / `ASSISTANT:` labels from content). |
 | `memory/extractors/run_extractor.py` | CLI: `imported.json` → structured `extracted_memory.json` (OpenAI). **Merges** with existing `extracted_memory.json` on matching category+value keys; reinforces evidence. Server-side filters: noise list, no `?` in values, max value length. Writes `meta.last_extract` stats. |
 | `tests/run_regression.py` | **Protected baseline** regression harness (see `README.md`). |
@@ -119,13 +122,13 @@ Supplemental scripts (not the baseline gate):
 
 | File | Description |
 |------|-------------|
-| `ui.py` | Streamlit UI: loads snippet of `memory/extracted_memory.json`, syncs `playground` state, quick prompts, formatted assistant messages, chat flow via `playground.handle_user_input`. |
+| `ui.py` | Streamlit UI: loads snippet of `memory/extracted_memory.json`, syncs `playground` state, quick prompts, formatted assistant messages, chat flow via `playground.handle_user_input`; long-form paste expander; optional **speech-to-text** expander (`streamlit-mic-recorder`) with explicit send into the same `run_query` path. |
 
 ### `tests/`
 
 | File | Description |
 |------|-------------|
-| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; broad scenario coverage (state, memory write/retrieval, journal/outcome flow, routing/strictness, prompt shaping, tool fetch + browser mocks, system_eval runner, extractor fixtures, error handling). **Current protected baseline: 297 scenarios. Exit code 1 if any test fails.** Confirm with `README.md` / latest `SESSION_SYNC_LOG.md` gate run if this drifts. |
+| `run_regression.py` | Isolated temp files for memory/state/journal where needed; fakes `ask_ai` / `fetch_page` in places; broad scenario coverage (state, memory write/retrieval, journal/outcome flow, routing/strictness, prompt shaping, tool fetch + browser mocks, system_eval runner, extractor fixtures, error handling). **Current protected baseline: 391 scenarios. Exit code 1 if any test fails.** Confirm with `README.md` / latest `SESSION_SYNC_LOG.md` bottom gate run if this drifts. |
 | `run_soak.py` | Long-duration stability runner with progress checkpoints, chunked mode (`--chunk-size`), and synchronized per-run result/checkpoint/aggregate artifacts for reliable interrupted/long runs. |
 | `fixtures/extractor_validation_cases.json` | Offline JSON cases consumed by regression to assert `run_extractor.validate_candidate` accept/reject behavior (no OpenAI call). |
 

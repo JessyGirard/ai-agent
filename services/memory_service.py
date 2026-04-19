@@ -162,6 +162,23 @@ def runtime_memory_write_conflicts_existing(category, value, memory_items):
 
 
 def score_memory_item(mem, user_input):
+    user_low = (user_input or "").lower()
+
+    project_query_signals = (
+        "my system",
+        "this system",
+        "the system",
+        "my project",
+        "this project",
+        "the project",
+        "how it works",
+        "how this works",
+        "what does this do",
+        "how does this work",
+    )
+
+    is_project_query = any(s in user_low for s in project_query_signals)
+
     score = mem.get("confidence", 0) + mem.get("importance", 0)
     memory_value = mem.get("value", "")
     memory_kind = mem.get("memory_kind", "")
@@ -194,6 +211,85 @@ def score_memory_item(mem, user_input):
     score -= estimate_memory_staleness_penalty(mem)
     if project_safety_conversation_query(user_input) and safety_signal_memory(mem):
         score += 0.95
+    project_bonus = 0.0
+    if is_project_query and mem.get("category") == "project":
+        project_bonus += 0.4
+    explicit_project_category_phrases = project_query_signals[:6]
+    if (
+        mem.get("category") == "project"
+        and is_project_query
+        and any(p in user_low for p in explicit_project_category_phrases)
+    ):
+        project_bonus += 0.05
+    explicit_project_priority_risk_signals = (
+        "biggest risk",
+        "the risk",
+        "the problem",
+        "the issue",
+        "what matters most",
+        "the priority",
+        "the objective",
+    )
+    if (
+        mem.get("category") == "project"
+        and is_project_query
+        and any(s in user_low for s in explicit_project_priority_risk_signals)
+    ):
+        project_bonus += 0.05
+    explicit_project_decision_progress_signals = (
+        "the decision",
+        "we decided",
+        "the choice",
+        "the plan",
+        "we completed",
+        "we finished",
+        "is done",
+        "is complete",
+        "the milestone",
+        "the progress",
+    )
+    if (
+        mem.get("category") == "project"
+        and is_project_query
+        and any(s in user_low for s in explicit_project_decision_progress_signals)
+    ):
+        project_bonus += 0.05
+    evidence_count = mem.get("evidence_count", 1)
+    if mem.get("category") == "project" and evidence_count > 1:
+        project_bonus += min(0.3, 0.05 * (evidence_count - 1))
+    evidence_count = mem.get("evidence_count", 1)
+    if mem.get("category") == "project" and evidence_count == 1:
+        score -= 0.05
+    trend = (mem.get("trend") or "").lower()
+    evidence_count = mem.get("evidence_count", 1)
+
+    if (
+        mem.get("category") == "project"
+        and is_project_query
+        and evidence_count > 1
+        and trend != "new"
+    ):
+        project_bonus += 0.1
+    # simple preference alignment signal
+    if mem.get("category") == "project":
+        pref_tokens = (
+            "step by step",
+            "incremental",
+            "test",
+            "stable",
+            "controlled",
+        )
+
+        mem_low = (mem.get("value") or "").lower()
+
+        if any(t in mem_low for t in pref_tokens):
+            project_bonus += 0.08
+    confidence = mem.get("confidence", 0.0)
+
+    if mem.get("category") == "project":
+        project_bonus += 0.05 * confidence
+        project_bonus = min(project_bonus, 0.8)
+        score += project_bonus
     return score
 
 
@@ -648,8 +744,6 @@ def extract_runtime_memory_candidate(user_input):
         return make_runtime_memory_candidate("goal", text, low)
     if low.startswith("i am working on ") or low.startswith("i'm working on "):
         return make_runtime_memory_candidate("project", text, low)
-    if low.startswith("i am building ") or low.startswith("i'm building "):
-        return make_runtime_memory_candidate("project", text, low)
     if low.startswith("i am ") or low.startswith("i'm "):
         if "working on" not in low and "building" not in low:
             return make_runtime_memory_candidate("identity", text, low)
@@ -697,8 +791,15 @@ def merge_runtime_memory(existing_item):
     return existing_item
 
 
-def write_runtime_memory(user_input, allowed_memory_categories, load_memory_payload_fn, save_memory_payload_fn):
-    candidate = extract_runtime_memory_candidate(user_input)
+def write_runtime_memory(
+    user_input,
+    allowed_memory_categories,
+    load_memory_payload_fn,
+    save_memory_payload_fn,
+    extract_candidate=None,
+):
+    extract = extract_candidate or extract_runtime_memory_candidate
+    candidate = extract(user_input)
     if not candidate:
         return None
     category = candidate.get("category")

@@ -55,18 +55,21 @@ Windows pins **shortcuts**, not raw `.cmd` files, cleanly to the taskbar.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Create-Agent-UI-Shortcut.ps1
 ```
 
-This creates **Mimi AI Agent UI.lnk** under **Start Menu → Programs → ai-agent** and on your **Desktop** (same target as `Launch-Agent-UI.cmd`, correct working directory, safe quoting if the path has spaces). To only install the Start Menu shortcut: `-Place StartMenu`. To only Desktop: `-Place Desktop`.
+This creates **Mimi AI Agent UI.lnk** under **Start Menu → Programs** and on your **Desktop**. **LAUNCH-08:** the shortcut **Target** is **`chrome.exe`** (Google Chrome under Program Files) with **Arguments** **`--app=http://localhost:8501`**. It does **not** start Streamlit — no black console from the shortcut. **Working directory** is the repo root (harmless metadata). **First:** start the server on port **8501**, e.g. double-click **`Start-Agent-Server.cmd`** (visible console, **Ctrl+C** to stop) or use **`Launch-Agent-UI-App.bat`** / **`launch_ui.py`** for other silent paths — then use the **`.lnk`** to open the Chrome app window.
 
-Then **right-click** the new shortcut → **Pin to taskbar**.
+**Re-create shortcuts** after pulling launcher updates (run the script again). If you **pinned an older** shortcut that still pointed at a `.cmd`, **Unpin from taskbar** first, then **right-click** the newly created `.lnk` → **Pin to taskbar** (pinned items keep their old executable target until replaced).
 
-**Manual fallback:** In Explorer, **right-click** `Launch-Agent-UI.cmd` → **Show more options** (Windows 11) / **Create shortcut** (Windows 10), move or rename it if you like, then **right-click** the shortcut → **Pin to taskbar**.
+**Manual fallback:** In Explorer, **right-click** `Launch-Agent-UI.cmd` → **Show more options** (Windows 11) / **Create shortcut** (Windows 10), move or rename it if you like, then **right-click** the shortcut → **Pin to taskbar**. That path keeps a **visible console** (same as double-clicking the `.cmd`) — **not** the Chrome-only demo path.
 
-Later, **one click** on that taskbar icon starts the UI the same way as double-clicking the `.cmd`.
+**Script-only silent path:** `Launch-Agent-UI-Silent.ps1` (e.g. hidden PowerShell `-File`) still starts Streamlit with **pythonw** when available; it is separate from the **Chrome-only** `.lnk`.
+
+**Taskbar shortcut:** opens **Chrome app mode** only. **Backend:** run **`Start-Agent-Server.cmd`** (or **`Launch-Agent-UI.cmd`**) when you need a visible Streamlit console; **`Launch-Agent-UI.cmd`** does not force port **8501** unless you pass flags yourself.
 
 ### Relaunch later
 
-- Use the **pinned shortcut** or double-click **`Launch-Agent-UI.cmd`** again.
-- If the browser did not open automatically, go to **`http://localhost:8501`** (default Streamlit port). If something else is using that port, watch the console for the URL Streamlit prints.
+- **Chrome pinned shortcut:** opens the app URL only — start **`Start-Agent-Server.cmd`** (or your usual server launcher) first if Streamlit is not already running.
+- **Full dev console:** double-click **`Launch-Agent-UI.cmd`** again (or **`Start-Agent-Server.cmd`** for fixed **8501**).
+- If the browser did not open automatically, go to **`http://localhost:8501`** when using the **8501** server. If something else is using that port, watch the server console for the URL Streamlit prints.
 
 ## Manual operator verification (Tool 1 Streamlit UI)
 
@@ -74,7 +77,7 @@ Use this once after a UI change (or anytime you want to trust the operator path)
 
 ### 1. Command to launch Streamlit
 
-**Windows:** Prefer **`Launch-Agent-UI.cmd`** (see **Windows one-click launch** above).
+**Windows:** Prefer **`Launch-Agent-UI.cmd`** (see **Windows one-click launch** above). For **fixed port 8501**, use **`Start-Agent-Server.cmd`**.
 
 From the **repository root** (folder that contains `app/`, `tools/`, `system_tests/`):
 

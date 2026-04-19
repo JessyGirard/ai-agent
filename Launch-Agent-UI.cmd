@@ -1,6 +1,10 @@
 @echo off
+REM DEBUG / DEV launch — visible console, logs, Ctrl+C (explicit operator path).
+REM DEMO / TASKBAR: run Create-Agent-UI-Shortcut.ps1 — .lnk opens Chrome --app only (LAUNCH-08); start server with Start-Agent-Server.cmd when needed.
 REM One-click Streamlit UI — same venv convention as Open-DevShell.cmd (.\.venv-win)
 REM Double-click from Explorer, or run from repo root:  Launch-Agent-UI
+REM This window stays open so you can see logs and stop with Ctrl+C.
+REM Optional: bookmark http://localhost:8501/?ui_surface=Agent (adjust port if needed) to land on Agent.
 set "REPO=%~dp0"
 cd /d "%REPO%"
 

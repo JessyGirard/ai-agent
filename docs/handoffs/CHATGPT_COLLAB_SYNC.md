@@ -36,7 +36,8 @@ When starting any new ChatGPT session, use these docs in order:
 - **Operator runbook (HTTP system eval + Streamlit + top bar surfaces on Windows):** `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`
 - **Tool 1 durable run log (append-only JSONL):** `app/tool1_run_log.py` → `logs/tool1_runs.jsonl` (gitignored under `logs/`); each record includes plain-text **`summary`** plus full structured fields. **Public demo suites:** `system_tests/suites/tool1_public_demo/` (runbook §4a).
 - **Browser fetch manual checks + `diag=` token glossary:** `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`
-- **One-click Streamlit (Windows):** `Launch-Agent-UI.cmd` (repo root; uses `.venv-win`); taskbar shortcuts: `Create-Agent-UI-Shortcut.ps1`
+- **One-click Streamlit (Windows):** `Launch-Agent-UI.cmd` (repo root; uses `.venv-win`); fixed port **8501:** `Start-Agent-Server.cmd`; taskbar **Chrome app** shortcut: `Create-Agent-UI-Shortcut.ps1` (**LAUNCH-08** — start server separately); optional terminal launcher **`joshua.ps1`** + PowerShell **`joshua`** function — see **`SESSION_SYNC_LOG.md`** (**`### 2026-04-19` — LATENCY-04–06** block).
+- **Perceived latency (prompt + fetch + UI reruns):** **`SESSION_SYNC_LOG.md`** — **`### 2026-04-19` — LATENCY-04–06** — LATENCY-04 (`playground.py`), LATENCY-05 (`services/prompt_builder.py`), LATENCY-06 (`app/ui.py`).
 - **CI/automation policy and schedule:** `.github/workflows/ci.yml`, `.github/workflows/nightly-soak.yml`
 - **Core orchestration boundary (must remain decoupled):** `playground.py`
 
@@ -58,9 +59,9 @@ Use these exact prompt styles when you want precise help:
   - `services/journal_service.py`
   - `services/routing_service.py`
   - `services/prompt_builder.py`
-- Protected regression gate currently: **`297`** scenarios (`python tests/run_regression.py`). Confirm with latest log if this drifts.
+- Protected regression gate currently: **`391`** scenarios (`python tests/run_regression.py`). Confirm with **`SESSION_SYNC_LOG.md` bottom** (**`→ CHATGPT: READ THIS ENTRY FIRST ←`** — **DOC-SYNC-01**) if this drifts; **RETRIEVAL-07–10 + PACKAGING-01** sits **immediately above** that anchor for scoring/snapshot detail. **Memory lane:** **`MEMORY-01` through `MEMORY-10`** — see **`SESSION_SYNC_LOG.md`** **MEMORY-01** block (**`### 2026-04-19`**) and **`docs/specs/memory_log_system.md`**; do not treat memory work as unstructured one-offs.
 - **Fetch:** `tools/fetch_page.py` facades HTTP (`tools/fetch_http.py`) and optional browser mode (`FETCH_MODE=browser` → `tools/fetch_browser.py`); operator diagnostics use compact **`diag=`** suffixes documented in `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`.
-- **Operator UI:** Streamlit `app/ui.py` (Agent + **API** Tool 1: single-request auth merge, summaries, rerun/copy, run-log warnings); Windows daily launch via `Launch-Agent-UI.cmd` (see `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`). **Tool 1 evidence:** `tool1_runs.jsonl` human **`summary`** lines; runnable **`system_tests/suites/tool1_public_demo/`** packs for demos.
+- **Operator UI:** Streamlit `app/ui.py` (Agent + **API** Tool 1: single-request auth merge, summaries, rerun/copy, run-log warnings); Windows daily launch via `Launch-Agent-UI.cmd` (see `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`). **Agent thread (UI-09):** see **`SESSION_SYNC_LOG.md`** — **`### 2026-04-19` — UI-09** — **UI-09** (Joshua placeholder, mic beside input, voice-draft composer) + **UI-X1/X2** layout experiments; **ChatGPT must not assume** older “mic reverted only” summaries. **Tool 1 evidence:** `tool1_runs.jsonl` human **`summary`** lines; runnable **`system_tests/suites/tool1_public_demo/`** packs for demos.
 - Soak reliability is enforced with chunked runs and artifact outputs.
 - CI and nightly automation are configured via:
   - `.github/workflows/ci.yml`
@@ -116,7 +117,7 @@ Ground truth is the local repo docs in this order:
 Important constraints:
 - Phase 1 (V0.1) HTTP system eval is implemented and recorded in docs/reliability/RELIABILITY_EVIDENCE.md; optional next steps are real staging runs (docs/runbooks/SYSTEM_EVAL_RUNBOOK.md) or deliberately small Phase 2 slices.
 - FETCH browser work is documented in docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md (lane closed at Inc 13 per SESSION_SYNC_LOG). UI: Launch-Agent-UI.cmd + runbook; **API** = Tool 1 (system eval + single-request helpers + append-only logs/tool1_runs.jsonl with human summary per line + demo suites under system_tests/suites/tool1_public_demo/). **Milestone:** live smoke suite PASS 3/3 — next engine/assertion increments per SESSION_SYNC_LOG bottom. **Prompt** / **Regression** = placeholders until approved increments.
-- Regression gate: unset FETCH_MODE in the shell before python tests/run_regression.py unless a test intentionally sets it. Latest baseline: 297 scenarios — confirm SESSION_SYNC_LOG.md bottom if drift.
+- Regression gate: unset FETCH_MODE in the shell before python tests/run_regression.py unless a test intentionally sets it. Latest baseline: **391** scenarios — confirm SESSION_SYNC_LOG.md bottom (**DOC-SYNC-01** / **READ THIS ENTRY FIRST**) if drift. **MEMORY roadmap:** **MEMORY-01 … MEMORY-10** per **`SESSION_SYNC_LOG.md`** and **`memory_log_system.md`**. **Agent UI:** read **`### 2026-04-19` — UI-09** in the same file (Joshua + voice composer + X1/X2); overrides stale “mic reverted” paste.
 - Do not bundle adapter expansion, evaluation expansion, and reporting redesign in one change.
 - Keep system_tests isolated from playground orchestration.
 - Keep recommendations bounded to evidence in docs/reliability/RELIABILITY_EVIDENCE.md.

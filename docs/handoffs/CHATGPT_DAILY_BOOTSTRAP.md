@@ -4,7 +4,7 @@
 
 **The solution:** A **living log** plus this page. ChatGPT does not “remember” yesterday; the **repo remembers** in `docs/handoffs/SESSION_SYNC_LOG.md`.
 
-**Latest target (ChatGPT sync):** **`SESSION_SYNC_LOG.md` (bottom entries) always wins.** As of last alignment: **FETCH (browser) lane** complete through **Increment 13** (**`FETCH_MODE=browser`**, **`diag=`** glossary **`docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`**). **UI + Tool 1 (API surface):** **`Launch-Agent-UI.cmd`** + **`app/ui.py`** — top bar surfaces, single-request **auth helpers** (Bearer/Basic/API key), **customer run summary**, **rerun last request** + copyable request + approximate **curl**, per-case outcome detail; **durable run log** append-only **`logs/tool1_runs.jsonl`** via **`app/tool1_run_log.py`** (each record includes a plain-text **`summary`**; **`run_log_error`** on bundle if append fails). **Milestone:** live run **`tool1_demo_public_smoke.json`** → **PASS 3/3** — Tool 1 **proven on real public HTTP**. **Demo suites:** **`system_tests/suites/tool1_public_demo/`** (runbook §4a). **Engine:** **`core/system_eval.py`** — includes **`steps`** scenarios, **`step_templates`** / **`use`**, **`{{variable}}`** substitution, **`step_results`** in JSON + **`### Steps`** in **`.md`** artifacts (Increments 42–46; see log). Regression **297 / 297**. **PR #2** not started unless the log says otherwise.
+**Latest target (ChatGPT sync):** **`SESSION_SYNC_LOG.md` (bottom entries) always wins.** As of the **bottom** block (**`→ CHATGPT: READ THIS ENTRY FIRST ←`** — **`### 2026-04-18` — DOC-SYNC-01**): **391 / 391** regression baseline is reflected across **README**, **PROJECT_SPECIFICATION**, handoffs, and **`memory_log_system.md`**; **no code** in that increment. **Code slice** for retrieval + snapshot: the **RETRIEVAL-07–10 + PACKAGING-01** block **immediately above** the bottom entry in the same file. **Re-run** `python tests/run_regression.py` and read **log bottom** if counts drift. **MEMORY roadmap** (**MEMORY-01** … **MEMORY-10**) — **`SESSION_SYNC_LOG.md`** + **`memory_log_system.md`**. Still read **`SESSION_SYNC_LOG.md`** blocks **LATENCY-04–06** + **`joshua`** and **UI-09 / UI-X1 / UI-X2** (**`### 2026-04-19`** — distinguish by **title**). Still true: **FETCH (browser) lane** through **Inc 13**; **Tool 1** + **`logs/tool1_runs.jsonl`** + **`core/system_eval.py`** steps/templates/vars; milestone **PASS 3/3** live smoke. **PR #2** not started unless the log says otherwise.
 
 ---
 
@@ -30,13 +30,16 @@ Hard rules:
 - If docs conflict: docs/reliability/RELIABILITY_EVIDENCE.md and passing tests beat opinions.
 
 Latest target (verify bottom of docs/handoffs/SESSION_SYNC_LOG.md — log wins):
+- **CRITICAL — bottom anchor:** **`### 2026-04-18` — DOC-SYNC-01** (line with **`→ CHATGPT: READ THIS ENTRY FIRST ←`**) — **391 / 391** doc alignment; **retrieval + snapshot code** = block **immediately above** (**RETRIEVAL-07–10 + PACKAGING-01**).
+- **CRITICAL — MEMORY roadmap:** **`MEMORY-01` … `MEMORY-10`** — **numbered memory sequence** (see **`SESSION_SYNC_LOG.md`** **MEMORY-01** block same day **above** the bottom anchor, and **`docs/specs/memory_log_system.md`**). ChatGPT must **remember the sequence** across sessions: do not collapse into one mega-change; append **`memory_log_system.md`** + **session log** per shipped MEMORY increment.
+- **CRITICAL:** In `SESSION_SYNC_LOG.md`, read **bottom-up** from the **READ THIS ENTRY FIRST** block, then **MEMORY-01** → **LATENCY-04–06** + **`joshua`** → **UI-09** (Joshua + mic row + voice-draft composer) + UI-X1 / UI-X2 — same **`### 2026-04-19`** calendar heading where applicable; do **not** assume pre-UI-09 “mic reverted only” handoff
 - FETCH lane (browser): shipped through Incr. 13; `diag=` + `docs/runbooks/FETCH_BROWSER_MANUAL_VALIDATION.md`
-- UI + Tool 1 (API): `app/ui.py` — auth helpers, summaries, rerun/copy, outcomes; `app/system_eval_operator.py` logs suite runs
+- UI + Tool 1 (API): `app/ui.py` — top bar + Agent thread above + auth helpers, summaries, rerun/copy, outcomes; `app/system_eval_operator.py` logs suite runs
 - Tool 1 durable log: `app/tool1_run_log.py` + `logs/tool1_runs.jsonl` — full JSON plus human `summary` per line (Inc 18); public demo suites `system_tests/suites/tool1_public_demo/` (Inc 19); runbook §4a
 - **Milestone:** `tool1_demo_public_smoke.json` ran live **PASS 3/3** — Tool 1 operationally proven; **next focus = engine/assertion power (Inc 20+)**, not demo expansion
 - HTTP system_eval: `core/system_eval.py` — assertions + **`steps`** / **`step_templates`** / **`{{var}}`** substitution + **`step_results`** (see `README.md` and `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`)
 - Fetch facade: HTTP default; optional `FETCH_MODE=browser`; `[fetch:…]` tags; unset `FETCH_MODE` before regression gate
-- Regression gate: 297 / 297 at last recorded run
+- Regression gate: **391 / 391** at last recorded run (re-run after pull)
 - Not started unless log updates: PR #2 prompt↔response; optional = Tool 1 recent-log UI / chat try/except (see log)
 
 Your job each session:
@@ -132,6 +135,7 @@ ChatGPT replies with: **approve** / **adjust: …** / **reject: …** and a sing
 
 ## Related files
 
+- `docs/handoffs/CHATGPT_TO_CHATGPT_SYSTEM.md` — **model-to-model** handoff (paste block when one ChatGPT session hands off to the next)
 - `docs/handoffs/SESSION_SYNC_LOG.md` — **append-only** project heartbeat
 - `docs/handoffs/PROJECT_STORY_AND_SOURCES.md` — **story + map** to all historical sources (full history is distributed on purpose)
 - `docs/handoffs/THREE_TOOLS_ALIGNMENT_BRIEF.md` — three-tool framing + ChatGPT paste for decisions

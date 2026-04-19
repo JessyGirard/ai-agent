@@ -16,7 +16,7 @@ The creation of a powerful friend and ally.
 - `services/journal_service.py`: project journal/outcome feedback/recent-answer history helpers
 - `services/routing_service.py`: action typing and routing/control-path detection
 - `services/prompt_builder.py`: prompt assembly + answer-line shaping
-- `app/ui.py`: Streamlit frontend using the same `playground.handle_user_input` path. **Windows (Jessy / operators):** double-click **`Launch-Agent-UI.cmd`** at the repo root (uses **`.venv-win`** like `Open-DevShell.cmd`). For a **taskbar-ready shortcut**, run **`Create-Agent-UI-Shortcut.ps1`** from the repo root (see `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md` → *Pin to the taskbar*). **Any OS:** from repo root, `streamlit run app/ui.py` or `python -m streamlit run app/ui.py`. In the UI, select **API** (top bar or sidebar backup) to run `system_eval` suites without the terminal (same engine as `tools/system_eval_runner.py`). Relaunch details: `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md` → *Windows one-click launch*.
+- `app/ui.py`: Streamlit frontend using the same `playground.handle_user_input` path. **Windows (Jessy / operators):** double-click **`Launch-Agent-UI.cmd`** at the repo root (uses **`.venv-win`** like `Open-DevShell.cmd`; default Streamlit port). For **fixed port 8501** (`http://localhost:8501`), run **`Start-Agent-Server.cmd`** when you want a visible console server. **Desktop/taskbar UI:** run **`Create-Agent-UI-Shortcut.ps1`** — the **`.lnk`** opens **only** Google Chrome with **`--app=http://localhost:8501`** (no `.cmd` from the shortcut; **LAUNCH-08**). Start Streamlit separately before opening the app window. See `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md` → *Pin to the taskbar*. **Re-run the shortcut script after pulls** and **re-pin** if the icon predates launcher changes. Use **`Launch-Agent-UI.cmd`** when you want the same visible terminal without forcing port 8501. **Any OS:** from repo root, `streamlit run app/ui.py` or `python -m streamlit run app/ui.py`. In the UI, select **API** (top bar or sidebar backup) to run `system_eval` suites without the terminal (same engine as `tools/system_eval_runner.py`). Relaunch details: `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md` → *Windows one-click launch*. **Agent → Speech to text:** uses optional **`streamlit-mic-recorder`** (install with `pip install -r requirements.txt`); Chrome/Edge + microphone permission; transcript is reviewed and sent explicitly, same as typed chat. **Open-and-go (Agent):** a new browser session already defaults to the **Agent** surface; the empty thread shows a short **Ready** line (local session, no extra UI “connect” step). Optional URL query **`?ui_surface=Agent`** (or **API**, **Prompt**, **Regression**, **Terminal**) is applied once then stripped so bookmarks can pin a surface.
 
 ## Project History
 
@@ -35,7 +35,7 @@ The creation of a powerful friend and ally.
 - Pytest-based tests are supplemental and can be run for additional coverage.
 - Any code change must keep the regression suite passing before commit.
 - If pytest and regression results differ, treat regression as the release gate and resolve the discrepancy before merge or push.
-- Current baseline size after the latest hardening sequence: **`297`** regression scenarios (`python tests/run_regression.py`; confirm after large merges).
+- Current baseline size after the latest hardening sequence: **`391`** regression scenarios (`python tests/run_regression.py`; confirm with `docs/handoffs/SESSION_SYNC_LOG.md` bottom after large merges).
 - GitHub Actions automation:
   - `.github/workflows/ci.yml` runs regression + quick chunked soak on pull requests and pushes to `main`/`master`.
   - `.github/workflows/nightly-soak.yml` runs a scheduled 10k chunked soak and supports manual trigger (`workflow_dispatch`).
@@ -65,7 +65,7 @@ From the repo root, with `OPENAI_API_KEY` in `.env`:
 2. `python memory/import_chat.py` → writes `memory/imported.json`.
 3. `python memory/extractors/run_extractor.py` → **merges** new facts into `memory/extracted_memory.json` (use `--replace` to discard existing rows for that run only). A copy of the previous `extracted_memory.json` is saved as `memory/extracted_memory.pre_extract.json` before each write.
 
-Optional: set `EXTRACT_MESSAGE_LIMIT` in `.env` to process more than the default 50 messages per extract (hard cap 500 in code). Full file layout and behavior are in `docs/specs/PROJECT_SPECIFICATION.md`.
+Optional: set `EXTRACT_MESSAGE_LIMIT` in `.env` to process more than the default 50 messages per extract (hard cap 500 in code). Full file layout and behavior are in `docs/specs/PROJECT_SPECIFICATION.md`. **Memory:** technical reference plus verbatim execution-plan archives live in `docs/specs/MEMORY_SYSTEM.md` (§14 memory-only plan, §15 pointer to two-lane plan). **Two-lane plan** (durable memory + operator input UX — paste, mic): `docs/specs/UX_system.md`.
 
 ## Recent behavior updates
 

@@ -8,7 +8,17 @@
 
 **User preferences we followed:** small increments, low risk, no scope creep, regression must stay green before trusting changes.
 
-**Aligned for new ChatGPT session (2026-04-17):** Protected baseline is **`297 / 297`** (`python tests/run_regression.py`) — confirm **`SESSION_SYNC_LOG.md` (bottom)** if newer. Before the gate, **`FETCH_MODE`** should be **unset** in the shell (leaking **`browser`** breaks HTTP fetch regression cases). **Tool 1 engine:** **`core/system_eval.py`** now supports **`steps`** scenarios, **`step_templates`** / **`use`**, **`{{variable}}`** substitution, **`step_results`** on case rows, and **`### Steps`** in markdown artifacts (see **`README.md`** and **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`**).
+**Update (2026-04-18 — DOC-SYNC-01):** **`SESSION_SYNC_LOG.md` bottom** (**`### 2026-04-18` — DOC-SYNC-01**, **`→ CHATGPT: READ THIS ENTRY FIRST ←`**) — aligned **README**, **PROJECT_SPECIFICATION**, **CHATGPT_***, **`memory_log_system.md`**, and handoff bullets to **`391 / 391`**; **no code** in this increment. **Code detail** for retrieval + snapshot remains the **RETRIEVAL-07–10 + PACKAGING-01** block **immediately above** that anchor in the log.
+
+**Update (2026-04-19 — RETRIEVAL-07–10 + PACKAGING-01):** **`services/memory_service.py`** — **`project_bonus`** cap (**RETRIEVAL-07**), explicit phrase boosts (**RETRIEVAL-08**–**10**). **`playground.py`** — **`build_project_memory_snapshot()`** / **`show_project_memory_snapshot()`** (read-only packaging; not in prompts yet). **`tests/run_regression.py`** — harness grew accordingly. **See:** **`SESSION_SYNC_LOG.md`** block **`### 2026-04-19` — RETRIEVAL-07–10 + PACKAGING-01** (above **DOC-SYNC-01** at file bottom).
+
+**Update (2026-04-19 — MEMORY lane):** **`MEMORY-01`** shipped (runtime **explicit project-statement** extraction chained after **`services/memory_service.py`**, optional **`extract_candidate`** on **`write_runtime_memory`**). **At MEMORY-01 ship:** regression was **`311 / 311`**. **⚠ For ChatGPT:** Jessy’s plan is a **numbered memory series — MEMORY-01 through MEMORY-10** (ten small increments, not one merge). Track progress in **`docs/handoffs/SESSION_SYNC_LOG.md`** and **`docs/specs/memory_log_system.md`** per increment. Details: **`SESSION_SYNC_LOG.md`** block **`### 2026-04-19` … MEMORY-01**.
+
+**Update (2026-04-19 — LATENCY + CLI):** Read **`docs/handoffs/SESSION_SYNC_LOG.md` from the bottom** — the **`### 2026-04-19` — LATENCY-04–06** block is **authoritative for ChatGPT** for everything **after** UI-09 in that same-day sequence: **LATENCY-04** (`playground.py` — fetch in **`ThreadPoolExecutor`**), **LATENCY-05** (`services/prompt_builder.py` — default brevity / sharper prompts), **LATENCY-06** (`app/ui.py` — fewer redundant **`st.rerun()`**, no duplicate assistant format pass before rerun), **CLI-01/02** (repo **`joshua.ps1`** + Windows PowerShell profile **`joshua`** function with fixed path). That LATENCY ship was confirmed at **`301 / 301`**; the harness row count grew afterward (see **`SESSION_SYNC_LOG.md` bottom** for the current count). **`FETCH_MODE`** unset for the gate.
+
+**Update (2026-04-19 — UI-09):** The **`### 2026-04-19` — UI-09** block in **`SESSION_SYNC_LOG.md`** still defines **UI-09 / UI-X1 / UI-X2** and overrides the **same-day session wrap** “mic reverted / expander-only” note for **Agent center** layout. **Agent center (`app/ui.py`):** **Message Joshua…** placeholder, **🎤** beside chat input, **voice-draft composer** (append segments, Send draft → **`run_query`**); **UI-X1** / **UI-X2** experiments per that entry. **`docs/specs/UX_log_system.md`** documents UI-01…09 + experiments; **`docs/specs/memory_log_system.md`** now includes **MEMORY-01** (see that file’s increment register) and will accumulate **MEMORY-02…MEMORY-10** as they ship.
+
+**Aligned for new ChatGPT session:** Protected baseline is **`391 / 391`** (`python tests/run_regression.py`, **`FETCH_MODE`** unset) — always confirm **`SESSION_SYNC_LOG.md` (bottom)** after pull (log wins over this file if they differ). Before the gate, **`FETCH_MODE`** should be **unset** in the shell (leaking **`browser`** breaks HTTP fetch regression cases). **Tool 1 engine:** **`core/system_eval.py`** supports **`steps`** scenarios, **`step_templates`** / **`use`**, **`{{variable}}`** substitution, **`step_results`** on case rows, and **`### Steps`** in markdown artifacts (see **`README.md`** and **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`**).
 
 **Milestone (same day):** **`tool1_demo_public_smoke.json`** (3 cases) was run successfully against **live JSONPlaceholder** (**PASS 3/3**). Tool 1 is **operationally proven** end-to-end (suite path, UI, summaries, durable log + **`summary`**). **Phase lock:** next priority is **engine / assertion strength** (**Increment 20** and follow-ons), not additional demo fixtures unless explicitly requested.
 
@@ -38,6 +48,7 @@ Also in repo: **HTTP system_eval** (`core/system_eval.py`, **`tools/system_eval_
 - **UI Increment 6:** **`app/ui.py`** — minimal sidebar rail: radio + tiny status + secondary Show/Reset; state/fetch/memory only under **Advanced**; see log.
 - **UI Increment 7:** **`app/ui.py`** — agent center: status/new chat/shortcuts into **`st.popover("⋯")`** (or expander fallback); conversation + input dominate; see log.
 - **UI Increment 8:** **`app/ui.py`** — top surface bar (Agent/API/Prompt/Regression/Terminal) → same router keys; sidebar backup buttons; README + system eval runbook **API** wording; see log.
+- **Agent center (2026-04-19, UX log UI-09 + experiments UI-X1/X2):** **`app/ui.py`** — **Joshua** placeholder, **🎤** beside **`st.chat_input`**, optional **voice-draft composer** (append dictation, Send draft); messages in **`st.container()`**; optional **70vh `.chat-wrapper`** scroll experiment. Details: **`docs/specs/UX_log_system.md`** + **`SESSION_SYNC_LOG.md`** (**`### 2026-04-19` — UI-09**).
 
 ### Tool 1 — API tab operator slices (**`app/ui.py`** + **`app/system_eval_operator.py`**, **`app/tool1_run_log.py`**; **`core/system_eval.py`** for Inc 10 only)
 
@@ -59,7 +70,7 @@ Also in repo: **HTTP system_eval** (`core/system_eval.py`, **`tools/system_eval_
 - **45 — `step_results`:** JSON case output lists per-step **`PASS`**/**`FAIL`**, substituted **`url`**, **`latency_ms`**, optional **`reason`**.
 - **46 — Markdown artifacts:** **`write_result_artifacts`** adds **`### Steps`** under each multi-step case in the **`.md`** file.
 
-**Harness:** all coverage in **`tests/run_regression.py`**; baseline **`297 / 297`**.
+**Harness:** all coverage in **`tests/run_regression.py`**; baseline **`391 / 391`** (confirm with latest run / **`SESSION_SYNC_LOG.md` bottom**).
 
 ### Structural stabilization sequence (architecture extraction; earlier phase)
 - Extracted persistence/file I/O helpers into `core/persistence.py`.
@@ -68,7 +79,7 @@ Also in repo: **HTTP system_eval** (`core/system_eval.py`, **`tools/system_eval_
 - Extracted routing/control-path logic into `services/routing_service.py`.
 - Extracted prompt/answer assembly logic into `services/prompt_builder.py`.
 - Kept orchestration and deterministic call ordering in `playground.py`.
-- Preserved behavior through each step under the protected regression gate (baseline grew afterward; see top “Aligned” note — **297 / 297** at last full run).
+- Preserved behavior through each step under the protected regression gate (baseline grew over time; see top “Aligned” note and **`SESSION_SYNC_LOG.md` bottom** for current count).
 - Added resilient soak execution in `tests/run_soak.py`:
   - progress checkpoints
   - chunked mode (`--chunk-size`)
@@ -108,6 +119,8 @@ Also in repo: **HTTP system_eval** (`core/system_eval.py`, **`tools/system_eval_
 
 ### Documentation
 - **`docs/specs/PROJECT_SPECIFICATION.md`** exists as a repo inventory/spec (separate from this handoff).
+- **`docs/specs/MEMORY_SYSTEM.md`** — full memory reference for the repo; **§14** is the **verbatim memory-only Memory Build Execution Plan** (archive: Jessy + ChatGPT). **§15** points at the **two-lane** coordinated plan.
+- **`docs/specs/UX_system.md`** — **verbatim two-lane execution plan** (Lane 1 durable memory M1–M5, Lane 2 operator input UX U1–U6, batches A–D, Cursor guidance). **Authoritative for delivery order and UX scope** vs §14 when they differ; same mission as memory (usable continuity: paste + speech-to-text).
 
 ### Offline memory import / extract (latest)
 - **`memory/import_chat.py`:** strips leading `USER:` / `AI:` / `ASSISTANT:` from each line (regex uses `re.IGNORECASE`, not inline `(?i)` after `^`). Still assigns roles by **line order** (user, assistant, user, …).
@@ -160,7 +173,7 @@ From repo root:
 python tests/run_regression.py
 ```
 
-At last full Cursor alignment (see `SESSION_SYNC_LOG.md` bottom), regression was **297 / 297** PASS. Re-run after any local edits.
+At last Cursor alignment (see `SESSION_SYNC_LOG.md` bottom), regression was **391 / 391** PASS. Re-run after any local edits.
 
 ---
 
@@ -172,7 +185,7 @@ At last full Cursor alignment (see `SESSION_SYNC_LOG.md` bottom), regression was
 - `services/journal_service.py` — extracted journal/outcome/recent-answer logic
 - `services/routing_service.py` — extracted action/routing/control-path logic
 - `services/prompt_builder.py` — extracted answer-line and prompt/message assembly logic
-- `tests/run_regression.py` — regression harness **297** scenarios at last recorded run (see log)
+- `tests/run_regression.py` — regression harness **391** scenarios at last recorded run (see log)
 - `tests/run_soak.py` — chunked soak and artifact synchronization
 - `.github/workflows/ci.yml`, `.github/workflows/nightly-soak.yml` — automated reliability gates
 - `tests/fixtures/extractor_validation_cases.json` — offline extractor validation cases

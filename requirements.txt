@@ -2,6 +2,7 @@ anthropic
 python-dotenv
 beautifulsoup4
 streamlit
+streamlit-mic-recorder>=0.0.8
 requests
 openai
 playwright

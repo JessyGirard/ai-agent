@@ -1,0 +1,46 @@
+{
+  "suite_name": "unnamed-suite",
+  "target_name": "unspecified-target",
+  "executed_cases": 1,
+  "passed_cases": 0,
+  "failed_cases": 1,
+  "ok": false,
+  "elapsed_seconds": 1.409,
+  "ran_at_utc": "2026-04-18T08:37:05.619037+00:00",
+  "cases": [
+    {
+      "name": "hard_pass_scenario",
+      "lane": null,
+      "ok": false,
+      "failures": [
+        "step failed: {\"step\": \"step1_issue_token\"} body_json_path missing path: {\"path\": \"json.auth.token\"}",
+        "step failed: {\"step\": \"step1_issue_token\"} body_json_path missing path: {\"path\": \"json.user.id\"}"
+      ],
+      "status_code": 200,
+      "latency_ms": 1407,
+      "output_preview": "{\n  \"args\": {}, \n  \"data\": \"{\\\"raw\\\": \\\"{\\\\\\\"auth\\\\\\\":{\\\\\\\"token\\\\\\\":\\\\\\\"abc123\\\\\\\"},\\\\\\\"user\\\\\\\":{\\\\\\\"id\\\\\\\":42}}\\\"}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"65\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-requests/2.33.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69e342b1-07e59437521a066b7d4b5a0f\"\n  }, \n  \"json\": {\n    \"raw\": \"{\\\"auth\\\":{\\\"token\\\":\\\"abc123\\\"},\\\"user\\\":{\\\"id\\\":42}}\"\n  }, \n  \"method\": \"POST\", \n  \"origin\": \"24.64.148.53\", \n  \"url\": \"https://h",
+      "output_full": "{\n  \"args\": {}, \n  \"data\": \"{\\\"raw\\\": \\\"{\\\\\\\"auth\\\\\\\":{\\\\\\\"token\\\\\\\":\\\\\\\"abc123\\\\\\\"},\\\\\\\"user\\\\\\\":{\\\\\\\"id\\\\\\\":42}}\\\"}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"65\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-requests/2.33.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69e342b1-07e59437521a066b7d4b5a0f\"\n  }, \n  \"json\": {\n    \"raw\": \"{\\\"auth\\\":{\\\"token\\\":\\\"abc123\\\"},\\\"user\\\":{\\\"id\\\":42}}\"\n  }, \n  \"method\": \"POST\", \n  \"origin\": \"24.64.148.53\", \n  \"url\": \"https://httpbin.org/anything/issue-token\"\n}\n",
+      "response_headers": {
+        "Date": "Sat, 18 Apr 2026 08:37:06 GMT",
+        "Content-Type": "application/json",
+        "Content-Length": "635",
+        "Connection": "keep-alive",
+        "Server": "gunicorn/19.9.0",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Credentials": "true"
+      },
+      "method": "POST",
+      "url": "https://httpbin.org/anything/issue-token",
+      "variables": {},
+      "step_results": [
+        {
+          "step": "step1_issue_token",
+          "status": "FAIL",
+          "url": "https://httpbin.org/anything/issue-token",
+          "latency_ms": 1407,
+          "reason": "body_json_path missing path: {\"path\": \"json.auth.token\"} | body_json_path missing path: {\"path\": \"json.user.id\"}"
+        }
+      ]
+    }
+  ]
+}

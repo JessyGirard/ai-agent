@@ -228,7 +228,7 @@ def test_memory_retrieval_keeps_intent_priority_with_recency_bonus():
                     "memory_id": "mem_proj",
                     "category": "project",
                     "value": "I am working on memory retrieval",
-                    "confidence": 0.85,
+                    "confidence": 0.80,
                     "importance": 1.0,
                     "memory_kind": "stable",
                     "evidence_count": 4,
@@ -968,6 +968,1510 @@ def test_runtime_memory_skips_conflicting_identity_write():
         assert len(items) == 1, "Conflicting identity should not add a second item"
 
 
+def test_runtime_memory_memory01_explicit_project_line():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "The project is to create a stable AI agent that understands my work."
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+        assert items[0].get("category") == "project"
+
+
+def test_runtime_memory_memory01_this_system_is_meant_to():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "This system is meant to help me build something reliable."
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory01_skips_short_tail():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("The project is x")
+        assert result is None
+
+
+def test_runtime_memory_memory01_does_not_override_preference():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "I prefer the project is documented clearly in the README."
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "preference", result
+        assert len(items) == 1, items
+        assert items[0].get("category") == "preference"
+
+
+def test_runtime_memory_memory02_i_am_building_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I am building an AI agent system")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory02_im_building_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I'm building a memory pipeline")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory02_rejects_want_to_build():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        assert playground.write_runtime_memory("I want to build a giant system") is None
+
+
+def test_runtime_memory_memory02_rejects_might_build():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        assert playground.write_runtime_memory("I might build a giant system") is None
+
+
+def test_runtime_memory_memory02_rejects_short_tail():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        assert playground.write_runtime_memory("I am building tiny") is None
+
+
+def test_runtime_memory_memory03_playground_py_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "playground.py orchestrates memory retrieval and routing"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory03_this_system_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "this system uses extracted memory and current state"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory03_this_function_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "this function scores memory items for retrieval"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory03_rejects_short_tail():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        assert playground.write_runtime_memory("this file is ok") is None
+
+
+def test_runtime_memory_memory03_i_prefer_this_system_stays_preference():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I prefer this system to be fast")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "preference", result
+        assert len(items) == 1, items
+        assert items[0].get("category") == "preference"
+
+
+def test_runtime_memory_memory04_the_flow_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the flow is user input to memory to retrieval to response"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory04_the_workflow_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the workflow is extract then dedupe then retrieve"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory04_the_pipeline_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the pipeline is journal to extracted memory to prompt"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory04_rejects_short_tail():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        assert playground.write_runtime_memory("the flow is tiny") is None
+
+
+def test_runtime_memory_memory04_i_prefer_workflow_stays_preference():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I prefer the workflow to be simple")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "preference", result
+        assert len(items) == 1, items
+        assert items[0].get("category") == "preference"
+
+
+def test_runtime_memory_memory05_playground_responsible_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "playground.py is responsible for orchestration and routing"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory05_this_module_responsible_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "this module is responsible for memory retrieval"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory05_extracted_memory_responsible_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the extracted memory is responsible for durable project facts"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory05_rejects_short_tail():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        assert (
+            playground.write_runtime_memory(
+                "playground.py is responsible for tiny"
+            )
+            is None
+        )
+
+
+def test_runtime_memory_memory05_i_prefer_module_stays_preference():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I prefer this module to be simple")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "preference", result
+        assert len(items) == 1, items
+        assert items[0].get("category") == "preference"
+
+
+def test_runtime_memory_memory06_the_rule_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the rule is keep the system test-protected and predictable"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory06_the_constraint_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the constraint is do not break existing behavior"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory06_this_system_must_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "this system must stay aligned with the project purpose"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory06_rejects_short_tail():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        assert playground.write_runtime_memory("the rule is tiny") is None
+
+
+def test_runtime_memory_memory06_i_prefer_system_stays_preference():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I prefer the system to be simple")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "preference", result
+        assert len(items) == 1, items
+        assert items[0].get("category") == "preference"
+
+
+def test_runtime_memory_memory07_the_decision_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the decision is keep the system test-protected"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory07_we_decided_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "we decided to use the chained extractor"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory07_the_plan_is_to_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the plan is to improve project awareness first"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory07_rejects_short_tail():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        assert playground.write_runtime_memory("the decision is tiny") is None
+
+
+def test_runtime_memory_memory07_i_prefer_plan_stays_preference():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I prefer the plan to be simple")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "preference", result
+        assert len(items) == 1, items
+        assert items[0].get("category") == "preference"
+
+
+def test_runtime_memory_memory08_we_completed_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "we completed the chained extractor refactor"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory08_the_milestone_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the milestone is stable project awareness capture"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory08_this_part_is_done_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "this part is done and regression-safe"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory08_rejects_short_tail():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        assert playground.write_runtime_memory("we completed short") is None
+
+
+def test_runtime_memory_memory08_i_prefer_progress_stays_preference():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I prefer progress to be steady")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "preference", result
+        assert len(items) == 1, items
+        assert items[0].get("category") == "preference"
+
+
+def test_runtime_memory_memory09_the_problem_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the problem is routing misclassification"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory09_the_biggest_risk_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the biggest risk is losing project awareness"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory09_the_failure_mode_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the failure mode is generic but shallow answers"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory09_the_bug_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the bug is incorrect memory classification"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory09_rejects_short_tail():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        assert playground.write_runtime_memory("the problem is tiny") is None
+
+
+def test_runtime_memory_memory09_i_prefer_risk_stays_preference():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I prefer risk to be low")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "preference", result
+        assert len(items) == 1, items
+        assert items[0].get("category") == "preference"
+
+
+def test_runtime_memory_memory10_the_priority_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the priority is strengthen project awareness first"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory10_objective_right_now_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "the objective right now is stable memory behavior"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory10_what_matters_most_writes_project():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory(
+            "what matters most is preserving regression safety"
+        )
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+
+
+def test_runtime_memory_memory10_rejects_short_tail():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        assert playground.write_runtime_memory("the priority is tiny") is None
+
+
+def test_runtime_memory_memory10_i_prefer_priorities_stays_preference():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I prefer priorities to be clear")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "preference", result
+        assert len(items) == 1, items
+        assert items[0].get("category") == "preference"
+
+
+def test_retrieval01_project_query_boosts_project_memory_score():
+    reset_agent_state()
+    mem = {
+        "category": "project",
+        "value": "alphabetuniquestringforretrieval",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 1,
+        "trend": "reinforced",
+        "last_seen": "runtime",
+    }
+    neutral = "hello world"
+    project_q = "what does this do"
+    s_neutral = playground.score_memory_item(mem, neutral)
+    s_project = playground.score_memory_item(mem, project_q)
+    assert abs((s_project - s_neutral) - 0.4) < 1e-9, (s_neutral, s_project)
+
+
+def test_retrieval01_non_project_query_does_not_boost_project_category():
+    reset_agent_state()
+    mem = {
+        "category": "project",
+        "value": "alphabetuniquestringforretrieval",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 3,
+        "trend": "reinforced",
+        "last_seen": "runtime",
+    }
+    a = "hello world"
+    b = "goodbye moon"
+    assert playground.score_memory_item(mem, a) == playground.score_memory_item(mem, b)
+
+
+def test_retrieval01_project_query_does_not_boost_non_project_category():
+    reset_agent_state()
+    mem = {
+        "category": "preference",
+        "value": "abcuniqueprefxyz",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 3,
+        "trend": "reinforced",
+        "last_seen": "runtime",
+    }
+    neutral = "hello world"
+    project_q = "how does this work"
+    assert playground.score_memory_item(mem, neutral) == playground.score_memory_item(mem, project_q)
+
+
+def test_retrieval02_project_evidence_boost_increases_with_count():
+    reset_agent_state()
+    base = {
+        "category": "project",
+        "value": "retrieval02uniquevalue",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    # evidence_count 1 triggers extra staleness penalty vs >1; compare 2 vs 4 so only RETRIEVAL-02 differs.
+    m2 = {**base, "evidence_count": 2}
+    m4 = {**base, "evidence_count": 4}
+    q = "hello world"
+    s2 = playground.score_memory_item(m2, q)
+    s4 = playground.score_memory_item(m4, q)
+    assert abs((s4 - s2) - 0.10) < 1e-9, (s2, s4)
+
+
+def test_retrieval02_project_evidence_boost_caps_at_point_three():
+    reset_agent_state()
+    base = {
+        "category": "project",
+        "value": "retrieval02uniquevalue",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    m7 = {**base, "evidence_count": 7}
+    m99 = {**base, "evidence_count": 99}
+    q = "hello world"
+    assert abs(playground.score_memory_item(m7, q) - playground.score_memory_item(m99, q)) < 1e-9
+
+
+def test_retrieval02_non_project_unaffected_by_project_evidence_boost():
+    reset_agent_state()
+    q = "hello world"
+    m1 = {
+        "category": "identity",
+        "value": "retrieval02identityuniq",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    m2 = {**m1, "evidence_count": 50}
+    assert playground.score_memory_item(m1, q) == playground.score_memory_item(m2, q)
+
+
+def test_retrieval03_project_evidence_two_scores_higher_than_one():
+    reset_agent_state()
+    base = {
+        "category": "project",
+        "value": "retrieval03uniquevalue",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "trend": "reinforced",
+        "last_seen": "runtime",
+    }
+    m1 = {**base, "evidence_count": 1}
+    m2 = {**base, "evidence_count": 2}
+    q = "hello world"
+    assert playground.score_memory_item(m2, q) > playground.score_memory_item(m1, q)
+    assert abs(
+        playground.score_memory_item(m2, q) - playground.score_memory_item(m1, q) - 0.10
+    ) < 1e-9
+
+
+def test_retrieval03_high_confidence_project_one_off_still_strong():
+    reset_agent_state()
+    mem = {
+        "category": "project",
+        "value": "retrieval03highconf",
+        "confidence": 0.99,
+        "importance": 0.99,
+        "memory_kind": "stable",
+        "evidence_count": 1,
+        "trend": "reinforced",
+        "last_seen": "runtime",
+    }
+    q = "hello world"
+    assert playground.score_memory_item(mem, q) > 2.2
+
+
+def test_retrieval03_non_project_evidence_one_not_penalized():
+    reset_agent_state()
+    q = "hello world"
+    mem = {
+        "category": "preference",
+        "value": "retrieval03prefuniq",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 1,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    base = playground.score_memory_item(mem, q)
+    mem_proj = {**mem, "category": "project"}
+    proj = playground.score_memory_item(mem_proj, q)
+    c = float(mem.get("confidence", 0) or 0)
+    # RETRIEVAL-03 project evidence_count==1 penalty; RETRIEVAL-06 adds 0.05*c for project only.
+    assert abs(base - proj - (0.05 - 0.05 * c)) < 1e-9
+
+
+def test_retrieval04_reinforced_project_beats_new_on_project_query():
+    reset_agent_state()
+    base = {
+        "category": "project",
+        "value": "retrieval04isolatedtoken",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "last_seen": "runtime",
+    }
+    m_rein = {**base, "trend": "reinforced"}
+    m_new = {**base, "trend": "new"}
+    project_q = "what does this do"
+    s_rein = playground.score_memory_item(m_rein, project_q)
+    s_new = playground.score_memory_item(m_new, project_q)
+    assert s_rein > s_new
+    # RETRIEVAL-04 (+0.1) plus existing recency bonus for reinforced trend (+0.07).
+    assert abs((s_rein - s_new) - 0.17) < 1e-9
+
+
+def test_retrieval04_neutral_query_no_reinforced_project_bonus():
+    reset_agent_state()
+    mem = {
+        "category": "project",
+        "value": "retrieval04isolatedtoken",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "reinforced",
+        "last_seen": "runtime",
+    }
+    neutral = "hello world"
+    project_q = "what does this do"
+    s_neutral = playground.score_memory_item(mem, neutral)
+    s_project = playground.score_memory_item(mem, project_q)
+    assert abs((s_project - s_neutral - 0.4 - 0.1)) < 1e-9, (s_neutral, s_project)
+
+
+def test_retrieval04_non_project_category_no_reinforced_bonus():
+    reset_agent_state()
+    mem = {
+        "category": "preference",
+        "value": "retrieval04prefuniq",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "reinforced",
+        "last_seen": "runtime",
+    }
+    neutral = "hello world"
+    project_q = "what does this do"
+    assert playground.score_memory_item(mem, neutral) == playground.score_memory_item(mem, project_q)
+
+
+def test_retrieval05_project_pref_alignment_tokens_boost_score():
+    reset_agent_state()
+    base = {
+        "category": "project",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    m_plain = {**base, "value": "retrieval05pjbase qqqzz"}
+    m_aligned = {**base, "value": "retrieval05pjbase incremental qqqzz"}
+    q = "hello world"
+    s_plain = playground.score_memory_item(m_plain, q)
+    s_aligned = playground.score_memory_item(m_aligned, q)
+    assert abs((s_aligned - s_plain) - 0.08) < 1e-9, (s_plain, s_aligned)
+
+
+def test_retrieval05_project_without_pref_tokens_no_alignment_boost():
+    reset_agent_state()
+    base = {
+        "category": "project",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    a = {**base, "value": "retrieval05noprefaaa"}
+    b = {**base, "value": "retrieval05noprefbbb"}
+    q = "hello world"
+    assert abs(playground.score_memory_item(a, q) - playground.score_memory_item(b, q)) < 1e-9
+
+
+def test_retrieval05_preference_category_not_pref_alignment_boosted():
+    reset_agent_state()
+    base = {
+        "category": "preference",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    with_token = {**base, "value": "retrieval05prefsame incremental tail"}
+    without = {**base, "value": "retrieval05prefsame plainword tail"}
+    q = "hello world"
+    assert abs(playground.score_memory_item(with_token, q) - playground.score_memory_item(without, q)) < 1e-9
+
+
+def test_retrieval06_project_confidence_boost_orders_high_confidence():
+    reset_agent_state()
+    base = {
+        "category": "project",
+        "value": "retrieval06overlaptoken projectvalue only",
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    m_low = {**base, "confidence": 0.2}
+    m_high = {**base, "confidence": 0.8}
+    q = "retrieval06overlaptoken xyz"
+    s_low = playground.score_memory_item(m_low, q)
+    s_high = playground.score_memory_item(m_high, q)
+    assert s_high > s_low
+    # Base score includes confidence once; RETRIEVAL-06 adds 0.05 * confidence for project.
+    assert abs((s_high - s_low) - (0.8 - 0.2) - 0.05 * (0.8 - 0.2)) < 1e-9, (s_low, s_high)
+
+
+def test_retrieval06_non_project_confidence_not_extra_boosted():
+    reset_agent_state()
+    base = {
+        "category": "preference",
+        "value": "retrieval06overlaptoken prefvalue only",
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    m_low = {**base, "confidence": 0.2}
+    m_high = {**base, "confidence": 0.8}
+    q = "retrieval06overlaptoken xyz"
+    assert abs(
+        playground.score_memory_item(m_high, q) - playground.score_memory_item(m_low, q) - (0.8 - 0.2)
+    ) < 1e-9
+
+
+def test_retrieval07_project_boost_cap_total_point_eight():
+    reset_agent_state()
+    project_q = "what does this do"
+    shared = {
+        "category": "project",
+        "confidence": 1.0,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "last_seen": "runtime",
+        "trend": "settled",
+    }
+    m_light = {
+        **shared,
+        "value": "retrieval07lightuniq this plainx",
+        "evidence_count": 2,
+    }
+    m_heavy = {
+        **shared,
+        "value": "retrieval07heavyuniq this incremental",
+        "evidence_count": 7,
+    }
+    s_heavy = playground.score_memory_item(m_heavy, project_q)
+    s_light = playground.score_memory_item(m_light, project_q)
+    # project_bonus uncapped: heavy 0.93 vs light 0.60 (diff 0.33); cap clips heavy to 0.80 (diff 0.20).
+    # Same trend / recency / evidence_count>=3 line so only project_bonus cap differs materially.
+    assert abs((s_heavy - s_light) - 0.2) < 1e-9, (s_light, s_heavy)
+
+
+def test_retrieval07_non_project_category_cap_does_not_apply():
+    reset_agent_state()
+    project_q = "what does this do"
+    base = {
+        "category": "goal",
+        "value": "retrieval07goaluniq this incremental tail",
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 7,
+        "trend": "reinforced",
+        "last_seen": "runtime",
+    }
+    m_low = {**base, "confidence": 0.2}
+    m_high = {**base, "confidence": 0.8}
+    assert abs(
+        playground.score_memory_item(m_high, project_q) - playground.score_memory_item(m_low, project_q) - (0.8 - 0.2)
+    ) < 1e-9
+
+
+def test_retrieval07_below_cap_project_same_as_uncapped():
+    reset_agent_state()
+    mem = {
+        "category": "project",
+        "value": "alphabetuniquestringforretrieval",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 1,
+        "trend": "reinforced",
+        "last_seen": "runtime",
+    }
+    neutral = "hello world"
+    project_q = "what does this do"
+    s_neutral = playground.score_memory_item(mem, neutral)
+    s_project = playground.score_memory_item(mem, project_q)
+    assert abs((s_project - s_neutral) - 0.4) < 1e-9, (s_neutral, s_project)
+
+
+def test_retrieval08_explicit_project_phrase_boosts_project_memory():
+    reset_agent_state()
+    mem = {
+        "category": "project",
+        "value": "retrieval08projuniq zz",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 1,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    q_vague = "what does this do"
+    q_explicit = "how does this project work"
+    s_vague = playground.score_memory_item(mem, q_vague)
+    s_explicit = playground.score_memory_item(mem, q_explicit)
+    # RETRIEVAL-08 +0.05; explicit wording also triggers intent "project" (+0.35) vs general on vague query.
+    assert abs((s_explicit - s_vague) - 0.4) < 1e-9, (s_vague, s_explicit)
+
+
+def test_retrieval08_preference_not_boosted_by_explicit_phrase():
+    reset_agent_state()
+    mem = {
+        "category": "preference",
+        "value": "retrieval08prefuniq zz",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    q_vague = "what does this do"
+    q_explicit = "how it works"
+    assert abs(playground.score_memory_item(mem, q_vague) - playground.score_memory_item(mem, q_explicit)) < 1e-9
+
+
+def test_retrieval09_priority_risk_phrase_boosts_project_memory():
+    reset_agent_state()
+    mem = {
+        "category": "project",
+        "value": "retrieval09projuniq zz",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    q_neutral = "what does this do"
+    q_risk = "what does this do about the problem"
+    s_neutral = playground.score_memory_item(mem, q_neutral)
+    s_risk = playground.score_memory_item(mem, q_risk)
+    assert s_risk > s_neutral
+    assert abs((s_risk - s_neutral) - 0.05) < 1e-9, (s_neutral, s_risk)
+
+
+def test_retrieval09_preference_not_boosted_by_priority_risk_phrase():
+    reset_agent_state()
+    mem = {
+        "category": "preference",
+        "value": "retrieval09prefuniq zz",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    q_neutral = "what does this do"
+    q_risk = "what does this do about the problem"
+    assert abs(playground.score_memory_item(mem, q_neutral) - playground.score_memory_item(mem, q_risk)) < 1e-9
+
+
+def test_retrieval09_max_project_bonus_cap_unchanged_with_risk_phrase():
+    reset_agent_state()
+    project_q_plain = "what does this do"
+    project_q_risk = "what does this do the problem is recorded"
+    shared = {
+        "category": "project",
+        "confidence": 1.0,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "last_seen": "runtime",
+        "trend": "settled",
+    }
+    m_heavy = {
+        **shared,
+        "value": "retrieval09heavyuniq this incremental",
+        "evidence_count": 7,
+    }
+    s_plain = playground.score_memory_item(m_heavy, project_q_plain)
+    s_risk = playground.score_memory_item(m_heavy, project_q_risk)
+    # Raw project_bonus already >= 0.8 before RETRIEVAL-09; +0.05 risk phrase still caps at 0.8.
+    assert abs(s_plain - s_risk) < 1e-9, (s_plain, s_risk)
+
+
+def test_retrieval10_decision_progress_phrase_boosts_project_memory():
+    reset_agent_state()
+    mem = {
+        "category": "project",
+        "value": "retrieval10projuniq zz",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    q_neutral = "what does this do"
+    q_progress = "what does this do about the decision"
+    s_neutral = playground.score_memory_item(mem, q_neutral)
+    s_progress = playground.score_memory_item(mem, q_progress)
+    assert s_progress > s_neutral
+    assert abs((s_progress - s_neutral) - 0.05) < 1e-9, (s_neutral, s_progress)
+
+
+def test_retrieval10_preference_not_boosted_by_decision_progress_phrase():
+    reset_agent_state()
+    mem = {
+        "category": "preference",
+        "value": "retrieval10prefuniq zz",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    q_neutral = "what does this do"
+    q_progress = "what does this do about the decision"
+    assert abs(playground.score_memory_item(mem, q_neutral) - playground.score_memory_item(mem, q_progress)) < 1e-9
+
+
+def test_retrieval10_max_project_bonus_cap_unchanged_with_decision_phrase():
+    reset_agent_state()
+    project_q_plain = "what does this do"
+    project_q_decision = "what does this do the decision is final"
+    shared = {
+        "category": "project",
+        "confidence": 1.0,
+        "importance": 0.75,
+        "memory_kind": "stable",
+        "last_seen": "runtime",
+        "trend": "settled",
+    }
+    m_heavy = {
+        **shared,
+        "value": "retrieval10heavyuniq this incremental",
+        "evidence_count": 7,
+    }
+    s_plain = playground.score_memory_item(m_heavy, project_q_plain)
+    s_decision = playground.score_memory_item(m_heavy, project_q_decision)
+    assert abs(s_plain - s_decision) < 1e-9, (s_plain, s_decision)
+
+
+def test_packaging01_snapshot_only_active_project_rows():
+    reset_agent_state()
+    payload = {
+        "meta": {"schema_version": "2.0", "memory_count": 3},
+        "memory_items": [
+            {
+                "memory_id": "p1",
+                "category": "project",
+                "value": "packaging01activeproject",
+                "confidence": 0.7,
+                "importance": 0.75,
+                "status": "active",
+                "memory_kind": "stable",
+                "evidence_count": 2,
+                "trend": "new",
+                "last_seen": "runtime",
+            },
+            {
+                "memory_id": "p2",
+                "category": "project",
+                "value": "packaging01inactiveproject",
+                "confidence": 0.9,
+                "importance": 0.9,
+                "status": "reinforced",
+                "memory_kind": "stable",
+                "evidence_count": 5,
+                "trend": "reinforced",
+                "last_seen": "runtime",
+            },
+            {
+                "memory_id": "pref1",
+                "category": "preference",
+                "value": "packaging01prefonly",
+                "confidence": 0.8,
+                "importance": 0.8,
+                "status": "active",
+                "memory_kind": "stable",
+                "evidence_count": 2,
+                "trend": "new",
+                "last_seen": "runtime",
+            },
+        ],
+    }
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        snap = playground.build_project_memory_snapshot()
+    assert "packaging01activeproject" in snap
+    assert "packaging01inactiveproject" not in snap
+    assert "packaging01prefonly" not in snap
+
+
+def test_packaging01_snapshot_orders_stronger_project_rows_first():
+    reset_agent_state()
+    payload = {
+        "meta": {"schema_version": "2.0", "memory_count": 2},
+        "memory_items": [
+            {
+                "memory_id": "weak",
+                "category": "project",
+                "value": "packaging01weakrow",
+                "confidence": 0.9,
+                "importance": 0.9,
+                "status": "active",
+                "memory_kind": "stable",
+                "evidence_count": 5,
+                "trend": "new",
+                "last_seen": "runtime",
+            },
+            {
+                "memory_id": "strong",
+                "category": "project",
+                "value": "packaging01strongrow",
+                "confidence": 0.5,
+                "importance": 0.5,
+                "status": "active",
+                "memory_kind": "stable",
+                "evidence_count": 1,
+                "trend": "reinforced",
+                "last_seen": "runtime",
+            },
+        ],
+    }
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        snap = playground.build_project_memory_snapshot()
+    lines = snap.strip().split("\n")
+    assert lines[0] == "Project memory snapshot:"
+    assert "packaging01strongrow" in lines[1]
+    assert "packaging01weakrow" in lines[2]
+
+
+def test_packaging01_snapshot_respects_max_items():
+    reset_agent_state()
+    items = []
+    for i in range(4):
+        items.append(
+            {
+                "memory_id": f"p{i}",
+                "category": "project",
+                "value": f"packaging01slot{i}",
+                "confidence": 0.7,
+                "importance": 0.75,
+                "status": "active",
+                "memory_kind": "stable",
+                "evidence_count": 1,
+                "trend": "new",
+                "last_seen": "runtime",
+            }
+        )
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 4}, "memory_items": items}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        snap = playground.build_project_memory_snapshot(max_items=2)
+    assert snap.count("- packaging01slot") == 2
+
+
+def test_packaging01_non_project_rows_excluded():
+    reset_agent_state()
+    payload = {
+        "meta": {"schema_version": "2.0", "memory_count": 1},
+        "memory_items": [
+            {
+                "memory_id": "g1",
+                "category": "goal",
+                "value": "packaging01goalonly",
+                "confidence": 0.8,
+                "importance": 0.8,
+                "status": "active",
+                "memory_kind": "stable",
+                "evidence_count": 2,
+                "trend": "new",
+                "last_seen": "runtime",
+            },
+        ],
+    }
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_snapshot() == ""
+
+
+def test_packaging01_empty_project_memory_returns_empty_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_snapshot() == ""
+
+
+def test_packaging01_show_project_memory_snapshot_fallback():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.show_project_memory_snapshot() == "No active project memory available."
+
+
 def test_formatting_review():
     reset_agent_state()
     playground.current_state["focus"] = "ai-agent project"
@@ -1011,6 +2515,88 @@ def test_state_command_test():
     assert stage_result == "✅ Stage updated to: Phase 5 testing", f"Unexpected stage result: {stage_result}"
     assert "Focus: ai-agent project" in state_result, "Focus not shown correctly"
     assert "Stage: Phase 5 testing" in state_result, "Stage not shown correctly"
+
+
+def test_multiline_paste_starting_with_set_focus_does_not_mutate_state():
+    """UI-04: pasted blocks must not run set focus / set stage as commands."""
+    reset_agent_state()
+    with isolated_runtime_files():
+        original_ask_ai = playground.ask_ai
+        try:
+            playground.handle_user_input("set focus: baseline-focus")
+            playground.ask_ai = lambda messages, system_prompt=None: (
+                "Answer:\nAck.\n\nCurrent state:\nFocus: baseline-focus\n"
+                "Stage: Phase 4 action-layer refinement\nAction type: build\n\nNext step:\nContinue."
+            )
+            blob = "set focus: evil-hijack\nsecond line of pasted content\n"
+            result = playground.handle_user_input(blob)
+            assert playground.current_state["focus"] == "baseline-focus", "Multiline paste must not change focus"
+            assert "✅ Focus updated" not in result
+        finally:
+            playground.ask_ai = original_ask_ai
+
+
+def test_oversized_single_line_set_focus_is_ignored_as_command():
+    """UI-04: one very long line is not a direct command."""
+    reset_agent_state()
+    with isolated_runtime_files():
+        original_ask_ai = playground.ask_ai
+        try:
+            playground.handle_user_input("set focus: baseline2")
+            long_tail = "x" * 300
+            payload = "set focus: " + long_tail
+            assert "\n" not in payload
+            assert len(payload) > playground.STATE_COMMAND_INPUT_MAX_CHARS
+            playground.ask_ai = lambda messages, system_prompt=None: (
+                "Answer:\nAck.\n\nCurrent state:\nFocus: baseline2\n"
+                "Stage: Phase 4 action-layer refinement\nAction type: build\n\nNext step:\nContinue."
+            )
+            _ = playground.handle_user_input(payload)
+            assert playground.current_state["focus"] == "baseline2"
+        finally:
+            playground.ask_ai = original_ask_ai
+
+
+def test_long_multiline_log_no_false_outcome_feedback():
+    """UI-04: logs containing 'failed' must not create outcome_feedback rows."""
+    reset_agent_state()
+    with isolated_runtime_files():
+        original_ask_ai = playground.ask_ai
+        try:
+            playground.ask_ai = lambda messages, system_prompt=None: (
+                "Answer:\nAck.\n\nCurrent state:\nFocus: ai-agent project\n"
+                "Stage: Phase 4 action-layer refinement\nAction type: build\n\nNext step:\nContinue."
+            )
+            lines = ["line %s failed to compile" % i for i in range(30)]
+            blob = "\n".join(lines)
+            assert len(blob) > playground.OUTCOME_FEEDBACK_INPUT_MAX_CHARS
+            _ = playground.handle_user_input(blob)
+            entries = playground.load_project_journal()
+            outcome_entries = [e for e in entries if e.get("entry_type") == "outcome_feedback"]
+            assert not outcome_entries, outcome_entries
+        finally:
+            playground.ask_ai = original_ask_ai
+
+
+def test_outcome_feedback_skipped_when_single_line_exceeds_length_cap():
+    """UI-04: very long single-line text is not treated as operator outcome feedback."""
+    reset_agent_state()
+    with isolated_runtime_files():
+        original_ask_ai = playground.ask_ai
+        try:
+            playground.ask_ai = lambda messages, system_prompt=None: (
+                "Answer:\nAck.\n\nCurrent state:\nFocus: ai-agent project\n"
+                "Stage: Phase 4 action-layer refinement\nAction type: build\n\nNext step:\nContinue."
+            )
+            s = ("x" * 200) + " failed " + ("y" * 30)
+            assert "\n" not in s
+            assert len(s) > playground.OUTCOME_FEEDBACK_INPUT_MAX_CHARS
+            _ = playground.handle_user_input(s)
+            entries = playground.load_project_journal()
+            outcome_entries = [e for e in entries if e.get("entry_type") == "outcome_feedback"]
+            assert not outcome_entries, outcome_entries
+        finally:
+            playground.ask_ai = original_ask_ai
 
 
 def test_direct_preference_answer():
@@ -1081,7 +2667,8 @@ def test_tool_fetch_routing():
             )
 
         playground.ask_ai = fake_ask_ai
-        playground.fetch_page = lambda url: f"FAKE FETCH OK: {url}"
+        # Body must exceed LATENCY-10 trivial cap so the second post-fetch LLM still runs.
+        playground.fetch_page = lambda url: f"FAKE FETCH OK: {url} " + ("a" * 70)
 
         result = playground.handle_user_input("Read https://example.com")
 
@@ -1133,6 +2720,202 @@ def test_post_fetch_next_step_quality():
             "Use one second real page URL and verify the answer stays grounded in fetched content."
             in result
         ), "Post-fetch next step did not stay concrete and grounded"
+        assert call_count["n"] == 2, f"Expected 2 LLM calls, got {call_count['n']}"
+
+    finally:
+        playground.ask_ai = original_ask_ai
+        playground.fetch_page = original_fetch_page
+
+
+def test_fetch_failure_short_circuits_second_llm():
+    """LATENCY-07: structured fetch failures skip the post-fetch model call."""
+    reset_agent_state()
+
+    original_ask_ai = playground.ask_ai
+    original_fetch_page = playground.fetch_page
+
+    try:
+        call_count = {"n": 0}
+
+        def fake_ask_ai(messages, system_prompt=None):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return "TOOL:fetch https://example.com/slow"
+            raise AssertionError("Second LLM call should not run for fetch failure short-circuit")
+
+        playground.ask_ai = fake_ask_ai
+        playground.fetch_page = lambda url: "[fetch:timeout] Request timed out."
+
+        result = playground.handle_user_input("Read https://example.com/slow")
+
+        assert call_count["n"] == 1, f"Expected 1 LLM call, got {call_count['n']}"
+        assert "Answer:" in result
+        assert "Action type: research" in result
+        assert "[fetch:timeout]" in result
+        assert "Try a different public page" in result, "Expected deterministic next step for timeout tag"
+
+    finally:
+        playground.ask_ai = original_ask_ai
+        playground.fetch_page = original_fetch_page
+
+
+def test_fetch_whitespace_only_short_circuits_second_llm():
+    """LATENCY-08: whitespace-only fetch body skips second ask_ai after normalization."""
+    reset_agent_state()
+
+    original_ask_ai = playground.ask_ai
+    original_fetch_page = playground.fetch_page
+
+    try:
+        call_count = {"n": 0}
+
+        def fake_ask_ai(messages, system_prompt=None):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return "TOOL:fetch https://example.com/empty"
+            raise AssertionError("Second LLM call should not run")
+
+        playground.ask_ai = fake_ask_ai
+        playground.fetch_page = lambda url: "   \n\t\r\n  "
+
+        result = playground.handle_user_input("Read https://example.com/empty")
+
+        assert call_count["n"] == 1
+        assert "Answer:" in result and "Action type: research" in result
+
+    finally:
+        playground.ask_ai = original_ask_ai
+        playground.fetch_page = original_fetch_page
+
+
+def test_fetch_punctuation_only_short_circuits_second_llm():
+    """LATENCY-08: no-alphanumeric fetch body skips second ask_ai (deterministic)."""
+    reset_agent_state()
+
+    original_ask_ai = playground.ask_ai
+    original_fetch_page = playground.fetch_page
+
+    try:
+        call_count = {"n": 0}
+
+        def fake_ask_ai(messages, system_prompt=None):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return "TOOL:fetch https://example.com/x"
+            raise AssertionError("Second LLM call should not run")
+
+        playground.ask_ai = fake_ask_ai
+        playground.fetch_page = lambda url: "---\n...\n\t…"
+
+        result = playground.handle_user_input("Read https://example.com/x")
+
+        assert call_count["n"] == 1
+        assert "Answer:" in result and "Action type: research" in result
+
+    finally:
+        playground.ask_ai = original_ask_ai
+        playground.fetch_page = original_fetch_page
+
+
+def test_fetch_trivially_small_short_circuits_second_llm():
+    """LATENCY-10: valid tiny fetch skips second ask_ai."""
+    reset_agent_state()
+
+    original_ask_ai = playground.ask_ai
+    original_fetch_page = playground.fetch_page
+
+    try:
+        call_count = {"n": 0}
+
+        def fake_ask_ai(messages, system_prompt=None):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return "TOOL:fetch https://example.com/"
+            raise AssertionError("Second LLM call should not run for trivial fetch")
+
+        playground.ask_ai = fake_ask_ai
+        playground.fetch_page = lambda url: "OK — saved."
+
+        result = playground.handle_user_input("Read https://example.com/")
+
+        assert call_count["n"] == 1
+        assert "Answer:" in result and "Action type: research" in result
+
+    finally:
+        playground.ask_ai = original_ask_ai
+        playground.fetch_page = original_fetch_page
+
+
+def test_fetch_over_trivial_char_cap_still_uses_second_llm():
+    """LATENCY-10: body over char cap still runs second ask_ai."""
+    reset_agent_state()
+
+    original_ask_ai = playground.ask_ai
+    original_fetch_page = playground.fetch_page
+
+    try:
+        call_count = {"n": 0}
+
+        def fake_ask_ai(messages, system_prompt=None):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return "TOOL:fetch https://example.com/long"
+            return (
+                "Answer:\n"
+                "Summary line.\n\n"
+                "Current state:\n"
+                "Focus: ai-agent project\n"
+                "Stage: Phase 4 action-layer refinement\n"
+                "Action type: research\n\n"
+                "Next step:\n"
+                "Use another real page URL and verify the fetched summary stays grounded in the page content."
+            )
+
+        playground.ask_ai = fake_ask_ai
+        body = "a" * 101
+        playground.fetch_page = lambda url: body
+
+        playground.handle_user_input("Read https://example.com/long")
+
+        assert call_count["n"] == 2, f"Expected 2 LLM calls, got {call_count['n']}"
+
+    finally:
+        playground.ask_ai = original_ask_ai
+        playground.fetch_page = original_fetch_page
+
+
+def test_fetch_over_trivial_word_cap_still_uses_second_llm():
+    """LATENCY-10: many short words still run second ask_ai."""
+    reset_agent_state()
+
+    original_ask_ai = playground.ask_ai
+    original_fetch_page = playground.fetch_page
+
+    try:
+        call_count = {"n": 0}
+
+        def fake_ask_ai(messages, system_prompt=None):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return "TOOL:fetch https://example.com/manywords"
+            return (
+                "Answer:\n"
+                "Counted words.\n\n"
+                "Current state:\n"
+                "Focus: ai-agent project\n"
+                "Stage: Phase 4 action-layer refinement\n"
+                "Action type: research\n\n"
+                "Next step:\n"
+                "Use another real page URL and verify the fetched summary stays grounded in the page content."
+            )
+
+        playground.ask_ai = fake_ask_ai
+        body = " ".join(f"w{i}" for i in range(13))
+        assert len(body) < playground._LATENCY10_TRIVIAL_MAX_CHARS
+        playground.fetch_page = lambda url: body
+
+        playground.handle_user_input("Read https://example.com/manywords")
+
         assert call_count["n"] == 2, f"Expected 2 LLM calls, got {call_count['n']}"
 
     finally:
@@ -7627,12 +9410,106 @@ def main():
         ("retrieve_personal_context_memory_keeps_useful_diversity_across_categories", test_retrieve_personal_context_memory_keeps_useful_diversity_across_categories),
         ("runtime_memory_skips_conflicting_goal_write", test_runtime_memory_skips_conflicting_goal_write),
         ("runtime_memory_skips_conflicting_identity_write", test_runtime_memory_skips_conflicting_identity_write),
+        ("runtime_memory_memory01_explicit_project_line", test_runtime_memory_memory01_explicit_project_line),
+        ("runtime_memory_memory01_this_system_is_meant_to", test_runtime_memory_memory01_this_system_is_meant_to),
+        ("runtime_memory_memory01_skips_short_tail", test_runtime_memory_memory01_skips_short_tail),
+        ("runtime_memory_memory01_does_not_override_preference", test_runtime_memory_memory01_does_not_override_preference),
+        ("runtime_memory_memory02_i_am_building_writes_project", test_runtime_memory_memory02_i_am_building_writes_project),
+        ("runtime_memory_memory02_im_building_writes_project", test_runtime_memory_memory02_im_building_writes_project),
+        ("runtime_memory_memory02_rejects_want_to_build", test_runtime_memory_memory02_rejects_want_to_build),
+        ("runtime_memory_memory02_rejects_might_build", test_runtime_memory_memory02_rejects_might_build),
+        ("runtime_memory_memory02_rejects_short_tail", test_runtime_memory_memory02_rejects_short_tail),
+        ("runtime_memory_memory03_playground_py_writes_project", test_runtime_memory_memory03_playground_py_writes_project),
+        ("runtime_memory_memory03_this_system_writes_project", test_runtime_memory_memory03_this_system_writes_project),
+        ("runtime_memory_memory03_this_function_writes_project", test_runtime_memory_memory03_this_function_writes_project),
+        ("runtime_memory_memory03_rejects_short_tail", test_runtime_memory_memory03_rejects_short_tail),
+        ("runtime_memory_memory03_i_prefer_this_system_stays_preference", test_runtime_memory_memory03_i_prefer_this_system_stays_preference),
+        ("runtime_memory_memory04_the_flow_writes_project", test_runtime_memory_memory04_the_flow_writes_project),
+        ("runtime_memory_memory04_the_workflow_writes_project", test_runtime_memory_memory04_the_workflow_writes_project),
+        ("runtime_memory_memory04_the_pipeline_writes_project", test_runtime_memory_memory04_the_pipeline_writes_project),
+        ("runtime_memory_memory04_rejects_short_tail", test_runtime_memory_memory04_rejects_short_tail),
+        ("runtime_memory_memory04_i_prefer_workflow_stays_preference", test_runtime_memory_memory04_i_prefer_workflow_stays_preference),
+        ("runtime_memory_memory05_playground_responsible_writes_project", test_runtime_memory_memory05_playground_responsible_writes_project),
+        ("runtime_memory_memory05_this_module_responsible_writes_project", test_runtime_memory_memory05_this_module_responsible_writes_project),
+        ("runtime_memory_memory05_extracted_memory_responsible_writes_project", test_runtime_memory_memory05_extracted_memory_responsible_writes_project),
+        ("runtime_memory_memory05_rejects_short_tail", test_runtime_memory_memory05_rejects_short_tail),
+        ("runtime_memory_memory05_i_prefer_module_stays_preference", test_runtime_memory_memory05_i_prefer_module_stays_preference),
+        ("runtime_memory_memory06_the_rule_writes_project", test_runtime_memory_memory06_the_rule_writes_project),
+        ("runtime_memory_memory06_the_constraint_writes_project", test_runtime_memory_memory06_the_constraint_writes_project),
+        ("runtime_memory_memory06_this_system_must_writes_project", test_runtime_memory_memory06_this_system_must_writes_project),
+        ("runtime_memory_memory06_rejects_short_tail", test_runtime_memory_memory06_rejects_short_tail),
+        ("runtime_memory_memory06_i_prefer_system_stays_preference", test_runtime_memory_memory06_i_prefer_system_stays_preference),
+        ("runtime_memory_memory07_the_decision_writes_project", test_runtime_memory_memory07_the_decision_writes_project),
+        ("runtime_memory_memory07_we_decided_writes_project", test_runtime_memory_memory07_we_decided_writes_project),
+        ("runtime_memory_memory07_the_plan_is_to_writes_project", test_runtime_memory_memory07_the_plan_is_to_writes_project),
+        ("runtime_memory_memory07_rejects_short_tail", test_runtime_memory_memory07_rejects_short_tail),
+        ("runtime_memory_memory07_i_prefer_plan_stays_preference", test_runtime_memory_memory07_i_prefer_plan_stays_preference),
+        ("runtime_memory_memory08_we_completed_writes_project", test_runtime_memory_memory08_we_completed_writes_project),
+        ("runtime_memory_memory08_the_milestone_writes_project", test_runtime_memory_memory08_the_milestone_writes_project),
+        ("runtime_memory_memory08_this_part_is_done_writes_project", test_runtime_memory_memory08_this_part_is_done_writes_project),
+        ("runtime_memory_memory08_rejects_short_tail", test_runtime_memory_memory08_rejects_short_tail),
+        ("runtime_memory_memory08_i_prefer_progress_stays_preference", test_runtime_memory_memory08_i_prefer_progress_stays_preference),
+        ("runtime_memory_memory09_the_problem_writes_project", test_runtime_memory_memory09_the_problem_writes_project),
+        ("runtime_memory_memory09_the_biggest_risk_writes_project", test_runtime_memory_memory09_the_biggest_risk_writes_project),
+        ("runtime_memory_memory09_the_failure_mode_writes_project", test_runtime_memory_memory09_the_failure_mode_writes_project),
+        ("runtime_memory_memory09_the_bug_writes_project", test_runtime_memory_memory09_the_bug_writes_project),
+        ("runtime_memory_memory09_rejects_short_tail", test_runtime_memory_memory09_rejects_short_tail),
+        ("runtime_memory_memory09_i_prefer_risk_stays_preference", test_runtime_memory_memory09_i_prefer_risk_stays_preference),
+        ("runtime_memory_memory10_the_priority_writes_project", test_runtime_memory_memory10_the_priority_writes_project),
+        ("runtime_memory_memory10_objective_right_now_writes_project", test_runtime_memory_memory10_objective_right_now_writes_project),
+        ("runtime_memory_memory10_what_matters_most_writes_project", test_runtime_memory_memory10_what_matters_most_writes_project),
+        ("runtime_memory_memory10_rejects_short_tail", test_runtime_memory_memory10_rejects_short_tail),
+        ("runtime_memory_memory10_i_prefer_priorities_stays_preference", test_runtime_memory_memory10_i_prefer_priorities_stays_preference),
+        ("retrieval01_project_query_boosts_project_memory_score", test_retrieval01_project_query_boosts_project_memory_score),
+        ("retrieval01_non_project_query_does_not_boost_project_category", test_retrieval01_non_project_query_does_not_boost_project_category),
+        ("retrieval01_project_query_does_not_boost_non_project_category", test_retrieval01_project_query_does_not_boost_non_project_category),
+        ("retrieval02_project_evidence_boost_increases_with_count", test_retrieval02_project_evidence_boost_increases_with_count),
+        ("retrieval02_project_evidence_boost_caps_at_point_three", test_retrieval02_project_evidence_boost_caps_at_point_three),
+        ("retrieval02_non_project_unaffected_by_project_evidence_boost", test_retrieval02_non_project_unaffected_by_project_evidence_boost),
+        ("retrieval03_project_evidence_two_scores_higher_than_one", test_retrieval03_project_evidence_two_scores_higher_than_one),
+        ("retrieval03_high_confidence_project_one_off_still_strong", test_retrieval03_high_confidence_project_one_off_still_strong),
+        ("retrieval03_non_project_evidence_one_not_penalized", test_retrieval03_non_project_evidence_one_not_penalized),
+        ("retrieval04_reinforced_project_beats_new_on_project_query", test_retrieval04_reinforced_project_beats_new_on_project_query),
+        ("retrieval04_neutral_query_no_reinforced_project_bonus", test_retrieval04_neutral_query_no_reinforced_project_bonus),
+        ("retrieval04_non_project_category_no_reinforced_bonus", test_retrieval04_non_project_category_no_reinforced_bonus),
+        ("retrieval05_project_pref_alignment_tokens_boost_score", test_retrieval05_project_pref_alignment_tokens_boost_score),
+        ("retrieval05_project_without_pref_tokens_no_alignment_boost", test_retrieval05_project_without_pref_tokens_no_alignment_boost),
+        ("retrieval05_preference_category_not_pref_alignment_boosted", test_retrieval05_preference_category_not_pref_alignment_boosted),
+        ("retrieval06_project_confidence_boost_orders_high_confidence", test_retrieval06_project_confidence_boost_orders_high_confidence),
+        ("retrieval06_non_project_confidence_not_extra_boosted", test_retrieval06_non_project_confidence_not_extra_boosted),
+        ("retrieval07_project_boost_cap_total_point_eight", test_retrieval07_project_boost_cap_total_point_eight),
+        ("retrieval07_non_project_category_cap_does_not_apply", test_retrieval07_non_project_category_cap_does_not_apply),
+        ("retrieval07_below_cap_project_same_as_uncapped", test_retrieval07_below_cap_project_same_as_uncapped),
+        ("retrieval08_explicit_project_phrase_boosts_project_memory", test_retrieval08_explicit_project_phrase_boosts_project_memory),
+        ("retrieval08_preference_not_boosted_by_explicit_phrase", test_retrieval08_preference_not_boosted_by_explicit_phrase),
+        ("retrieval09_priority_risk_phrase_boosts_project_memory", test_retrieval09_priority_risk_phrase_boosts_project_memory),
+        ("retrieval09_preference_not_boosted_by_priority_risk_phrase", test_retrieval09_preference_not_boosted_by_priority_risk_phrase),
+        ("retrieval09_max_project_bonus_cap_unchanged_with_risk_phrase", test_retrieval09_max_project_bonus_cap_unchanged_with_risk_phrase),
+        ("retrieval10_decision_progress_phrase_boosts_project_memory", test_retrieval10_decision_progress_phrase_boosts_project_memory),
+        ("retrieval10_preference_not_boosted_by_decision_progress_phrase", test_retrieval10_preference_not_boosted_by_decision_progress_phrase),
+        ("retrieval10_max_project_bonus_cap_unchanged_with_decision_phrase", test_retrieval10_max_project_bonus_cap_unchanged_with_decision_phrase),
+        ("packaging01_snapshot_only_active_project_rows", test_packaging01_snapshot_only_active_project_rows),
+        ("packaging01_snapshot_orders_stronger_project_rows_first", test_packaging01_snapshot_orders_stronger_project_rows_first),
+        ("packaging01_snapshot_respects_max_items", test_packaging01_snapshot_respects_max_items),
+        ("packaging01_non_project_rows_excluded", test_packaging01_non_project_rows_excluded),
+        ("packaging01_empty_project_memory_returns_empty_string", test_packaging01_empty_project_memory_returns_empty_string),
+        ("packaging01_show_project_memory_snapshot_fallback", test_packaging01_show_project_memory_snapshot_fallback),
         ("formatting_review", test_formatting_review),
         ("state_command_test", test_state_command_test),
+        ("multiline_paste_starting_with_set_focus_does_not_mutate_state", test_multiline_paste_starting_with_set_focus_does_not_mutate_state),
+        ("oversized_single_line_set_focus_is_ignored_as_command", test_oversized_single_line_set_focus_is_ignored_as_command),
+        ("long_multiline_log_no_false_outcome_feedback", test_long_multiline_log_no_false_outcome_feedback),
+        ("outcome_feedback_skipped_when_single_line_exceeds_length_cap", test_outcome_feedback_skipped_when_single_line_exceeds_length_cap),
         ("direct_preference_answer", test_direct_preference_answer),
         ("state_over_memory_guard", test_state_over_memory_guard),
         ("tool_fetch_routing", test_tool_fetch_routing),
         ("post_fetch_next_step_quality", test_post_fetch_next_step_quality),
+        ("fetch_failure_short_circuits_second_llm", test_fetch_failure_short_circuits_second_llm),
+        ("fetch_whitespace_only_short_circuits_second_llm", test_fetch_whitespace_only_short_circuits_second_llm),
+        ("fetch_punctuation_only_short_circuits_second_llm", test_fetch_punctuation_only_short_circuits_second_llm),
+        ("fetch_trivially_small_short_circuits_second_llm", test_fetch_trivially_small_short_circuits_second_llm),
+        ("fetch_over_trivial_char_cap_still_uses_second_llm", test_fetch_over_trivial_char_cap_still_uses_second_llm),
+        ("fetch_over_trivial_word_cap_still_uses_second_llm", test_fetch_over_trivial_word_cap_still_uses_second_llm),
         ("fetch_failure_tag_plain_and_tagged", test_fetch_failure_tag_plain_and_tagged),
         ("fetch_page_http_403_classified", test_fetch_page_http_403_classified),
         ("fetch_page_timeout_classified", test_fetch_page_timeout_classified),

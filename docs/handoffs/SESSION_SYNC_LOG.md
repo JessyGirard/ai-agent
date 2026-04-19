@@ -9,6 +9,7 @@
 - After every Cursor session that changes the repo or the plan, **this file must be updated** before the day is “closed.”
 - **Cursor assistant:** default is to **append a new bottom entry** after each completed task that touches the repo or agreed scope (summary, files, regression X/Y, next step). If Jessy says “docs only / no log,” skip.
 - Regression count must reflect **actual** `python tests/run_regression.py` output (number changes as tests are added).
+- **`### YYYY-MM-DD` headings = wall calendar** for this file: **do not** date a session block **after** Jessy’s current machine date when the append lands. Multiple closes on the **same day** reuse **the same `YYYY-MM-DD`** and stay ordered **oldest → newest** in the file; distinguish sessions by **topic in the title**, not by inventing future days.
 
 **How ChatGPT should use it**
 
@@ -581,6 +582,142 @@
 **Regression:** **`297 / 297`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
 
 **Next:** Optional UI surfacing of **`step_results`**; further engine slices only as approved.
+
+---
+
+### 2026-04-19 — RETRIEVAL-04–06 (`score_memory_item` project retrieval tuning)
+
+**Session date:** **April 19** (wall calendar), tagged **`2026-04-19`** here to match this log’s year convention.
+
+**Purpose:** Record **retrieval scoring** increments in **`services/memory_service.py`** (`score_memory_item`) so a cold ChatGPT session matches Cursor/repo truth.
+
+**Regression:** **`374 / 374`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**What shipped:**
+
+1. **RETRIEVAL-04:** Bonus when **`category == "project"`**, **`is_project_query`**, **`evidence_count > 1`**, **`trend != "new"`** (+0.1). Regression asserts **`reinforced`** vs **`new`** delta **`0.17`** (R04 +0.1 plus existing **`estimate_memory_recency_bonus`** +0.07 on **`reinforced`**).
+2. **RETRIEVAL-05:** Preference-alignment bump (**`+0.08`**) for **project** rows whose **`value`** (lowered) contains any of: **`step by step`**, **`incremental`**, **`test`**, **`stable`**, **`controlled`** (substring **`in`** only; no NLP).
+3. **RETRIEVAL-06:** **`score += 0.05 * confidence`** for **`category == "project"`** only (after R05). **`tests/run_regression.py`**: **`test_retrieval03_non_project_evidence_one_not_penalized`** expected gap updated for R06; **`test_memory_retrieval_keeps_intent_priority_with_recency_bonus`** project **`confidence`** **`0.85` → `0.80`** so intent-aligned preference still ranks first.
+
+**Files touched:** **`services/memory_service.py`**, **`tests/run_regression.py`**.
+
+**Chronology:** This block sits **after 2026-04-17** and **before** the other **2026-04-19** blocks below (session wrap → UI-09 → LATENCY → MEMORY-01). For the **newest** handoff anchors, read the **last 3 entries from the bottom** (same calendar **2026-04-19** as of this normalization).
+
+**Note for Jessy:** When you resume memory/retrieval work or want to checkpoint the next slice, **append a new bottom block** (and **`docs/specs/memory_log_system.md`** if you ship a MEMORY increment per that contract).
+
+---
+
+### 2026-04-19 — Cursor session wrap: ChatGPT handoff (logs, launcher UI-08, memory log; mic UX not shipped)
+
+**Source:** Jessy + Cursor (end of session; Jessy may continue in ChatGPT).
+
+**Regression:** **`README.md`** and **log bottom** document **`391 / 391`** scenarios as of **RETRIEVAL-07–10 + PACKAGING-01** — **re-run** `python tests/run_regression.py` after pull to confirm. Keep **`FETCH_MODE`** unset for the gate. *(Older bullets in this same-day sequence still record **301** / **311** at their original ship times.)*
+
+**Shipped / updated in repo (this arc):**
+
+1. **`docs/specs/UX_log_system.md`** — Running register for operator UX increments **UI-01 … UI-08** (see table; **UI-09** = next / in progress).
+2. **`docs/specs/memory_log_system.md`** — **Memory increment log:** backfilled **git-dated chronology** (memory-related commits from foundation through service extraction), plus a **logging contract** and an empty **“Session increments (logged)”** section for **upcoming Lane 1 memory work**. Authoritative behavior/spec: **`docs/specs/MEMORY_SYSTEM.md`**.
+3. **UI-08 (Windows demo launch):** **`Create-Agent-UI-Shortcut.ps1`** writes **`Mimi AI Agent UI.lnk`** targeting **`.venv-win\Scripts\pythonw.exe`** with `pythonw -m streamlit run app\ui.py` (**no `powershell.exe` / `cmd.exe`** in that chain) to avoid console thumbnails. **`Launch-Agent-UI-Silent.ps1`** prefers **pythonw** when present; **`Launch-Agent-UI.cmd`** remains the **debug** path (visible console, logs, Ctrl+C). **`README.md`**, **`docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`**, shortcut script comments updated. **Jessy:** re-run **`Create-Agent-UI-Shortcut.ps1`**, then **unpin** any old taskbar icon and **pin** the new `.lnk` so the target is not stale.
+
+**Discussed but NOT implemented (no approval to code):**
+
+- **Mic / voice next to chat:** Goals were described (ChatGPT-like: mic near input, tap-to-talk, clear listening/stop flow, **manual send only**, later “live voice”). **No approved implementation.** A partial composer experiment was **started then fully reverted**; **`app/ui.py`** is back to **`_render_agent_speech_to_text_panel`** (expander + **`streamlit_mic_recorder`** + **`run_query`** on Send only). **Do not assume UI changes landed beyond the revert.**
+
+**What Jessy is about to do next (intent):**
+
+- **Memory lane:** start substantive memory work; **append** each shipped memory increment to **`docs/specs/memory_log_system.md`** per the logging contract in that file. Execution checklist: **`docs/specs/UX_system.md`** Lane 1 (M1–M5).
+- **Voice UX:** implement in a future Cursor session only after explicit **APPROVE** / go-ahead; note Streamlit constraints vs a native “mic inside the chat bar.”
+
+**Files touched in this session (for search):** `Create-Agent-UI-Shortcut.ps1`, `Launch-Agent-UI-Silent.ps1`, `Launch-Agent-UI.cmd`, `README.md`, `docs/runbooks/SYSTEM_EVAL_RUNBOOK.md`, `docs/specs/UX_log_system.md`, `docs/specs/memory_log_system.md`; **`app/ui.py`** only to **revert** the accidental mic refactor (stable with expander-based speech).
+
+---
+
+### 2026-04-19 — UI-09: Agent center shipped (UI-06D) + layout experiments UI-X1 & UI-X2 — **overrides older “mic reverted only” paste**
+
+> **⚠ CRITICAL — ChatGPT must coordinate with this block (and the code), not with paraphrases from older chats or older log lines above.** The **session wrap** block (**immediately above**, same calendar **2026-04-19**) describes a **reverted** mic experiment and expander-only speech — that is **obsolete** relative to **`app/ui.py` as of this UI-09 append (same day).** If your advice still assumes “popover / sidebar-only / Mimi placeholder / no composer,” **stop** and re-read **`app/ui.py`** + **`docs/specs/UX_log_system.md`** after pull.
+
+**What is true now (Agent surface, `app/ui.py` only for these slices — no `playground.py`, memory, or routing changes):**
+
+1. **UI-09** (Cursor task label **UI-06D**): **`st.chat_input` placeholder** **`Message Joshua…`**; **🎤** toggle in a **narrow column beside** the chat input row; **voice-draft composer** when open — large transcript **`text_area`**, **`streamlit_mic_recorder.speech_to_text`** with **append** of each finished segment to **`voice_draft_text`**, **Send draft** → **`run_query`**; **`voice_draft_clear_pending`** safe clear unchanged. Single mount site for STT keys when composer open (no duplicate widget keys).
+2. **UI-X1 (experiment):** conversation **`st.chat_message`** loop wrapped in **`chat_container = st.container()`** only (messages pure inside container).
+3. **UI-X2 (experiment):** **`_inject_ui_x2_chat_viewport_css()`** injects **`.chat-wrapper`** CSS (`height: 70vh; overflow-y: auto; flex column`) + **`st.markdown`** open/close **`<div class="chat-wrapper">`** around **messages + voice composer** (input row **outside**). **Caveat:** Streamlit may not nest following blocks inside that div in the real DOM — Jessy validates whether scroll/viewport actually stabilizes.
+
+**Regression:** **`301 / 301`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) — confirmed at end of Cursor work before this log append.
+
+**Docs refreshed this close-out:** `docs/handoffs/HANDOFF_RECENT_WORK.md` (top snapshot), `docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md` (latest target + paste block counts), `docs/specs/UX_log_system.md` (UI-09 shipped + X1/X2 noted), `docs/specs/memory_log_system.md` (session line: no memory code this session).
+
+**Next:** Jessy continues **memory lane** when ready (`docs/specs/UX_system.md` Lane 1; append **`memory_log_system.md`** per contract). **UI-X2:** keep / tune / revert after manual stability test. **ChatGPT:** for every new session, **read last 3 entries from the bottom of this file** before recommending scope; **this entry supersedes** conflicting bullets in older handoff paste (see **newer** same-day blocks below if present).
+
+---
+
+### 2026-04-19 — LATENCY-04–06 + CLI launcher (`joshua`) — operator ergonomics
+
+**Purpose:** Close the documentation gap for Cursor increments that landed **after** the **UI-09** block above in this file: **playground fetch overlap**, **prompt default brevity**, **Streamlit rerun / duplicate-render trim**, and **terminal launcher** for Streamlit.
+
+**Regression:** **`301 / 301`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) — confirmed after **`services/prompt_builder.py`** (LATENCY-05) and **`app/ui.py`** (LATENCY-06) edits; **`playground.py`** (LATENCY-04) same gate.
+
+**What shipped (files + intent):**
+
+1. **LATENCY-04 (`playground.py`):** On **`TOOL:fetch`** path after first model reply, **`fetch_page(url)`** runs in a **`ThreadPoolExecutor(max_workers=1)`**; main thread only does prep that does **not** depend on fetch body, then **`future.result()`** — same branching and post-fetch prompts as before (no **`prompt_builder`** change in that increment).
+2. **LATENCY-05 (`services/prompt_builder.py` only):** Stronger **default brevity** instructions (global IMPORTANT rules, open/strict/post-fetch format copy, light tightening on user-purpose / stable-context / recent-answer guidance). **Answer / Current state / Next step** structure preserved; no **`playground.py`** truncation layer.
+3. **LATENCY-06 (`app/ui.py` only):** **Fewer redundant `st.rerun()`** calls where the rest of **`main()`** already runs in the same pass after session updates (**`_go_surface`**, **New chat**). **Success reply path:** stop calling **`render_formatted_assistant_message`** immediately before **`push_assistant_message` + `st.rerun()`** (that render was discarded on the next run; assistant is drawn **once** from **`st.session_state.messages`** on the following run). **Kept** reruns for **`run_query`** (LATENCY-01 user-line paint), **`_process_agent_reply_pending_in_chat`** success/error completion, and **voice** mic / close-panel toggles (layout order requires them).
+4. **CLI-01 / CLI-02 (repo + user profile, not all in git):** Repo root **`joshua.ps1`** runs Streamlit via **`.venv-win\Scripts\python.exe -m streamlit run app\ui.py --server.port 8501`**. **Windows PowerShell** profile defines **`function joshua { & "<fixed-repo-path>\joshua.ps1" }`** so **`joshua`** works from any directory on that machine (path is host-specific; pattern = fixed path to repo script).
+
+**Docs / handoff:** This entry; **`docs/handoffs/HANDOFF_RECENT_WORK.md`** and **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`** and **`docs/specs/UX_log_system.md`** companion lines updated to point here.
+
+**Next:** Jessy manual Streamlit pass (Thinking → reply, New chat, surface switch, voice toggle) after LATENCY-06; optional memory lane per **`docs/specs/UX_system.md`**. **ChatGPT:** read **last 3 bottom entries** of this file; **this entry** is authoritative for **LATENCY-04–06** + CLI + doc sync (**same calendar day:** **2026-04-19**).
+
+---
+
+### 2026-04-19 — MEMORY-01 (runtime explicit project statements) + **roadmap: MEMORY-02 through MEMORY-10**
+
+**Purpose:** Record **Lane 1 memory** progress and give external ChatGPT a **stable anchor** for the **numbered memory increment plan** (not ad-hoc one-offs).
+
+**⚠ CRITICAL — ChatGPT must internalize this:** Jessy and Cursor are running **memory lane** as a **deliberate series**: **MEMORY-01** (this entry) through **MEMORY-10** (ten increments total; “MEMORY-10” is the label for the tenth step). Each step should stay **small, regression-safe, and logged**. After **MEMORY-01**, the next planned slice is **MEMORY-02**, then **MEMORY-03**, … until **MEMORY-10** — **do not bundle** them into one mega-change, and **do not “forget”** mid-sequence that earlier MEMORY ids may still be pending. When a MEMORY increment ships, **append** **`docs/specs/memory_log_system.md`** (logging contract there) **and** add a **bottom block here** so session truth stays single-file for ChatGPT cold starts.
+
+**Regression:** **`311 / 311`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) — confirmed after MEMORY-01 harness additions.
+
+**What shipped (MEMORY-01 only):**
+
+1. **`playground.py`:** **`_memory01_explicit_project_runtime_candidate`** — **narrow** second-stage extraction **after** **`memory_service.extract_runtime_memory_candidate`** so **preference / goal / identity** and existing **`i am building` / `i'm working on` → project** behavior stay first. New prefixes only (examples: **`the project is `**, **`this system is meant to `**, **`the system is being built to `**, purpose-of-project lines); **no `?` in whole message**, **≥3** non-whitespace chars after prefix, **line scan** for pasted logs. Uses **`make_runtime_memory_candidate("project", …)`** — merge/dedupe/conflict path unchanged.
+2. **`services/memory_service.py`:** **`write_runtime_memory(..., extract_candidate=None)`** — default preserves old call sites; **`playground.write_runtime_memory`** passes the chained extractor.
+3. **`tests/run_regression.py`:** Four MEMORY-01 scenarios (two positive **`project`** writes, short-tail skip, **`I prefer …`** still wins over a later “the project is …” phrase).
+
+**Docs:** **`docs/specs/memory_log_system.md`** (session increment row); **`HANDOFF_RECENT_WORK.md`**, **`CHATGPT_DAILY_BOOTSTRAP.md`**, **`CHATGPT_COLLAB_SYNC.md`** (baseline + MEMORY roadmap pointer).
+
+**Prior entries still true:** same calendar **2026-04-19** blocks above for **LATENCY-04–06** + **`joshua`** and **UI-09** + UI-X1/X2; **session wrap** + **RETRIEVAL-04–06** earlier the same day; **2026-04-17** Tool 1 / spine entries for older context. For scope, read **last 3 entries from the bottom** of this file.
+
+---
+
+### 2026-04-19 — RETRIEVAL-07–10 + PACKAGING-01 (retrieval lane packaging + project memory snapshot)
+
+**Purpose:** Close the **retrieval-quality** slice (**RETRIEVAL-07** … **RETRIEVAL-10**) and add **PACKAGING-01** — a **read-only** compact **project memory** text view for future fed context (no prompt injection in this increment).
+
+**Regression:** **`391 / 391`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) — confirmed after this append.
+
+**What shipped:**
+
+1. **RETRIEVAL-07 (`services/memory_service.py`):** Accumulate **R01 / R02 / R04 / R05 / R06** into **`project_bonus`**, then **`project_bonus = min(project_bonus, 0.8)`** before **`score += project_bonus`** for **`category == "project"`** only. **Safety** (`+0.95`), **RETRIEVAL-03** penalty, **`evidence_count >= 3` + reinforced** line bonus, recency/stalency, and non-project logic unchanged.
+2. **RETRIEVAL-08:** **`project_bonus += 0.05`** when **`is_project_query`** and **`user_low`** matches **`project_query_signals[:6]`** (my/this/the + system/project).
+3. **RETRIEVAL-09:** **`project_bonus += 0.05`** when **`explicit_project_priority_risk_signals`** substring match (risk / priority / problem phrasing).
+4. **RETRIEVAL-10:** **`project_bonus += 0.05`** when **`explicit_project_decision_progress_signals`** substring match (decision / progress phrasing).
+5. **PACKAGING-01 (`playground.py`):** **`build_project_memory_snapshot(max_items=12)`** and **`show_project_memory_snapshot()`** — **active `project`** rows only, deterministic sort, **no writes** / no retrieval scoring changes / **not** wired into prompts yet.
+
+**Files touched:** **`services/memory_service.py`**, **`playground.py`**, **`tests/run_regression.py`**, **`docs/handoffs/HANDOFF_RECENT_WORK.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**, **`docs/specs/memory_log_system.md`**, this log.
+
+**Prior entries still true:** **MEMORY-01** roadmap block above; **LATENCY** / **UI-09** same-day blocks; **RETRIEVAL-04–06** mid-file block for earlier retrieval increments. **ChatGPT:** for **retrieval + snapshot** behavior detail, read **this block**; for **latest session pointer** (counts + doc alignment), read the **newer bottom block** below. Regression count **drifts** — always re-run the harness after pull.
+
+---
+
+### 2026-04-18 — **→ CHATGPT: READ THIS ENTRY FIRST ←** DOC-SYNC-01 (391 baseline across README + handoffs)
+
+**Purpose:** Bring **stale regression counts** in **README**, **`docs/specs/PROJECT_SPECIFICATION.md`**, **`HANDOFF_RECENT_WORK.md`**, **`CHATGPT_DAILY_BOOTSTRAP.md`**, **`CHATGPT_COLLAB_SYNC.md`**, **`memory_log_system.md`** (**RETRIEVAL-07–10 + PACKAGING-01** session row + intro anchor line; added earlier in the same doc wave), and the **2026-04-19 session-wrap** regression bullet in **this file** in line with **`391 / 391`**. **No code changes** in this increment — documentation and log alignment only.
+
+**Files touched:** **`README.md`**, **`docs/specs/PROJECT_SPECIFICATION.md`**, **`docs/handoffs/HANDOFF_RECENT_WORK.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**, **`docs/specs/memory_log_system.md`**, this log.
+
+**Regression:** **`391 / 391`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) — re-run in Cursor before commit.
+
+**Prior entries still true:** **RETRIEVAL-07–10 + PACKAGING-01** block immediately above for **scoring + snapshot helpers**; **MEMORY-01** … **MEMORY-10** roadmap; **UI-09**, **LATENCY-04–06**, older same-day blocks.
 
 ---
 

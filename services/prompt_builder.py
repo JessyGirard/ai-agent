@@ -2,6 +2,88 @@ import re
 
 from tools.fetch_page import fetch_failure_tag
 
+# LATENCY-03: cache invariant system text; cap oversized append-only context.
+_cached_static_prompt = None
+
+LATENCY_JOURNAL_ENTRY_CAP = 3
+LATENCY_MEMORY_BLOCK_MAX_CHARS = 12000
+LATENCY_MISC_APPEND_BLOCK_MAX_CHARS = 16000
+LATENCY_SYSTEM_PROMPT_MAX_CHARS = 58000
+
+
+def _latency_trim_block(text, max_chars):
+    if not text or max_chars <= 0:
+        return text or ""
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 40].rstrip() + "\n…[truncated for prompt size]"
+
+
+def _latency_cap_system_prompt(text):
+    return _latency_trim_block(text, LATENCY_SYSTEM_PROMPT_MAX_CHARS)
+
+
+def build_static_prompt():
+    """Invariant middle of the system message: IMPORTANT RULES + TOOL + ACTION lead."""
+    important = """IMPORTANT RULES:
+- The current focus and stage are ALWAYS correct.
+- ALWAYS prioritize state over memory.
+- Memory may be outdated. State is the current truth.
+- NEVER let memory rename, replace, or override the current focus or stage.
+- Use memory only as supporting background context.
+- If memory contains older project labels, older subsystem names, or older phase names, do NOT foreground them unless the user explicitly asks about them.
+- When the user asks what to do next, anchor the answer to the current focus and current stage first.
+- NEVER say you lack context if you can infer from the current focus and stage.
+- Give confident, useful answers grounded in the current project and stage.
+- LATENCY-05 / DEFAULT BREVITY: Be concise by default—shortest clear answer that still satisfies the ask.
+- Skip filler openers and meta narration ("Happy to help", long reframes, play-by-play of how you will answer).
+- Do not explain background, implications, or alternatives unless the user explicitly asks for explanation, detail, steps, or reasoning.
+- Prefer direct statements over padded summaries.
+"""
+    tool_and_action_head = """TOOL RULE:
+- If the user asks about a website, webpage, URL, or online content that you need to read first, respond ONLY with:
+  TOOL:fetch https://url
+- Do NOT explain.
+- Do NOT answer yet.
+- Do NOT wrap the tool command in markdown.
+- Only use TOOL:fetch when a real URL is needed.
+
+ACTION RULE:
+- The next step must match the current action type.
+
+"""
+    return important, tool_and_action_head
+
+
+def get_static_prompt():
+    global _cached_static_prompt
+    if _cached_static_prompt is None:
+        _cached_static_prompt = build_static_prompt()
+    return _cached_static_prompt
+
+
+def build_dynamic_prompt(
+    focus,
+    stage,
+    action_type,
+    user_purpose_priority_rules,
+    safety_rules,
+    anti_repeat_rules,
+    meta_rules,
+    action_guidance,
+    answer_and_step_rules,
+):
+    """Per-request system text: focus/stage/action, conditional rule injections, guidance, format rules."""
+    static_important, static_tool_action = get_static_prompt()
+    return (
+        f"You are a focused AI agent.\n\nCurrent focus: {focus}\nCurrent stage: {stage}\nCurrent action type: {action_type}\n\n"
+        + static_important
+        + f"{user_purpose_priority_rules}{safety_rules}{anti_repeat_rules}{meta_rules}\n\n"
+        + static_tool_action
+        + f"- {action_guidance}\n"
+        + answer_and_step_rules
+    ).strip()
+
 
 def choose_post_fetch_next_step(fetched_content):
     if not isinstance(fetched_content, str):
@@ -74,13 +156,14 @@ IMPORTANT RULES:
 - If the fetched content is thin, unclear, or looks like an error, say so plainly.
 - Stay grounded in the fetched content.
 - Do not invent facts that are not in the fetched content.
+- LATENCY-05: Default to a minimal Answer—usually one short sentence; add a second only if strictly needed for accuracy. No preamble or recap of the page unless the user asked for a summary style.
 
 OUTPUT FORMAT RULES:
 - Keep the response tight and easy to scan.
 - Use exactly these three sections in this order:
 
 Answer:
-<1 short sentence or short paragraph>
+<1 short sentence preferred; at most two if needed for accuracy>
 
 Current state:
 Focus: <focus>
@@ -90,6 +173,7 @@ Action type: research
 Next step:
 <one specific action only>
 
+- Keep "Current state" to exactly those three labeled lines—no extra commentary there.
 - The "Next step" section must contain exactly one actionable step.
 - Use this exact next step:
 {forced_next_step}
@@ -413,7 +497,10 @@ def build_messages(
             merged.append(mem)
         memories = merged[:6]
 
-    journal_entries = retrieve_relevant_journal_entries(user_input)
+    journal_entries = retrieve_relevant_journal_entries(
+        user_input, limit=LATENCY_JOURNAL_ENTRY_CAP
+    )
+    journal_entries = journal_entries[:LATENCY_JOURNAL_ENTRY_CAP]
     outcome_feedback_entries = []
     if is_outcome_feedback_context_relevant(user_input):
         outcome_feedback_entries = retrieve_recent_outcome_feedback_entries(limit=3)
@@ -451,6 +538,7 @@ def build_messages(
 - When user-purpose memory is present: answers must prioritize the user's real-world goal over internal system focus. Do not default to system-centric explanations when user intent is clearly personal or survival-oriented.
 - ANSWER OPENING (user-purpose): The Answer must begin by anchoring to the user's core purpose from the block below. The first sentence should reflect the user's real-world goal when relevant. Do not start the Answer with system-internal reasoning (testing pipeline, harness layout, architecture) when user-purpose applies; you may still mention those later as secondary detail.
 - ANTI-SYSTEM-LEADING: Do not lead the Answer with system-focused explanations (testing, reliability, architecture) when user-purpose is clearly more relevant. Order and emphasis matter: purpose first, system context after if needed.
+- LATENCY-05: Keep purpose-led Answers compact—at most one short secondary sentence for system/testing detail when it truly helps.
 - Example (tone only): Bad opening: "This system must stay testable and reliable..." Good opening: "This exists to help you achieve [your stated goal from User core purpose], so..."
 """
 
@@ -523,6 +611,7 @@ ANSWER RULE:
 OUTPUT FORMAT RULES:
 - Keep the response tight and easy to scan.
 - Do not write long essays.
+- LATENCY-05: Treat the Answer line as a headline—minimum words, no preamble, no restating the Next step in prose.
 - Use exactly these three sections in this order:
 
 Answer:
@@ -536,6 +625,7 @@ Action type: <action_type>
 Next step:
 <one specific action only>
 
+- Keep "Current state" to exactly those three labeled lines—no extra commentary there.
 - The "Answer:" line should match the chosen next step directly.
 - Use the exact answer line provided above.
 - The "Next step" section must contain exactly one actionable step.
@@ -551,15 +641,16 @@ After answering, follow the exact output format above unless the TOOL RULE appli
         answer_and_step_rules = f"""
 OPEN CONVERSATION MODE:
 - The user did not match a narrow workflow template (subtarget: {subtarget}). Treat this as a normal question to answer well.
-- In Answer:, respond directly to what they asked (facts, definitions, code, tradeoffs, or short reasoning). Length should fit the question: one sentence for a tiny fact, a short paragraph if they asked for explanation.
+- LATENCY-05 / DEFAULT BREVITY: Answer in the shortest clear form—usually one or two short sentences. Do not add background, implications, or "here is how I will proceed" unless the user explicitly asks for explanation, detail, steps, or reasoning.
+- In Answer:, respond directly (facts, definitions, minimal code, or tight tradeoffs). Prefer one sentence; use a second only when needed for correctness. Skip warm-up phrases and repeated restatements of the question.
 - Use supporting memory when it genuinely helps; if it is irrelevant, ignore it. Never contradict the current focus/stage labels in the Current state block, but you are not required to steer unrelated questions back into "one refinement inside focus."
-- In Next step:, give one sensible follow-up (clarifying question, small experiment, file to open, or test)—on topic for their message, or lightly tied to this repo only when that fits.
+- In Next step:, one concrete follow-up only (one clarifying question, one small experiment, one file to open, or one test)—on topic for their message, or lightly tied to this repo when that fits. Do not offer a menu of options unless the user asked for options.
 
 OUTPUT FORMAT RULES:
 - Use exactly these three sections in this order:
 
 Answer:
-<substantive reply>
+<short direct reply — typically 1–2 sentences unless the user asked for depth>
 
 Current state:
 Focus: {focus}
@@ -567,49 +658,33 @@ Stage: {stage}
 Action type: {action_type}
 
 Next step:
-<one helpful follow-up>
+<one concrete follow-up only>
 
+- Keep "Current state" to exactly those three labeled lines—no extra commentary there.
 - Do not add extra sections unless the user asked for lists or structure.
 - Do not paste boilerplate about "one small refinement inside the current focus" unless they were clearly asking what to build next in this focus.
 """
 
-    system_prompt = f"""
-You are a focused AI agent.
+    system_prompt = build_dynamic_prompt(
+        focus,
+        stage,
+        action_type,
+        user_purpose_priority_rules,
+        safety_rules,
+        anti_repeat_rules,
+        meta_rules,
+        action_guidance,
+        answer_and_step_rules,
+    )
 
-Current focus: {focus}
-Current stage: {stage}
-Current action type: {action_type}
-
-IMPORTANT RULES:
-- The current focus and stage are ALWAYS correct.
-- ALWAYS prioritize state over memory.
-- Memory may be outdated. State is the current truth.
-- NEVER let memory rename, replace, or override the current focus or stage.
-- Use memory only as supporting background context.
-- If memory contains older project labels, older subsystem names, or older phase names, do NOT foreground them unless the user explicitly asks about them.
-- When the user asks what to do next, anchor the answer to the current focus and current stage first.
-- NEVER say you lack context if you can infer from the current focus and stage.
-- Give confident, useful answers grounded in the current project and stage.
-{user_purpose_priority_rules}{safety_rules}{anti_repeat_rules}{meta_rules}
-
-TOOL RULE:
-- If the user asks about a website, webpage, URL, or online content that you need to read first, respond ONLY with:
-  TOOL:fetch https://url
-- Do NOT explain.
-- Do NOT answer yet.
-- Do NOT wrap the tool command in markdown.
-- Only use TOOL:fetch when a real URL is needed.
-
-ACTION RULE:
-- The next step must match the current action type.
-- {action_guidance}
-{answer_and_step_rules}
-""".strip()
-
-    memory_block = format_memory_block(memories)
+    memory_block = _latency_trim_block(
+        format_memory_block(memories), LATENCY_MEMORY_BLOCK_MAX_CHARS
+    )
     if memory_block:
         system_prompt += "\n\nSupporting memory:\n" + memory_block
-    personal_context_block = format_memory_block(personal_context_memories)
+    personal_context_block = _latency_trim_block(
+        format_memory_block(personal_context_memories), LATENCY_MEMORY_BLOCK_MAX_CHARS
+    )
     if personal_context_block:
         system_prompt += "\n\nStable user context:\n" + personal_context_block
         system_prompt += (
@@ -618,13 +693,17 @@ ACTION RULE:
             "- Prefer durable user memory over weak or transient memory.\n"
             "- Do not invent traits not present in memory.\n"
             "- Do not let memory override current focus or stage.\n"
+            "- LATENCY-05: Cite stable context briefly; do not turn memory into a long sidebar or essay.\n"
         )
 
-    user_purpose_block = format_memory_block(user_purpose_memories)
+    user_purpose_block = _latency_trim_block(
+        format_memory_block(user_purpose_memories), LATENCY_MEMORY_BLOCK_MAX_CHARS
+    )
     if user_purpose_block:
         system_prompt += "\n\nUser core purpose:\n" + user_purpose_block
         system_prompt += (
             "\n\nUser core purpose guidance:\n"
+            "- LATENCY-05 — DEFAULT BREVITY: Follow all bullets below with a compact voice—short sentences, no lecture, no stacked examples in Answer unless the user asked for depth; express priorities tightly.\n"
             "- The Answer must open by reflecting the user's core purpose above; the first sentence should state or clearly imply that real-world goal.\n"
             "- Do not open the Answer with testing, reliability, or architecture when purpose memory applies; put those after the purpose-led opening if useful.\n"
             "- System-state (testing, reliability, harness) stays secondary unless the question is narrowly technical.\n"
@@ -734,24 +813,31 @@ ACTION RULE:
                 "- When research is requested without specifics, propose a concrete research action: one topic, one platform or method, one immediate action.\n"
             )
 
-    journal_block = format_journal_block(journal_entries)
+    journal_block = _latency_trim_block(
+        format_journal_block(journal_entries), LATENCY_MISC_APPEND_BLOCK_MAX_CHARS
+    )
     if journal_block:
         system_prompt += "\n\nRecent project journal:\n" + journal_block
-    outcome_feedback_block = format_outcome_feedback_block(outcome_feedback_entries)
+    outcome_feedback_block = _latency_trim_block(
+        format_outcome_feedback_block(outcome_feedback_entries),
+        LATENCY_MISC_APPEND_BLOCK_MAX_CHARS,
+    )
     if outcome_feedback_block:
         system_prompt += "\n\nRecent outcome feedback:\n" + outcome_feedback_block
 
-    recent_answers_block = format_recent_answer_history_block()
+    recent_answers_block = _latency_trim_block(
+        format_recent_answer_history_block(), LATENCY_MISC_APPEND_BLOCK_MAX_CHARS
+    )
     if recent_answers_block:
         system_prompt += "\n\nRecent assistant outputs (session, bounded):\n" + recent_answers_block
         best_recent_match = get_best_recent_answer_match(user_input)
         is_recent_relevant = bool(best_recent_match) and detect_recent_answer_relevance(user_input)
         if is_recent_relevant:
             if is_strong_recent_answer_match(best_recent_match):
-                system_prompt += (
-                    "\n\nRelevant recent assistant output:\n"
-                    f"{best_recent_match['matched_text']}\n"
+                matched_snip = _latency_trim_block(
+                    best_recent_match["matched_text"], LATENCY_MISC_APPEND_BLOCK_MAX_CHARS
                 )
+                system_prompt += "\n\nRelevant recent assistant output:\n" + matched_snip + "\n"
             followup_type = detect_recent_answer_followup_type(user_input, best_recent_match["matched_text"])
             if followup_type == "continuation":
                 system_prompt += (
@@ -780,6 +866,7 @@ ACTION RULE:
                 "- The current question may relate to a recent assistant output.\n"
                 "- Use the relevant recent output only if it improves correctness.\n"
                 "- Refine it if useful.\n"
+                "- LATENCY-05: Keep refinements brief—no long re-derivation unless the user asked for depth.\n"
                 "- Do not repeat earlier wording blindly.\n"
                 "- Do not invent prior mistakes if none are evident.\n"
             )
@@ -797,6 +884,8 @@ ACTION RULE:
                     "- Do not dramatize.\n"
                     "- Do not claim memory certainty beyond current session context.\n"
                 )
+
+    system_prompt = _latency_cap_system_prompt(system_prompt)
 
     messages = [{"role": "user", "content": user_input}]
     return system_prompt, messages
