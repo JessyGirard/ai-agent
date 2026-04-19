@@ -2403,8 +2403,10 @@ def test_packaging01_snapshot_orders_stronger_project_rows_first():
         snap = playground.build_project_memory_snapshot()
     lines = snap.strip().split("\n")
     assert lines[0] == "Project memory snapshot:"
-    assert "packaging01strongrow" in lines[1]
-    assert "packaging01weakrow" in lines[2]
+    assert lines[1] == ""
+    assert lines[2] == "Other Project Memory:"
+    assert "packaging01strongrow" in lines[3]
+    assert "packaging01weakrow" in lines[4]
 
 
 def test_packaging01_snapshot_respects_max_items():
@@ -2470,6 +2472,791 @@ def test_packaging01_show_project_memory_snapshot_fallback():
     with isolated_runtime_files() as (temp_memory_path, *_):
         temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
         assert playground.show_project_memory_snapshot() == "No active project memory available."
+
+
+def _packaging02_row(memory_id, value, **overrides):
+    base = {
+        "memory_id": memory_id,
+        "category": "project",
+        "confidence": 0.7,
+        "importance": 0.75,
+        "status": "active",
+        "memory_kind": "stable",
+        "evidence_count": 2,
+        "trend": "new",
+        "last_seen": "runtime",
+    }
+    base.update(overrides)
+    base["value"] = value
+    return base
+
+
+def test_packaging02_snapshot_groups_rows_into_sections():
+    reset_agent_state()
+    payload = {
+        "meta": {"schema_version": "2.0", "memory_count": 6},
+        "memory_items": [
+            _packaging02_row("b1", "the project is packaging02build"),
+            _packaging02_row("s1", "the flow is packaging02flow"),
+            _packaging02_row("r1", "the rule is packaging02rule"),
+            _packaging02_row("d1", "we completed packaging02done"),
+            _packaging02_row("x1", "the risk is packaging02risk"),
+            _packaging02_row("o1", "packaging02otheruniq"),
+        ],
+    }
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        snap = playground.build_project_memory_snapshot()
+    assert "Build / Purpose:" in snap
+    assert "the project is packaging02build" in snap
+    assert "Structure / Flow:" in snap
+    assert "the flow is packaging02flow" in snap
+    assert "Responsibilities / Rules:" in snap
+    assert "the rule is packaging02rule" in snap
+    assert "Decisions / Progress:" in snap
+    assert "we completed packaging02done" in snap
+    assert "Risks / Priorities:" in snap
+    assert "the risk is packaging02risk" in snap
+    assert "Other Project Memory:" in snap
+    assert "packaging02otheruniq" in snap
+    assert snap.index("Build / Purpose:") < snap.index("Structure / Flow:")
+    assert snap.index("Structure / Flow:") < snap.index("Responsibilities / Rules:")
+    assert snap.index("Responsibilities / Rules:") < snap.index("Decisions / Progress:")
+    assert snap.index("Decisions / Progress:") < snap.index("Risks / Priorities:")
+    assert snap.index("Risks / Priorities:") < snap.index("Other Project Memory:")
+
+
+def test_packaging02_snapshot_omits_empty_sections():
+    reset_agent_state()
+    payload = {
+        "meta": {"schema_version": "2.0", "memory_count": 2},
+        "memory_items": [
+            _packaging02_row("o1", "packaging02onlyothera"),
+            _packaging02_row("o2", "packaging02onlyotherb"),
+        ],
+    }
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        snap = playground.build_project_memory_snapshot()
+    assert "Other Project Memory:" in snap
+    assert "Build / Purpose:" not in snap
+    assert "Structure / Flow:" not in snap
+    assert "Responsibilities / Rules:" not in snap
+    assert "Decisions / Progress:" not in snap
+    assert "Risks / Priorities:" not in snap
+
+
+def test_packaging02_snapshot_max_items_trims_before_grouping():
+    reset_agent_state()
+    items = []
+    for i in range(4):
+        items.append(
+            _packaging02_row(
+                f"p{i}",
+                f"the project is packaging02slot{i}",
+                evidence_count=4 - i,
+                trend="new",
+            )
+        )
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 4}, "memory_items": items}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        snap = playground.build_project_memory_snapshot(max_items=2)
+    assert snap.count("- the project is packaging02slot") == 2
+    assert "packaging02slot2" not in snap
+    assert "packaging02slot3" not in snap
+
+
+def test_packaging02_responsible_prefix_beats_generic_playground_prefix():
+    reset_agent_state()
+    payload = {
+        "meta": {"schema_version": "2.0", "memory_count": 1},
+        "memory_items": [
+            _packaging02_row(
+                "resp",
+                "playground.py is responsible for packaging02respuniq",
+            ),
+        ],
+    }
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        snap = playground.build_project_memory_snapshot()
+    assert "Responsibilities / Rules:" in snap
+    assert "Structure / Flow:" not in snap
+    assert "playground.py is responsible for packaging02respuniq" in snap
+
+
+def test_packaging02_show_project_memory_snapshot_fallback_unchanged():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.show_project_memory_snapshot() == "No active project memory available."
+
+
+def test_packaging03_near_duplicate_values_collapse_to_one_bullet():
+    reset_agent_state()
+    # Bypass persistence dedupe (load_memory_payload merges same build_memory_key first).
+    rows = [
+        _packaging02_row(
+            "w1",
+            "the project is packaging03collapseuniq",
+            evidence_count=2,
+            trend="new",
+        ),
+        _packaging02_row(
+            "w2",
+            "THE  project is packaging03collapseuniq.",
+            evidence_count=2,
+            trend="new",
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+    assert snap.count("packaging03collapseuniq") == 1
+    assert snap.count("- ") == 1
+
+
+def test_packaging03_stronger_near_duplicate_wins():
+    reset_agent_state()
+    rows = [
+        _packaging02_row(
+            "weak",
+            "the project is packaging03winneruniq",
+            evidence_count=1,
+            trend="new",
+            confidence=0.5,
+            importance=0.5,
+        ),
+        _packaging02_row(
+            "strong",
+            "THE project is packaging03winneruniq",
+            evidence_count=9,
+            trend="reinforced",
+            confidence=0.95,
+            importance=0.95,
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+    assert snap.count("packaging03winneruniq") == 1
+    assert "[evidence=9," in snap
+    assert "[evidence=1," not in snap
+    assert "THE project is packaging03winneruniq" in snap
+
+
+def test_packaging03_distinct_normalized_rows_both_remain():
+    reset_agent_state()
+    payload = {
+        "meta": {"schema_version": "2.0", "memory_count": 2},
+        "memory_items": [
+            _packaging02_row("a", "the project is packaging03distinctA"),
+            _packaging02_row("b", "the project is packaging03distinctB"),
+        ],
+    }
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        snap = playground.build_project_memory_snapshot()
+    assert "packaging03distinctA" in snap
+    assert "packaging03distinctB" in snap
+    assert snap.count("- the project is packaging03distinct") == 2
+
+
+def test_packaging03_sections_stable_after_dedupe():
+    reset_agent_state()
+    payload = {
+        "meta": {"schema_version": "2.0", "memory_count": 3},
+        "memory_items": [
+            _packaging02_row("d1", "the project is packaging03samebuild", evidence_count=1),
+            _packaging02_row("d2", "THE  project is packaging03samebuild.", evidence_count=1),
+            _packaging02_row("f1", "the flow is packaging03afterflow", evidence_count=2),
+        ],
+    }
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        snap = playground.build_project_memory_snapshot()
+    assert snap.count("Build / Purpose:") == 1
+    assert snap.count("Structure / Flow:") == 1
+    assert snap.count("packaging03samebuild") == 1
+    assert "the flow is packaging03afterflow" in snap
+
+
+def test_packaging03_show_project_memory_snapshot_fallback_unchanged():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.show_project_memory_snapshot() == "No active project memory available."
+
+
+def _packaging_snapshot_bullet_row_count(snap):
+    return sum(1 for line in snap.splitlines() if line.startswith("- "))
+
+
+def _packaging_snapshot_section_count(snap):
+    if not snap:
+        return 0
+    section_headers = (
+        "Build / Purpose:",
+        "Structure / Flow:",
+        "Responsibilities / Rules:",
+        "Decisions / Progress:",
+        "Risks / Priorities:",
+        "Other Project Memory:",
+    )
+    return sum(1 for line in snap.splitlines() if line in section_headers)
+
+
+def test_packaging04_package_wraps_snapshot_with_header_text():
+    reset_agent_state()
+    payload = {
+        "meta": {"schema_version": "2.0", "memory_count": 1},
+        "memory_items": [
+            _packaging02_row("p1", "the project is packaging04wrapuniq", evidence_count=2),
+        ],
+    }
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        snap = playground.build_project_memory_snapshot()
+        pkg = playground.build_project_memory_package()
+    assert "You are given a packaged project memory." in pkg
+    assert "Treat it as reliable background context about the system." in pkg
+    assert (
+        "Use it to guide reasoning, prioritization, and technical decisions." in pkg
+    )
+    assert (
+        "Do not invent facts outside this memory unless explicitly required." in pkg
+    )
+    assert "Packaged project rows: 1" in pkg
+    assert "Packaged sections: 1" in pkg
+    assert "Packaged strengths: reinforced=0, new=1" in pkg
+    assert snap in pkg
+    assert pkg.endswith(snap)
+
+
+def test_packaging04_empty_snapshot_returns_empty_package_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_package() == ""
+
+
+def test_packaging04_show_project_memory_package_fallback():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert (
+            playground.show_project_memory_package()
+            == "No packaged project memory available."
+        )
+
+
+def test_packaging04_snapshot_body_unchanged_inside_package():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("a", "the project is packaging04bodyuniq", evidence_count=3),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        pkg = playground.build_project_memory_package()
+        _, pr, sc = playground._project_memory_snapshot_package_context(12)
+        n = len(pr)
+        s = sc
+        r_cnt, new_cnt = playground._count_project_memory_snapshot_strengths(pr)
+        assert n == _packaging_snapshot_bullet_row_count(snap)
+        assert s == _packaging_snapshot_section_count(snap)
+        top_block = _packaging_top_priorities_block(pr)
+        assert pkg == _packaging05_instruction_prefix(n, s, r_cnt, new_cnt) + top_block + snap
+        assert playground.build_project_memory_snapshot() == snap
+
+
+def _packaging05_instruction_prefix(row_count, section_count, reinforced_count, new_count):
+    return (
+        "You are given a packaged project memory.\n"
+        "Treat it as reliable background context about the system.\n"
+        "Use it to guide reasoning, prioritization, and technical decisions.\n"
+        "Do not invent facts outside this memory unless explicitly required.\n"
+        f"Packaged project rows: {row_count}\n"
+        f"Packaged sections: {section_count}\n"
+        f"Packaged strengths: reinforced={reinforced_count}, new={new_count}\n\n"
+    )
+
+
+def _packaging_top_priorities_block(packaged_rows):
+    top_priorities = playground._build_project_memory_package_top_priorities(packaged_rows)
+    return f"{top_priorities}\n\n" if top_priorities else ""
+
+
+def test_packaging05_package_contains_instruction_header():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("x", "the project is packaging05instruniq", evidence_count=1),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        pkg = playground.build_project_memory_package()
+        _, pr, sc = playground._project_memory_snapshot_package_context(12)
+        r_cnt, new_cnt = playground._count_project_memory_snapshot_strengths(pr)
+    n = len(pr)
+    s = sc
+    assert pkg.startswith(_packaging05_instruction_prefix(n, s, r_cnt, new_cnt))
+    assert "Packaged project rows:" in pkg
+    assert "Packaged sections:" in pkg
+    assert "Packaged strengths:" in pkg
+
+
+def test_packaging05_snapshot_body_unchanged_in_package():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("y", "the project is packaging05bodyuniq", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        pkg = playground.build_project_memory_package()
+        _, pr, sc = playground._project_memory_snapshot_package_context(12)
+        r_cnt, new_cnt = playground._count_project_memory_snapshot_strengths(pr)
+    n = len(pr)
+    s = sc
+    top_block = _packaging_top_priorities_block(pr)
+    assert pkg == _packaging05_instruction_prefix(n, s, r_cnt, new_cnt) + top_block + snap
+
+
+def test_packaging05_empty_package_returns_empty_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_package() == ""
+
+
+def test_packaging05_show_package_fallback_unchanged():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert (
+            playground.show_project_memory_package()
+            == "No packaged project memory available."
+        )
+
+
+def _packaging06_compact_instruction_prefix(
+    row_count, section_count, reinforced_count, new_count
+):
+    return (
+        "Packaged project memory:\n"
+        "Use as reliable background context.\n"
+        f"Packaged project rows: {row_count}\n"
+        f"Packaged sections: {section_count}\n"
+        f"Packaged strengths: reinforced={reinforced_count}, new={new_count}\n\n"
+    )
+
+
+def test_packaging06_full_package_unchanged_by_default():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("f", "the project is packaging06fulluniq", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        default_pkg = playground.build_project_memory_package()
+        explicit_pkg = playground.build_project_memory_package(compact=False)
+    assert default_pkg == explicit_pkg
+
+
+def test_packaging06_compact_package_uses_short_prefix():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("c", "the project is packaging06compactuniq", evidence_count=1),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        pkg = playground.build_project_memory_package(compact=True)
+        _, pr, sc = playground._project_memory_snapshot_package_context(12)
+        r_cnt, new_cnt = playground._count_project_memory_snapshot_strengths(pr)
+    n = len(pr)
+    s = sc
+    pfx = _packaging06_compact_instruction_prefix(n, s, r_cnt, new_cnt)
+    assert pkg.startswith(pfx)
+    assert "You are given a packaged project memory." not in pkg
+
+
+def test_packaging06_snapshot_body_same_in_full_and_compact_modes():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("b", "the project is packaging06bothuniq", evidence_count=3),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        full = playground.build_project_memory_package(compact=False)
+        compact = playground.build_project_memory_package(compact=True)
+        _, pr, sc = playground._project_memory_snapshot_package_context(12)
+        r_cnt, new_cnt = playground._count_project_memory_snapshot_strengths(pr)
+    n = len(pr)
+    s = sc
+    top_block = _packaging_top_priorities_block(pr)
+    assert full == _packaging05_instruction_prefix(n, s, r_cnt, new_cnt) + top_block + snap
+    assert compact == _packaging06_compact_instruction_prefix(n, s, r_cnt, new_cnt) + top_block + snap
+    assert snap in full and snap in compact
+
+
+def test_packaging06_empty_package_compact_returns_empty_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_package(compact=True) == ""
+
+
+def test_packaging06_show_package_fallback_compact_unchanged():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert (
+            playground.show_project_memory_package(compact=True)
+            == "No packaged project memory available."
+        )
+
+
+def test_packaging07_full_package_includes_row_count_line():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("u1", "the project is packaging07fullA", evidence_count=1),
+        _packaging02_row("u2", "the flow is packaging07fullB", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        pkg = playground.build_project_memory_package(compact=False)
+    n = _packaging_snapshot_bullet_row_count(snap)
+    sec = _packaging_snapshot_section_count(snap)
+    assert n == 2
+    assert sec == 2
+    assert f"Packaged project rows: {n}" in pkg
+    assert f"Packaged sections: {sec}" in pkg
+    assert "Packaged strengths: reinforced=0, new=2" in pkg
+
+
+def test_packaging07_compact_package_includes_row_count_line():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("v1", "the project is packaging07compactA", evidence_count=1),
+        _packaging02_row("v2", "the risk is packaging07compactB", evidence_count=1),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        pkg = playground.build_project_memory_package(compact=True)
+    n = _packaging_snapshot_bullet_row_count(snap)
+    sec = _packaging_snapshot_section_count(snap)
+    assert n == 2
+    assert sec == 2
+    assert f"Packaged project rows: {n}" in pkg
+    assert f"Packaged sections: {sec}" in pkg
+    assert "Packaged strengths: reinforced=0, new=2" in pkg
+
+
+def test_packaging07_snapshot_body_unchanged_after_metadata():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("w", "the project is packaging07metauniq", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        full = playground.build_project_memory_package(compact=False)
+        compact = playground.build_project_memory_package(compact=True)
+    assert full.endswith(snap)
+    assert compact.endswith(snap)
+
+
+def test_packaging07_empty_package_returns_empty_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_package() == ""
+        assert playground.build_project_memory_package(compact=True) == ""
+
+
+def test_packaging07_show_package_fallback_unchanged():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert (
+            playground.show_project_memory_package()
+            == "No packaged project memory available."
+        )
+        assert (
+            playground.show_project_memory_package(compact=True)
+            == "No packaged project memory available."
+        )
+
+
+def test_packaging08_full_package_includes_section_count_line():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("e1", "the project is packaging08fullS", evidence_count=1),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Packaged sections:" in pkg
+
+
+def test_packaging08_compact_package_includes_section_count_line():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("e2", "the rule is packaging08compactS", evidence_count=1),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=True)
+    assert "Packaged sections:" in pkg
+
+
+def test_packaging08_section_count_matches_non_empty_snapshot_sections():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("m1", "the project is packaging08matchA", evidence_count=1),
+        _packaging02_row("m2", "the flow is packaging08matchB", evidence_count=1),
+        _packaging02_row("m3", "packaging08matchCother", evidence_count=1),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        sec = _packaging_snapshot_section_count(snap)
+        pkg = playground.build_project_memory_package()
+    assert sec == 3
+    assert f"Packaged sections: {sec}" in pkg
+
+
+def test_packaging08_snapshot_body_unchanged_after_metadata():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("z", "the project is packaging08enduniq", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        full = playground.build_project_memory_package(compact=False)
+        compact = playground.build_project_memory_package(compact=True)
+    assert full.endswith(snap)
+    assert compact.endswith(snap)
+
+
+def test_packaging08_empty_package_returns_empty_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_package() == ""
+        assert playground.build_project_memory_package(compact=True) == ""
+
+
+def test_packaging08_show_package_fallback_unchanged():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert (
+            playground.show_project_memory_package()
+            == "No packaged project memory available."
+        )
+        assert (
+            playground.show_project_memory_package(compact=True)
+            == "No packaged project memory available."
+        )
+
+
+def test_packaging09_full_package_includes_strength_line():
+    reset_agent_state()
+    rows = [
+        _packaging02_row(
+            "p1", "the project is packaging09fullstrength", evidence_count=1
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Packaged strengths: reinforced=0, new=1" in pkg
+
+
+def test_packaging09_compact_package_includes_strength_line():
+    reset_agent_state()
+    rows = [
+        _packaging02_row(
+            "p2", "the project is packaging09compactstrength", evidence_count=1
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=True)
+    assert "Packaged strengths: reinforced=0, new=1" in pkg
+
+
+def test_packaging09_strength_counts_match_packaged_rows():
+    reset_agent_state()
+    rows = [
+        _packaging02_row(
+            "a", "the project is packaging09mixA", trend="reinforced"
+        ),
+        _packaging02_row("b", "the flow is packaging09mixB", trend="new"),
+        _packaging02_row("c", "packaging09otheruniq", trend="stable"),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package()
+        _, pr, _ = playground._project_memory_snapshot_package_context(12)
+    r_cnt, new_cnt = playground._count_project_memory_snapshot_strengths(pr)
+    assert len(pr) == 3
+    assert r_cnt == 1
+    assert new_cnt == 1
+    assert f"Packaged strengths: reinforced={r_cnt}, new={new_cnt}" in pkg
+
+
+def test_packaging09_strength_reflects_surviving_row_after_dedupe():
+    reset_agent_state()
+    rows = [
+        _packaging02_row(
+            "w1",
+            "the project is packaging09dedupe",
+            evidence_count=1,
+            trend="new",
+        ),
+        _packaging02_row(
+            "w2",
+            "THE project is packaging09dedupe",
+            evidence_count=9,
+            trend="reinforced",
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        pkg = playground.build_project_memory_package()
+        _, pr, _ = playground._project_memory_snapshot_package_context(12)
+    assert snap.count("packaging09dedupe") == 1
+    assert len(pr) == 1
+    r_cnt, new_cnt = playground._count_project_memory_snapshot_strengths(pr)
+    assert r_cnt == 1
+    assert new_cnt == 0
+    assert f"Packaged strengths: reinforced={r_cnt}, new={new_cnt}" in pkg
+
+
+def test_packaging09_snapshot_body_unchanged_after_metadata():
+    reset_agent_state()
+    rows = [
+        _packaging02_row(
+            "w", "the project is packaging09snapmeta", evidence_count=2
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        full = playground.build_project_memory_package(compact=False)
+        compact = playground.build_project_memory_package(compact=True)
+    assert full.endswith(snap)
+    assert compact.endswith(snap)
+
+
+def test_packaging09_empty_package_returns_empty_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_package() == ""
+        assert playground.build_project_memory_package(compact=True) == ""
+
+
+def test_packaging09_show_package_fallback_unchanged():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert (
+            playground.show_project_memory_package()
+            == "No packaged project memory available."
+        )
+        assert (
+            playground.show_project_memory_package(compact=True)
+            == "No packaged project memory available."
+        )
+
+
+def test_packaging10_full_package_includes_top_priorities_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("t1", "the project is packaging10fullprioA", evidence_count=3),
+        _packaging02_row("t2", "the flow is packaging10fullprioB", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Top project priorities:" in pkg
+    assert "- the project is packaging10fullprioA" in pkg
+    assert "- the flow is packaging10fullprioB" in pkg
+
+
+def test_packaging10_compact_package_includes_top_priorities_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row(
+            "t3", "the project is packaging10compactprioA", evidence_count=3
+        ),
+        _packaging02_row("t4", "the flow is packaging10compactprioB", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=True)
+    assert "Top project priorities:" in pkg
+    assert "- the project is packaging10compactprioA" in pkg
+    assert "- the flow is packaging10compactprioB" in pkg
+
+
+def test_packaging10_top_priorities_use_first_packaged_rows_order():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("a", "the project is packaging10orderA", evidence_count=9),
+        _packaging02_row("b", "the flow is packaging10orderB", evidence_count=8),
+        _packaging02_row("c", "the rule is packaging10orderC", evidence_count=7),
+        _packaging02_row("d", "we completed packaging10orderD", evidence_count=6),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        _, pr, _ = playground._project_memory_snapshot_package_context(12)
+        top = playground._build_project_memory_package_top_priorities(pr)
+    assert top == (
+        "Top project priorities:\n"
+        "- the project is packaging10orderA\n"
+        "- the flow is packaging10orderB\n"
+        "- the rule is packaging10orderC"
+    )
+
+
+def test_packaging10_snapshot_body_unchanged_after_priorities_preface():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("u", "the project is packaging10snapbody", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        snap = playground.build_project_memory_snapshot()
+        full = playground.build_project_memory_package(compact=False)
+        compact = playground.build_project_memory_package(compact=True)
+    assert full.endswith(snap)
+    assert compact.endswith(snap)
+
+
+def test_packaging10_empty_package_returns_empty_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_package() == ""
+        assert playground.build_project_memory_package(compact=True) == ""
+
+
+def test_packaging10_show_package_fallback_unchanged():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert (
+            playground.show_project_memory_package()
+            == "No packaged project memory available."
+        )
+        assert (
+            playground.show_project_memory_package(compact=True)
+            == "No packaged project memory available."
+        )
 
 
 def test_formatting_review():
@@ -9494,6 +10281,53 @@ def main():
         ("packaging01_non_project_rows_excluded", test_packaging01_non_project_rows_excluded),
         ("packaging01_empty_project_memory_returns_empty_string", test_packaging01_empty_project_memory_returns_empty_string),
         ("packaging01_show_project_memory_snapshot_fallback", test_packaging01_show_project_memory_snapshot_fallback),
+        ("packaging02_snapshot_groups_rows_into_sections", test_packaging02_snapshot_groups_rows_into_sections),
+        ("packaging02_snapshot_omits_empty_sections", test_packaging02_snapshot_omits_empty_sections),
+        ("packaging02_snapshot_max_items_trims_before_grouping", test_packaging02_snapshot_max_items_trims_before_grouping),
+        ("packaging02_responsible_prefix_beats_generic_playground_prefix", test_packaging02_responsible_prefix_beats_generic_playground_prefix),
+        ("packaging02_show_project_memory_snapshot_fallback_unchanged", test_packaging02_show_project_memory_snapshot_fallback_unchanged),
+        ("packaging03_near_duplicate_values_collapse_to_one_bullet", test_packaging03_near_duplicate_values_collapse_to_one_bullet),
+        ("packaging03_stronger_near_duplicate_wins", test_packaging03_stronger_near_duplicate_wins),
+        ("packaging03_distinct_normalized_rows_both_remain", test_packaging03_distinct_normalized_rows_both_remain),
+        ("packaging03_sections_stable_after_dedupe", test_packaging03_sections_stable_after_dedupe),
+        ("packaging03_show_project_memory_snapshot_fallback_unchanged", test_packaging03_show_project_memory_snapshot_fallback_unchanged),
+        ("packaging04_package_wraps_snapshot_with_header_text", test_packaging04_package_wraps_snapshot_with_header_text),
+        ("packaging04_empty_snapshot_returns_empty_package_string", test_packaging04_empty_snapshot_returns_empty_package_string),
+        ("packaging04_show_project_memory_package_fallback", test_packaging04_show_project_memory_package_fallback),
+        ("packaging04_snapshot_body_unchanged_inside_package", test_packaging04_snapshot_body_unchanged_inside_package),
+        ("packaging05_package_contains_instruction_header", test_packaging05_package_contains_instruction_header),
+        ("packaging05_snapshot_body_unchanged_in_package", test_packaging05_snapshot_body_unchanged_in_package),
+        ("packaging05_empty_package_returns_empty_string", test_packaging05_empty_package_returns_empty_string),
+        ("packaging05_show_package_fallback_unchanged", test_packaging05_show_package_fallback_unchanged),
+        ("packaging06_full_package_unchanged_by_default", test_packaging06_full_package_unchanged_by_default),
+        ("packaging06_compact_package_uses_short_prefix", test_packaging06_compact_package_uses_short_prefix),
+        ("packaging06_snapshot_body_same_in_full_and_compact_modes", test_packaging06_snapshot_body_same_in_full_and_compact_modes),
+        ("packaging06_empty_package_compact_returns_empty_string", test_packaging06_empty_package_compact_returns_empty_string),
+        ("packaging06_show_package_fallback_compact_unchanged", test_packaging06_show_package_fallback_compact_unchanged),
+        ("packaging07_full_package_includes_row_count_line", test_packaging07_full_package_includes_row_count_line),
+        ("packaging07_compact_package_includes_row_count_line", test_packaging07_compact_package_includes_row_count_line),
+        ("packaging07_snapshot_body_unchanged_after_metadata", test_packaging07_snapshot_body_unchanged_after_metadata),
+        ("packaging07_empty_package_returns_empty_string", test_packaging07_empty_package_returns_empty_string),
+        ("packaging07_show_package_fallback_unchanged", test_packaging07_show_package_fallback_unchanged),
+        ("packaging08_full_package_includes_section_count_line", test_packaging08_full_package_includes_section_count_line),
+        ("packaging08_compact_package_includes_section_count_line", test_packaging08_compact_package_includes_section_count_line),
+        ("packaging08_section_count_matches_non_empty_snapshot_sections", test_packaging08_section_count_matches_non_empty_snapshot_sections),
+        ("packaging08_snapshot_body_unchanged_after_metadata", test_packaging08_snapshot_body_unchanged_after_metadata),
+        ("packaging08_empty_package_returns_empty_string", test_packaging08_empty_package_returns_empty_string),
+        ("packaging08_show_package_fallback_unchanged", test_packaging08_show_package_fallback_unchanged),
+        ("packaging09_full_package_includes_strength_line", test_packaging09_full_package_includes_strength_line),
+        ("packaging09_compact_package_includes_strength_line", test_packaging09_compact_package_includes_strength_line),
+        ("packaging09_strength_counts_match_packaged_rows", test_packaging09_strength_counts_match_packaged_rows),
+        ("packaging09_strength_reflects_surviving_row_after_dedupe", test_packaging09_strength_reflects_surviving_row_after_dedupe),
+        ("packaging09_snapshot_body_unchanged_after_metadata", test_packaging09_snapshot_body_unchanged_after_metadata),
+        ("packaging09_empty_package_returns_empty_string", test_packaging09_empty_package_returns_empty_string),
+        ("packaging09_show_package_fallback_unchanged", test_packaging09_show_package_fallback_unchanged),
+        ("packaging10_full_package_includes_top_priorities_block", test_packaging10_full_package_includes_top_priorities_block),
+        ("packaging10_compact_package_includes_top_priorities_block", test_packaging10_compact_package_includes_top_priorities_block),
+        ("packaging10_top_priorities_use_first_packaged_rows_order", test_packaging10_top_priorities_use_first_packaged_rows_order),
+        ("packaging10_snapshot_body_unchanged_after_priorities_preface", test_packaging10_snapshot_body_unchanged_after_priorities_preface),
+        ("packaging10_empty_package_returns_empty_string", test_packaging10_empty_package_returns_empty_string),
+        ("packaging10_show_package_fallback_unchanged", test_packaging10_show_package_fallback_unchanged),
         ("formatting_review", test_formatting_review),
         ("state_command_test", test_state_command_test),
         ("multiline_paste_starting_with_set_focus_does_not_mutate_state", test_multiline_paste_starting_with_set_focus_does_not_mutate_state),

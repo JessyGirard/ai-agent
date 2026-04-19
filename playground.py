@@ -368,11 +368,211 @@ def load_memory():
     return memory_service.load_memory(load_memory_payload)
 
 
-def build_project_memory_snapshot(max_items=12):
+_PROJECT_SNAPSHOT_SECTION_ORDER = (
+    "Build / Purpose",
+    "Structure / Flow",
+    "Responsibilities / Rules",
+    "Decisions / Progress",
+    "Risks / Priorities",
+    "Other Project Memory",
+)
+
+
+def _build_project_snapshot_prefix_rules():
+    """Longer prefixes first; on equal length, earlier section in _PROJECT_SNAPSHOT_SECTION_ORDER wins."""
+    order_index = {name: i for i, name in enumerate(_PROJECT_SNAPSHOT_SECTION_ORDER)}
+    rules = []
+
+    def add(prefixes, section):
+        for p in prefixes:
+            rules.append((p.lower(), section))
+
+    add(
+        (
+            "building ",
+            "the project is ",
+            "this project is ",
+            "the system is meant to ",
+            "this system is meant to ",
+            "the system is being built to ",
+            "this system is being built to ",
+            "the purpose of this project is ",
+            "the purpose of the project is ",
+        ),
+        "Build / Purpose",
+    )
+    add(
+        (
+            "playground.py ",
+            "memory.py ",
+            "this file ",
+            "this system ",
+            "this part ",
+            "this module ",
+            "this function ",
+            "the memory system ",
+            "the journal ",
+            "the state file ",
+            "the extracted memory ",
+            "the flow is ",
+            "the workflow is ",
+            "the pipeline is ",
+            "the process is ",
+            "the path is ",
+            "the system flow is ",
+            "the memory flow is ",
+        ),
+        "Structure / Flow",
+    )
+    add(
+        (
+            "playground.py is responsible for ",
+            "memory.py is responsible for ",
+            "this file is responsible for ",
+            "this module is responsible for ",
+            "this function is responsible for ",
+            "the memory system is responsible for ",
+            "the journal is responsible for ",
+            "the state file is responsible for ",
+            "the extracted memory is responsible for ",
+            "the rule is ",
+            "the rules are ",
+            "the constraint is ",
+            "the constraints are ",
+            "the requirement is ",
+            "the requirements are ",
+            "the system must ",
+            "this system must ",
+            "the project must ",
+            "this project must ",
+        ),
+        "Responsibilities / Rules",
+    )
+    add(
+        (
+            "the decision is ",
+            "the decision was ",
+            "the choice is ",
+            "the choice was ",
+            "we decided to ",
+            "we chose to ",
+            "the plan is to ",
+            "the plan was to ",
+            "the milestone is ",
+            "the milestone was ",
+            "the progress is ",
+            "the progress was ",
+            "we completed ",
+            "we finished ",
+            "this is complete ",
+            "this is done ",
+            "this part is complete ",
+            "this part is done ",
+        ),
+        "Decisions / Progress",
+    )
+    add(
+        (
+            "the problem is ",
+            "the risk is ",
+            "the failure mode is ",
+            "the weakness is ",
+            "the issue is ",
+            "the bug is ",
+            "the danger is ",
+            "the biggest risk is ",
+            "the objective is ",
+            "the objective right now is ",
+            "the priority is ",
+            "the priority right now is ",
+            "the main priority is ",
+            "the focus is to ",
+            "the goal right now is ",
+            "what matters most is ",
+        ),
+        "Risks / Priorities",
+    )
+
+    rules.sort(
+        key=lambda item: (-len(item[0]), order_index[item[1]], item[0])
+    )
+    return tuple(rules)
+
+
+_PROJECT_SNAPSHOT_PREFIX_RULES = _build_project_snapshot_prefix_rules()
+
+
+def _classify_project_memory_snapshot_section(value):
+    value_low = (value or "").strip().lower()
+    if not value_low:
+        return "Other Project Memory"
+    for prefix, section in _PROJECT_SNAPSHOT_PREFIX_RULES:
+        if value_low.startswith(prefix):
+            return section
+    return "Other Project Memory"
+
+
+def _normalize_project_snapshot_value_for_dedupe(raw_value):
+    """Deterministic packaging-only key: lowercase, strip, spaces, hyphen/space, trailing punct."""
+    s = (raw_value or "").strip()
+    if not s:
+        return None
+    t = s.lower()
+    for ch in ("-", "\u2013", "\u2014"):
+        t = t.replace(ch, " ")
+    t = re.sub(r"\s+", " ", t).strip()
+    trailing_safe = ".,;:!?"
+    while t and t[-1] in trailing_safe:
+        t = t[:-1].rstrip()
+        t = re.sub(r"\s+", " ", t).strip()
+    return t if t else None
+
+
+def _project_snapshot_strength_key(mem):
+    """Stronger row = larger tuple (used for sort and dedupe winner)."""
+    trend = (mem.get("trend") or "").lower()
+    trend_rank = 1 if trend == "reinforced" else 0
+    evidence_count = mem.get("evidence_count", 1)
+    importance = float(mem.get("importance", 0.0))
+    confidence = float(mem.get("confidence", 0.0))
+    value = (mem.get("value") or "").strip()
+    return (trend_rank, evidence_count, importance, confidence, value)
+
+
+def _project_snapshot_pick_stronger(mem_a, mem_b):
+    ka, kb = _project_snapshot_strength_key(mem_a), _project_snapshot_strength_key(mem_b)
+    if ka > kb:
+        return mem_a
+    if kb > ka:
+        return mem_b
+    return mem_a
+
+
+def _dedupe_project_rows_for_snapshot(project_rows):
+    """One pass: normalize each value once, dict key -> strongest row, stable first-seen key order."""
+    best = {}
+    key_order = []
+    for mem in project_rows:
+        raw = mem.get("value") or ""
+        if not raw.strip():
+            continue
+        key = _normalize_project_snapshot_value_for_dedupe(raw)
+        if not key:
+            continue
+        if key not in best:
+            best[key] = mem
+            key_order.append(key)
+        else:
+            best[key] = _project_snapshot_pick_stronger(mem, best[key])
+    return [best[k] for k in key_order]
+
+
+def _project_memory_snapshot_package_context(max_items):
+    """Build snapshot text plus packaged mem rows (bullet order) and non-empty section count."""
     memory_items = load_memory()
 
     if not memory_items:
-        return ""
+        return "", [], 0
 
     project_rows = []
     for mem in memory_items:
@@ -382,43 +582,158 @@ def build_project_memory_snapshot(max_items=12):
             continue
         project_rows.append(mem)
 
-    def _project_snapshot_sort_key(mem):
-        evidence_count = mem.get("evidence_count", 1)
-        importance = mem.get("importance", 0.0)
-        confidence = mem.get("confidence", 0.0)
-        trend = (mem.get("trend") or "").lower()
-        trend_rank = 1 if trend == "reinforced" else 0
-        return (
-            trend_rank,
-            evidence_count,
-            importance,
-            confidence,
-            mem.get("value", ""),
-        )
+    project_rows = _dedupe_project_rows_for_snapshot(project_rows)
 
-    project_rows.sort(key=_project_snapshot_sort_key, reverse=True)
+    project_rows.sort(key=_project_snapshot_strength_key, reverse=True)
     project_rows = project_rows[:max_items]
 
-    lines = ["Project memory snapshot:"]
+    section_buckets = {name: [] for name in _PROJECT_SNAPSHOT_SECTION_ORDER}
     for mem in project_rows:
         value = (mem.get("value") or "").strip()
         if not value:
             continue
-        evidence_count = mem.get("evidence_count", 1)
-        confidence = mem.get("confidence", 0.0)
-        lines.append(
-            f"- {value} [evidence={evidence_count}, confidence={confidence:.2f}]"
-        )
+        section = _classify_project_memory_snapshot_section(value)
+        section_buckets[section].append(mem)
 
-    if len(lines) == 1:
-        return ""
+    lines = ["Project memory snapshot:", ""]
+    any_bullet = False
+    packaged_rows = []
+    for section in _PROJECT_SNAPSHOT_SECTION_ORDER:
+        mems = section_buckets[section]
+        if not mems:
+            continue
+        lines.append(f"{section}:")
+        for mem in mems:
+            value = (mem.get("value") or "").strip()
+            if not value:
+                continue
+            packaged_rows.append(mem)
+            evidence_count = mem.get("evidence_count", 1)
+            confidence = mem.get("confidence", 0.0)
+            lines.append(
+                f"- {value} [evidence={evidence_count}, confidence={confidence:.2f}]"
+            )
+            any_bullet = True
 
-    return "\n".join(lines)
+    if not any_bullet:
+        return "", [], 0
+
+    section_count = sum(1 for sec in _PROJECT_SNAPSHOT_SECTION_ORDER if section_buckets[sec])
+    return "\n".join(lines).rstrip(), packaged_rows, section_count
+
+
+def build_project_memory_snapshot(max_items=12):
+    snapshot, _, _ = _project_memory_snapshot_package_context(max_items)
+    return snapshot
 
 
 def show_project_memory_snapshot():
     snapshot = build_project_memory_snapshot()
     return snapshot or "No active project memory available."
+
+
+def _count_project_memory_snapshot_bullet_lines(snapshot):
+    """Count snapshot lines that are project bullet rows (same as visual bullets)."""
+    return sum(1 for line in snapshot.splitlines() if line.startswith("- "))
+
+
+def _count_project_memory_snapshot_strengths(project_rows):
+    reinforced = 0
+    new = 0
+
+    for mem in project_rows:
+        trend = (mem.get("trend") or "").lower()
+        if trend == "reinforced":
+            reinforced += 1
+        elif trend == "new":
+            new += 1
+
+    return reinforced, new
+
+
+def _build_project_memory_package_top_priorities(packaged_rows, max_priority_items=3):
+    if not packaged_rows:
+        return ""
+
+    lines = ["Top project priorities:"]
+    count = 0
+
+    for mem in packaged_rows:
+        value = (mem.get("value") or "").strip()
+        if not value:
+            continue
+        lines.append(f"- {value}")
+        count += 1
+        if count >= max_priority_items:
+            break
+
+    if count == 0:
+        return ""
+
+    return "\n".join(lines)
+
+
+def _count_project_memory_snapshot_sections(snapshot):
+    if not snapshot:
+        return 0
+
+    section_headers = (
+        "Build / Purpose:",
+        "Structure / Flow:",
+        "Responsibilities / Rules:",
+        "Decisions / Progress:",
+        "Risks / Priorities:",
+        "Other Project Memory:",
+    )
+
+    count = 0
+    for line in snapshot.splitlines():
+        if line in section_headers:
+            count += 1
+    return count
+
+
+def build_project_memory_package(max_items=12, compact=False):
+    snapshot, packaged_rows, section_count = _project_memory_snapshot_package_context(
+        max_items
+    )
+    if not snapshot:
+        return ""
+
+    row_count = len(packaged_rows)
+    reinforced_count, new_count = _count_project_memory_snapshot_strengths(
+        packaged_rows
+    )
+    top_priorities = _build_project_memory_package_top_priorities(packaged_rows)
+    top_priorities_block = f"{top_priorities}\n\n" if top_priorities else ""
+
+    if compact:
+        return (
+            "Packaged project memory:\n"
+            "Use as reliable background context.\n"
+            f"Packaged project rows: {row_count}\n"
+            f"Packaged sections: {section_count}\n"
+            f"Packaged strengths: reinforced={reinforced_count}, new={new_count}\n\n"
+            f"{top_priorities_block}"
+            f"{snapshot}"
+        )
+
+    return (
+        "You are given a packaged project memory.\n"
+        "Treat it as reliable background context about the system.\n"
+        "Use it to guide reasoning, prioritization, and technical decisions.\n"
+        "Do not invent facts outside this memory unless explicitly required.\n"
+        f"Packaged project rows: {row_count}\n"
+        f"Packaged sections: {section_count}\n"
+        f"Packaged strengths: reinforced={reinforced_count}, new={new_count}\n\n"
+        f"{top_priorities_block}"
+        f"{snapshot}"
+    )
+
+
+def show_project_memory_package(compact=False):
+    package = build_project_memory_package(compact=compact)
+    return package or "No packaged project memory available."
 
 
 def tokenize_text(text):
