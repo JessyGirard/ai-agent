@@ -35,7 +35,7 @@ The creation of a powerful friend and ally.
 - Pytest-based tests are supplemental and can be run for additional coverage.
 - Any code change must keep the regression suite passing before commit.
 - If pytest and regression results differ, treat regression as the release gate and resolve the discrepancy before merge or push.
-- Current baseline size after the latest hardening sequence: **`391`** regression scenarios (`python tests/run_regression.py`; confirm with `docs/handoffs/SESSION_SYNC_LOG.md` bottom after large merges).
+- Current baseline size after the latest hardening sequence: **`438`** regression scenarios (`python tests/run_regression.py`; confirm with `docs/handoffs/SESSION_SYNC_LOG.md` bottom after large merges).
 - GitHub Actions automation:
   - `.github/workflows/ci.yml` runs regression + quick chunked soak on pull requests and pushes to `main`/`master`.
   - `.github/workflows/nightly-soak.yml` runs a scheduled 10k chunked soak and supports manual trigger (`workflow_dispatch`).

@@ -10,6 +10,543 @@ LATENCY_MEMORY_BLOCK_MAX_CHARS = 12000
 LATENCY_MISC_APPEND_BLOCK_MAX_CHARS = 16000
 LATENCY_SYSTEM_PROMPT_MAX_CHARS = 58000
 
+# RUNTIME-01–06 + REASONING-01/02/03/04/05/06: execution through correctness/invalid framing + missing-information admission + non-completion/explanation-structure + reasoning-dominance + reasoning-structure-mandate + reasoning-structure routing (same enforcement tail by default; REASONING-06 may omit RUNTIME-03–06 for gated prompts; appended after context + size cap).
+RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK = """Execution enforcement (RUNTIME-01):
+You must execute the task directly.
+
+Do NOT:
+- restate the instructions
+- explain what you are about to do
+- describe the task
+
+You must:
+- produce the final answer immediately
+- follow the requested output format exactly
+
+If the task is classification, output only the classified result.
+If the task is a list, output only the list.
+If information is missing, state it clearly.
+
+Do not add commentary.
+
+Output shape (RUNTIME-02):
+- Output must start directly with the answer.
+- Do not include any introductory phrases.
+- Do not include any concluding phrases.
+- Do not wrap the answer in explanations.
+
+Do NOT use openings or framing such as:
+- "Here is..."
+- "The result is..."
+- "Below is..."
+- "This shows..."
+- "Based on..."
+
+Your output must begin immediately with the final answer.
+Do not include any text before or after the answer.
+
+Structural output (RUNTIME-03):
+- Your output must contain exactly these sections, in this order, with no others:
+Progress:
+Risks:
+Decisions:
+Next Steps:
+
+- Do not omit any section.
+- If a section has no items, output the section header only (no bullets underneath).
+- Do not add any additional sections.
+
+Section headers must match exactly: Progress:, Risks:, Decisions:, Next Steps: (spelling and capitalization as shown).
+- Under each section that has items, use bullet lines only, one per line, in the form: - item
+- Do not use numbering instead of "-" bullets.
+- Do not use alternative list formats.
+
+- Do not infer missing data or fabricate entries; empty sections are allowed.
+- Begin your reply with the first section header line: Progress:
+
+Category integrity (RUNTIME-04):
+Progress:
+- Only include completed work, finished tasks, validated systems, or achieved milestones.
+- Do NOT include future or planned work.
+
+Risks:
+- Only include potential issues, uncertainties, or threats.
+- Do NOT include actions or completed items.
+
+Decisions:
+- Only include explicit choices or conclusions that were made.
+- Do NOT include speculation or future plans.
+
+Next Steps:
+- Only include future actions, planned work, or upcoming tasks.
+- Do NOT include completed work.
+
+Strict separation:
+- Do not place any item in a section if it does not strictly match that section's definition.
+- If unsure, do not include the item.
+
+No inference beyond explicit statements:
+- Do not infer meaning beyond what is explicitly stated.
+- Do not reinterpret ambiguous statements.
+- Skip ambiguous entries rather than misclassifying.
+
+In-progress exclusion (RUNTIME-05):
+Progress (clarity):
+- Include ONLY clearly completed or clearly finished items.
+- EXCLUDE items described with or implying: "ongoing", "in progress", "working", "currently working", "being worked on".
+
+Next Steps (clarity):
+- Include ONLY clearly future or clearly planned actions.
+- EXCLUDE present-continuous statements that describe ongoing work (e.g. "is working on", "is improving") and other ongoing work descriptions.
+
+Strict ambiguity (RUNTIME-05):
+- If an item describes ongoing or in-progress work, do not include it in any section.
+
+Omission (RUNTIME-05):
+- When an item is not clearly completed, clearly a risk, clearly a decision, or clearly a future step, it must be omitted.
+
+Correctness constraints (RUNTIME-06):
+- Including an item in the wrong section is incorrect.
+- Including an ambiguous item is incorrect.
+- Including ongoing or in-progress work in any section is incorrect.
+
+The following are INVALID (examples — do not output items like these):
+- "Work is ongoing..." in Progress
+- "Work is in progress..." in Next Steps
+- "The system is working..." in Progress
+
+If an item contains any of the following, it must be excluded. Including it will make the answer incorrect:
+- "ongoing"
+- "in progress"
+- "working"
+- "currently"
+- "being worked on"
+
+Binary correctness:
+- There is only one correct output.
+- Any inclusion of invalid items makes the entire answer incorrect.
+
+Strict omission (RUNTIME-06):
+- If an item does not clearly belong to exactly one section, it must be omitted.
+- Do not attempt to reinterpret or force it into a category.
+
+Missing information (REASONING-01):
+If the provided information is not enough to answer reliably, say that directly.
+State what information is missing.
+Do not guess.
+Do not act as if missing information is already known.
+A partial answer is allowed, but it must clearly distinguish known information from missing information.
+
+- If the available information is insufficient, say so clearly.
+- Do not pretend to know missing facts.
+- Do not fill gaps with vague confidence.
+- State what specific information is missing.
+- State that a stronger answer requires that missing input.
+
+Place gap statements using the same Progress / Risks / Decisions / Next Steps structure and category rules above (for example as bullets where they honestly fit the section definition); do not invent facts to fill sections.
+
+This is not chain-of-thought: do not narrate internal reasoning steps; keep gap statements short and explicit while obeying RUNTIME shape and constraints above.
+
+Non-completion constraints (REASONING-02):
+- If required information is missing, do NOT complete all sections.
+- Do NOT add generic or placeholder content to fill sections.
+- Do NOT invent risks, decisions, or next steps that are not explicitly supported.
+- Do NOT use filler phrases such as:
+  - "further analysis is needed"
+  - "identify strategies"
+  - "improve the system"
+  - "determine the next steps"
+  - "additional work is required"
+
+Allowed behavior (REASONING-02):
+- A section may be left with header only (no bullets) if no valid items exist.
+- It is correct to leave a section empty rather than include invalid content.
+
+Hard stop (REASONING-02):
+- If a valid item cannot be produced for a section, output the header with no items.
+- Do not attempt to complete the answer beyond what is supported by the input.
+
+Correctness reinforcement (REASONING-02):
+- Adding unsupported items to complete the answer is incorrect.
+- Leaving a section empty when information is insufficient is correct.
+
+Explanation structure (REASONING-03):
+- When explanation is needed, separate the response into:
+  - Known:
+  - Missing:
+  - Conclusion:
+- "Known" must contain only facts supported by the provided input.
+- "Missing" must contain only the information not provided but needed for a stronger answer.
+- "Conclusion" must contain only what can be validly concluded from the Known section.
+
+Hard grounding (REASONING-03):
+- Do not place guessed content in Known.
+- Do not place invented solutions in Conclusion.
+- Do not use Missing as an excuse to speculate.
+- The Conclusion must be narrower when the Missing section is large.
+
+Concision (REASONING-03):
+- Keep explanation short and direct.
+- Do not repeat the same point across Known, Missing, and Conclusion.
+- Do not add motivational or emotional filler.
+
+Reasoning enforcement (REASONING-04):
+
+**Dominance rule:**
+
+When the response depends on incomplete, ambiguous, or uncertain input,
+the output MUST use the following structure:
+
+* Known
+* Missing
+* Conclusion
+
+This structure OVERRIDES all other output formats.
+
+**Activation rule:**
+
+If required information is not explicitly present in the input,
+or multiple interpretations are possible,
+the reasoning structure MUST be used.
+
+**Suppression rule:**
+
+When the reasoning structure is required, the following are FORBIDDEN:
+
+* Progress
+* Risks
+* Decisions
+* Next Steps
+* generic procedural answers
+* default advice patterns
+
+**Correctness rule:**
+
+A response is INCORRECT if:
+
+* Known contains inferred or assumed information
+* Missing is empty when information is absent
+* Conclusion provides a complete solution without sufficient Known
+* The reasoning structure is not used when required
+
+**Compression rule:**
+
+* Each section must be short and direct
+* No repetition across sections
+* Conclusion must become more limited as Missing increases
+
+Reasoning structure mandate (REASONING-05):
+
+**Mandatory structure rule:**
+
+All analytical, evaluative, diagnostic, ambiguous, incomplete, or uncertainty-bearing responses MUST use exactly this structure:
+
+* Known
+* Missing
+* Conclusion
+
+This is the default reasoning response structure.
+
+**No-choice rule:**
+
+The model is not allowed to choose another response format when the answer depends on interpreting input, diagnosing issues, evaluating readiness, proposing fixes, explaining causes, or acting under incomplete information.
+
+**Override rule:**
+
+When REASONING-05 applies, it overrides:
+
+* Progress
+* Risks
+* Decisions
+* Next Steps
+* Answer / Current State / Next Step
+* generic procedural advice
+* generic planning language
+
+**Invalidity rule:**
+
+A response is incorrect if it:
+
+* omits Known / Missing / Conclusion when required
+* includes guessed or inferred facts in Known
+* leaves Missing empty despite absent information
+* gives a full fix, diagnosis, or readiness judgment without sufficient Known
+* falls back to a procedural or action template instead of the reasoning structure
+
+**Constraint rule:**
+
+* Known must contain only facts directly supported by the input
+* Missing must name the specific absent information that blocks certainty
+* Conclusion must remain narrow, conditional, and limited by Missing
+* As Missing increases, Conclusion must become less decisive
+
+**Concision rule:**
+
+* Keep each section short
+* No repetition between sections
+* No emotional, motivational, or persuasive filler
+* No prefacing or framing before the structure""".strip()
+
+_lead_raw, _rest_after_lead = RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK.split(
+    "\n\nStructural output (RUNTIME-03):\n", 1
+)
+_RUNTIME_ENFORCEMENT_LEAD = _lead_raw.strip()
+_struct_body, _reasoning_body = _rest_after_lead.split(
+    "\n\nMissing information (REASONING-01):\n", 1
+)
+_RUNTIME_ENFORCEMENT_STRUCTURAL = ("Structural output (RUNTIME-03):\n" + _struct_body).strip()
+_REASONING_ENFORCEMENT_TAIL = ("Missing information (REASONING-01):\n" + _reasoning_body).strip()
+assert (
+    _RUNTIME_ENFORCEMENT_LEAD
+    + "\n\n"
+    + _RUNTIME_ENFORCEMENT_STRUCTURAL
+    + "\n\n"
+    + _REASONING_ENFORCEMENT_TAIL
+    == RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+), "RUNTIME enforcement split drifted from RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK"
+
+REASONING_06_CONTROL_GATE_BLOCK = """Reasoning-structure control gate (REASONING-06):
+
+This user message is classified as reasoning-dependent for output routing.
+
+Active assistant format for this reply only:
+- Use exactly three sections, in this order, with these exact headers (including the colon):
+Known:
+Missing:
+Conclusion:
+
+- Begin the reply with the first line: Known:
+- Do not output Progress:, Risks:, Decisions:, or Next Steps: sections in this reply.
+- Do not output Answer:, Current state:, or Next step: as the primary structure in this reply.
+- Structural output (RUNTIME-03) through Strict omission (RUNTIME-06) in the appended guidance below are inactive for this reply (they describe the legacy template).
+
+The REASONING-01 through REASONING-05 block below remains authoritative for Known/Missing/Conclusion behavior.""".strip()
+
+
+def user_input_needs_reasoning_structure_mode(user_input: str) -> bool:
+    """REASONING-06 + REASONING-06.1 + REASONING-06.2: narrow heuristic — routes ambiguous/diagnostic / planning-under-uncertainty prompts away from legacy templates."""
+    raw = (user_input or "").strip().lower()
+    # REASONING-06.2: normalize curly apostrophes so live "haven't" matches gate substrings.
+    raw = raw.replace("\u2019", "'").replace("\u2018", "'")
+    ul = re.sub(r"\s+", " ", raw)
+    if not ul:
+        return False
+    direct_action_markers = (
+        "implement ",
+        "create a file",
+        "add a function",
+        "write a unit test",
+        "write tests for",
+        "refactor ",
+        "apply this patch",
+        "set focus:",
+        "set stage:",
+        "show state",
+    )
+    if any(m in ul for m in direct_action_markers):
+        return False
+    reasoning_markers = (
+        "what is the fix",
+        "what's the fix",
+        "what is fix",
+        "diagnose",
+        "diagnose it",
+        "what does this mean",
+        "production-ready",
+        "production ready",
+        "something weird",
+        "the system failed",
+        "system failed",
+        "what should the report say",
+        "api reliability report",
+        "didn't give the api",
+        "did not give the api",
+        "without the api endpoint",
+        "without the endpoint",
+        "returned something weird",
+    )
+    if any(m in ul for m in reasoning_markers):
+        return True
+    if "failed" in ul and ("test" in ul or "tests" in ul) and ("what does" in ul or "this mean" in ul):
+        return True
+    if "ready" in ul and "production" in ul and ("is this" in ul or "system" in ul):
+        return True
+    if "after the update" in ul and ("fail" in ul or "fix" in ul or "broken" in ul):
+        return True
+    # REASONING-06.1: planning under uncertainty (not all planning prompts).
+    planning_markers = (
+        "build a plan",
+        "create a plan",
+        "design a plan",
+        "testing plan",
+        " a plan for ",
+        "strategy for",
+    )
+    uncertainty_markers = (
+        "haven't seen",
+        "havent seen",
+        "have not seen",
+        "you haven't seen",
+        "you havent seen",
+        "haven't reviewed",
+        "havent reviewed",
+        "not seen",
+        "unknown ",
+        "unspecified",
+        "not provided",
+        "without seeing",
+        "without access",
+        "no access to",
+        "don't have",
+        "dont have",
+        "haven't been given",
+        "havent been given",
+        "not been given",
+        "missing the",
+        "no specification",
+        "no spec",
+        "no endpoint",
+        "no url",
+        "not yet specified",
+        "unknown target",
+    )
+    if any(p in ul for p in planning_markers) and any(u in ul for u in uncertainty_markers):
+        return True
+    return False
+
+
+INTERACTION_01_CONVERSATION_ENFORCEMENT_BLOCK = """Conversation mode (INTERACTION-01):
+
+This user message is classified as casual interaction, not a workflow or analysis task.
+
+- Reply in natural, conversational prose only; no fixed template sections.
+- Do not output Progress:, Risks:, Decisions:, Next Steps:, Answer:, Current state:, Next step:, or Known:/Missing:/Conclusion unless the user explicitly asks for that structure.
+- Do not use generic action-plan or workflow-style formatting for this reply.
+- LATENCY-05: Keep replies brief unless the user asks for more.
+
+The default structural Progress/Risks/Decisions/Next Steps enforcement tail is waived for this reply.""".strip()
+
+
+def user_input_is_simple_clarification(user_input: str) -> bool:
+    """INTERACTION-01.2: short disambiguation prompts should stay conversational."""
+    raw = (user_input or "").strip().lower()
+    raw = raw.replace("\u2019", "'").replace("\u2018", "'")
+    ul = re.sub(r"\s+", " ", raw)
+    if not ul:
+        return False
+    direct_action_markers = (
+        "implement ",
+        "create a file",
+        "add a function",
+        "write a unit test",
+        "write tests for",
+        "refactor ",
+        "apply this patch",
+        "set focus:",
+        "set stage:",
+        "show state",
+    )
+    if any(m in ul for m in direct_action_markers):
+        return False
+    clarification_markers = (
+        "what tool",
+        "which tool",
+        "which one",
+        "what do you mean",
+        "what am i talking about",
+        "what tool am i talking about",
+    )
+    if not any(m in ul for m in clarification_markers):
+        return False
+    token_count = len([t for t in ul.replace("?", " ").split() if t])
+    if token_count > 10:
+        return False
+    reasoning_heavy_markers = (
+        "diagnose",
+        "production-ready",
+        "production ready",
+        "what is the fix",
+        "what's the fix",
+        "plan for",
+        "strategy for",
+    )
+    if any(m in ul for m in reasoning_heavy_markers):
+        return False
+    return True
+
+
+def user_input_needs_conversation_mode(user_input: str) -> bool:
+    """INTERACTION-01 + INTERACTION-01.1: relational prompts and conditional conversational tool/help asks."""
+    if user_input_is_simple_clarification(user_input):
+        return True
+    if user_input_needs_reasoning_structure_mode(user_input):
+        return False
+    raw = (user_input or "").strip().lower()
+    raw = raw.replace("\u2019", "'").replace("\u2018", "'")
+    ul = re.sub(r"\s+", " ", raw)
+    if not ul:
+        return False
+    direct_action_markers = (
+        "implement ",
+        "create a file",
+        "add a function",
+        "write a unit test",
+        "write tests for",
+        "refactor ",
+        "apply this patch",
+        "set focus:",
+        "set stage:",
+        "show state",
+    )
+    if any(m in ul for m in direct_action_markers):
+        return False
+    if ul in ("joshua?", "hey joshua?", "hi joshua?"):
+        return True
+    conversational_markers = (
+        "are you ready",
+        "can you help me",
+        "could you help me",
+        "will you help",
+        "do you know how",
+        "are you there",
+    )
+    if any(m in ul for m in conversational_markers):
+        return True
+    # INTERACTION-01.1: conditional / "you can help me" tool-use phrasing (not "can you" questions only).
+    if "if i give you" in ul and "help me" in ul:
+        return True
+    if "you can help me" in ul and ("tool" in ul or "tests" in ul or " test" in ul):
+        return True
+    if "help me use this tool" in ul:
+        return True
+    return False
+
+
+def build_runtime_01_execution_enforcement_block(
+    user_input: str,
+    *,
+    reasoning_structure_mode: bool | None = None,
+    conversation_mode: bool | None = None,
+) -> str:
+    """REASONING-06 / INTERACTION-01: choose enforcement tail by routing mode."""
+    if reasoning_structure_mode is None:
+        reasoning_structure_mode = user_input_needs_reasoning_structure_mode(user_input)
+    if reasoning_structure_mode:
+        return (
+            _RUNTIME_ENFORCEMENT_LEAD
+            + "\n\n"
+            + REASONING_06_CONTROL_GATE_BLOCK
+            + "\n\n"
+            + _REASONING_ENFORCEMENT_TAIL
+        ).strip()
+    if conversation_mode is None:
+        conversation_mode = user_input_needs_conversation_mode(user_input)
+    if conversation_mode:
+        return (
+            _RUNTIME_ENFORCEMENT_LEAD + "\n\n" + INTERACTION_01_CONVERSATION_ENFORCEMENT_BLOCK
+        ).strip()
+    return RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+
 
 def _latency_trim_block(text, max_chars):
     if not text or max_chars <= 0:
@@ -510,6 +1047,15 @@ def build_messages(
     action_type = infer_action_type(user_input, stage)
     action_guidance = build_action_guidance(action_type)
     subtarget = detect_subtarget(user_input, focus, stage)
+    reasoning_mode_candidate = user_input_needs_reasoning_structure_mode(user_input)
+    clarification_override_mode = user_input_is_simple_clarification(user_input)
+    reasoning_structure_mode = (
+        reasoning_mode_candidate and not clarification_override_mode and subtarget != "system risk"
+    )
+    conversation_mode = (
+        (user_input_needs_conversation_mode(user_input) or clarification_override_mode)
+        and subtarget != "system risk"
+    )
     strict_reply = uses_strict_forced_reply(user_input, subtarget)
     force_structured_override = is_meta_system_override_question(user_input, focus, stage) or (
         action_type == "research" and is_vague_research_request(user_input)
@@ -578,6 +1124,34 @@ SYSTEM RISK REPLY:
 - Do not add bullets, prefixes, or suffixes.
 - Reply using exactly this sentence (verbatim):
 {forced_answer_line}
+""".strip()
+    elif reasoning_structure_mode:
+        answer_and_step_rules = f"""
+REASONING OUTPUT MODE (REASONING-06 gate active):
+- This message was classified as reasoning-dependent; use Known/Missing/Conclusion instead of legacy Answer/Progress templates.
+- Use exactly these three sections in this order:
+
+Known:
+<facts supported only by the user message and supplied context>
+
+Missing:
+<specific information needed but absent>
+
+Conclusion:
+<narrow implications from Known only; do not invent fixes or full diagnoses>
+
+- LATENCY-05: Keep each section brief.
+- Do not add Answer:, Current state:, Next step:, Progress:, Risks:, Decisions:, or Next Steps: sections for this reply.
+- Current focus is {focus}; current stage is {stage}; action type is {action_type} — cite them only as short facts inside Known when relevant.
+""".strip()
+    elif conversation_mode:
+        answer_and_step_rules = """
+CONVERSATION MODE (INTERACTION-01):
+- Respond naturally, as in ordinary human chat; stay warm and direct.
+- Do not use structured templates, workflow sections, or fixed headers for this reply.
+- Do not use Progress:, Risks:, Decisions:, Next Steps:, Answer:, Current state:, Next step:, or Known:/Missing:/Conclusion unless the user explicitly asks for that structure.
+- Do not use generic action-plan formatting; answer the question in plain prose only.
+- LATENCY-05: Default to a short reply unless the user asks for detail.
 """.strip()
     elif strict_reply or force_structured_override:
         answer_and_step_rules = f"""
@@ -886,6 +1460,11 @@ Next step:
                 )
 
     system_prompt = _latency_cap_system_prompt(system_prompt)
+    system_prompt += "\n\n" + build_runtime_01_execution_enforcement_block(
+        user_input,
+        reasoning_structure_mode=reasoning_structure_mode,
+        conversation_mode=conversation_mode,
+    )
 
     messages = [{"role": "user", "content": user_input}]
     return system_prompt, messages

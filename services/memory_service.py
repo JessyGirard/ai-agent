@@ -41,9 +41,112 @@ def default_memory_payload():
     }
 
 
+_LOW_SIGNAL_PREFERENCE_SUBSTRINGS = ("likes", "prefers", "enjoys", "wants")
+_LOW_SIGNAL_VAGUE_SUBSTRINGS = ("something", "various", "general", "things")
+# Non-actionable filler (substring-only; MEMORY-QUALITY-01).
+_LOW_SIGNAL_NON_ACTIONABLE_SUBSTRINGS = (
+    "no concrete",
+    "nothing specific",
+    "unclear what",
+    "not actionable",
+)
+
+# Vague in-progress / soft project state (MEMORY-QUALITY-02; substring-only; project rows only below).
+_SOFT_PROJECT_STATE_SUBSTRINGS = (
+    "working on",
+    "ongoing",
+    "in progress",
+    "moving forward",
+    "trying to",
+    "improving",
+    "progressing",
+)
+
+# Concrete markers (completed / decision / explicit risk / next-step phrasing). Substring-only.
+# MEMORY-QUALITY-04: any soft-state substring + any of these → contaminated mixed row (hard reject).
+_CONCRETE_PROJECT_OVERRIDE_WHEN_SOFT_PRESENT = (
+    "completed",
+    "finished",
+    "validated",
+    "decided to",
+    " we decided",
+    "we decided to",
+    "there is a risk",
+    "there was a risk",
+    "risk identified",
+    "next we will",
+    " we will ",
+)
+
+_MEMORY_QUALITY05_CONTAMINATION_SUBSTRINGS = (
+    "phase",
+    "focus",
+    "stage",
+    "project state",
+    "workflow stage",
+    "previous run",
+    "previous runs",
+    "system state",
+)
+
+
+def _is_low_signal_memory_item(value_or_mem) -> bool:
+    """True when value is empty or matches low-signal patterns (substring only, no NLP).
+
+    Accepts a **str** (MEMORY-QUALITY-01 checks only) or a **memory item dict** (adds MEMORY-QUALITY-02–04
+    project soft-state / contamination filtering when category is project).
+    """
+    if isinstance(value_or_mem, dict):
+        mem = value_or_mem
+        value = mem.get("value", "")
+        category = (mem.get("category") or "").strip().lower()
+    else:
+        mem = None
+        value = value_or_mem
+        category = ""
+
+    if not isinstance(value, str):
+        return True
+    stripped = value.strip()
+    if not stripped:
+        return True
+    low = stripped.lower()
+    if any(s in low for s in _LOW_SIGNAL_PREFERENCE_SUBSTRINGS):
+        return True
+    if any(s in low for s in _LOW_SIGNAL_VAGUE_SUBSTRINGS):
+        return True
+    if any(s in low for s in _LOW_SIGNAL_NON_ACTIONABLE_SUBSTRINGS):
+        return True
+
+    if category == "project":
+        has_soft = any(s in low for s in _SOFT_PROJECT_STATE_SUBSTRINGS)
+        has_concrete = any(s in low for s in _CONCRETE_PROJECT_OVERRIDE_WHEN_SOFT_PRESENT)
+        if has_soft and has_concrete:
+            return True
+        if has_soft:
+            return True
+
+    return False
+
+
+def _filter_low_signal_memory_items(memory_items):
+    """Drop low-signal rows; preserve relative order of kept items."""
+    if not memory_items:
+        return []
+    out = []
+    for mem in memory_items:
+        if not isinstance(mem, dict):
+            continue
+        if _is_low_signal_memory_item(mem):
+            continue
+        out.append(mem)
+    return out
+
+
 def load_memory(load_memory_payload_fn):
     payload = load_memory_payload_fn()
-    return payload.get("memory_items", [])
+    items = payload.get("memory_items", [])
+    return _filter_low_signal_memory_items(items)
 
 
 def project_safety_conversation_query(user_input):
@@ -293,6 +396,43 @@ def score_memory_item(mem, user_input):
     return score
 
 
+def is_memory_item_grounded(memory_item: dict, user_input: str) -> bool:
+    """MEMORY-QUALITY-05: allow memory only when lexically grounded in the user input."""
+    if not isinstance(memory_item, dict):
+        return False
+    value = memory_item.get("value", "")
+    if not isinstance(value, str) or not value.strip():
+        return False
+    user_text = user_input or ""
+    if not isinstance(user_text, str):
+        return False
+    user_text = user_text.strip()
+    if not user_text:
+        return False
+
+    low_value = value.lower()
+    low_user = user_text.lower()
+    if any(s in low_value for s in _MEMORY_QUALITY05_CONTAMINATION_SUBSTRINGS):
+        return False
+    if re.search(r"\btest\s*\d+\b", low_value):
+        return False
+
+    value_tokens = tokenize_text(value)
+    user_tokens = tokenize_text(user_text)
+    overlap = value_tokens.intersection(user_tokens)
+    if overlap:
+        return True
+
+    # direct reference fallback for multi-word entities already present in the user input
+    if "tool 1" in low_value and "tool 1" in low_user:
+        return True
+    if "system_eval_operator" in low_value and "system_eval_operator" in low_user:
+        return True
+    if "ui" in low_value and "ui" in low_user:
+        return True
+    return False
+
+
 def retrieve_relevant_memory(user_input, load_memory_fn):
     memory_items = load_memory_fn()
     if not memory_items:
@@ -311,11 +451,15 @@ def retrieve_relevant_memory(user_input, load_memory_fn):
         scored.append((score, mem))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    filtered = [m for score, m in scored if score >= 1.10 and keep_for_use(m)]
+    filtered = [
+        m
+        for score, m in scored
+        if score >= 1.10 and keep_for_use(m) and is_memory_item_grounded(m, user_input)
+    ]
     if filtered:
         return filtered[:3]
     for _, mem in scored:
-        if keep_for_use(mem):
+        if keep_for_use(mem) and is_memory_item_grounded(mem, user_input):
             return [mem]
     return []
 

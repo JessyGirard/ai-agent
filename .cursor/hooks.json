@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      {
+        "command": "python scripts/ux_log_drift_check.py --cursor-hook-stdin",
+        "timeout": 20
+      },
+      {
+        "command": "python scripts/memory_log_reminder.py --cursor-hook-stdin",
+        "timeout": 20
+      }
+    ]
+  }
+}

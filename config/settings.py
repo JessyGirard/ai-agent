@@ -26,3 +26,19 @@ def get_max_tokens():
 
 def get_api_key():
     return os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+
+def get_openai_api_key():
+    return os.getenv("OPENAI_API_KEY", "").strip()
+
+
+def get_openai_model_name():
+    return os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+
+def get_openai_max_tokens():
+    raw = os.getenv("OPENAI_MAX_TOKENS", "700")
+    try:
+        return int(raw)
+    except ValueError:
+        return 700

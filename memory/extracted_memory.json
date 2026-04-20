@@ -4,13 +4,13 @@
     "extractor_version": "AI-V2-filter-merge",
     "source": "imported.json",
     "message_limit": 50,
-    "memory_count": 91,
+    "memory_count": 114,
     "last_extract": {
       "mode": "merge",
-      "rows_before": 85,
-      "rows_after": 91,
-      "new_keys_this_run": 6,
-      "reinforcements_this_run": 15
+      "rows_before": 103,
+      "rows_after": 113,
+      "new_keys_this_run": 10,
+      "reinforcements_this_run": 0
     }
   },
   "memory_items": [
@@ -577,7 +577,7 @@
     {
       "memory_id": "mem_0035",
       "category": "identity",
-      "value": "I'm debugging why my debugging string contains the word debugging\u2014one sentence, no action type talk.",
+      "value": "I'm debugging why my debugging string contains the word debugging—one sentence, no action type talk.",
       "confidence": 0.4,
       "importance": 0.85,
       "status": "active",
@@ -818,14 +818,14 @@
       "memory_id": "mem_0050",
       "category": "goal",
       "value": "Bring this AI to life quickly but correctly without skipping steps",
-      "confidence": 0.4,
+      "confidence": 0.6,
       "importance": 0.95,
       "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
+      "memory_kind": "emerging",
+      "evidence_count": 3,
       "first_seen": "msg_26",
       "last_seen": "msg_26",
-      "trend": "new",
+      "trend": "reinforced",
       "source_refs": [
         "msg_26"
       ]
@@ -902,7 +902,7 @@
       "importance": 0.95,
       "status": "active",
       "memory_kind": "emerging",
-      "evidence_count": 2,
+      "evidence_count": 3,
       "first_seen": "msg_36",
       "last_seen": "msg_36",
       "trend": "reinforced",
@@ -1052,22 +1052,6 @@
       "trend": "new",
       "source_refs": [
         "msg_18"
-      ]
-    },
-    {
-      "memory_id": "mem_0065",
-      "category": "goal",
-      "value": "Bring this AI to life quickly but correctly, without skipping steps",
-      "confidence": 0.6,
-      "importance": 0.95,
-      "status": "active",
-      "memory_kind": "emerging",
-      "evidence_count": 2,
-      "first_seen": "msg_26",
-      "last_seen": "msg_26",
-      "trend": "reinforced",
-      "source_refs": [
-        "msg_26"
       ]
     },
     {
@@ -1244,22 +1228,6 @@
       "trend": "new",
       "source_refs": [
         "msg_32"
-      ]
-    },
-    {
-      "memory_id": "mem_0077",
-      "category": "goal",
-      "value": "Build a system that helps move forward in life, beyond just a project",
-      "confidence": 0.4,
-      "importance": 0.95,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "msg_36",
-      "last_seen": "msg_36",
-      "trend": "new",
-      "source_refs": [
-        "msg_36"
       ]
     },
     {
@@ -1468,6 +1436,406 @@
       "trend": "new",
       "source_refs": [
         "msg_32"
+      ]
+    },
+    {
+      "memory_id": "mem_0091",
+      "category": "identity",
+      "value": "I'm new is this area, so it's hard for me to understand why you are using the work \"package\" in that context. Hopefully you'll realise soon I'm new at this, and I really need your help. That's why it's important to me that you help me put things together.",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "runtime",
+      "last_seen": "runtime",
+      "trend": "new",
+      "source_refs": [
+        "runtime"
+      ]
+    },
+    {
+      "memory_id": "mem_0092",
+      "category": "identity",
+      "value": "I'm talking about your architecture.",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "runtime",
+      "last_seen": "runtime",
+      "trend": "new",
+      "source_refs": [
+        "runtime"
+      ]
+    },
+    {
+      "memory_id": "mem_0065",
+      "category": "project",
+      "value": "Building or maintaining a system understanding tool layer that includes UI and TOOL1 logging",
+      "confidence": 0.4,
+      "importance": 1.0,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_0",
+      "last_seen": "msg_0",
+      "trend": "new",
+      "source_refs": [
+        "msg_0"
+      ]
+    },
+    {
+      "memory_id": "mem_0077",
+      "category": "project",
+      "value": "Developing a UI (app/ui.py) that serves as an operator interface for system interaction, API testing, result viewing, and execution control without terminal use",
+      "confidence": 0.4,
+      "importance": 0.9,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_2",
+      "last_seen": "msg_2",
+      "trend": "new",
+      "source_refs": [
+        "msg_2"
+      ]
+    },
+    {
+      "memory_id": "mem_0093",
+      "category": "project",
+      "value": "Developing a UI that sends single API requests, runs full system-eval test suites, displays results including pass/fail status, latency, and responses, shows structured summaries of runs, provides copyable request formats in plain text and curl, and displays stored memory items from extracted_memory.json",
+      "confidence": 0.4,
+      "importance": 1.0,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_4",
+      "last_seen": "msg_4",
+      "trend": "new",
+      "source_refs": [
+        "msg_4"
+      ]
+    },
+    {
+      "memory_id": "mem_0094",
+      "category": "project",
+      "value": "Tool 1 is an HTTP system evaluation engine that executes API test cases, validates responses, produces structured results, and generates artifacts",
+      "confidence": 0.4,
+      "importance": 0.9,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_8",
+      "last_seen": "msg_8",
+      "trend": "new",
+      "source_refs": [
+        "msg_8"
+      ]
+    },
+    {
+      "memory_id": "mem_0095",
+      "category": "project",
+      "value": "Developing a UI that collects inputs, builds test cases or suites, executes them via system_eval.execute_suite, generates results, writes JSON and Markdown artifacts, and logs the run",
+      "confidence": 0.4,
+      "importance": 0.9,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_10",
+      "last_seen": "msg_10",
+      "trend": "new",
+      "source_refs": [
+        "msg_10"
+      ]
+    },
+    {
+      "memory_id": "mem_0096",
+      "category": "project",
+      "value": "Storing results in artifact files (JSON and Markdown) and an append-only log file at logs/tool1_runs.jsonl",
+      "confidence": 0.4,
+      "importance": 0.9,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_12",
+      "last_seen": "msg_12",
+      "trend": "new",
+      "source_refs": [
+        "msg_12"
+      ]
+    },
+    {
+      "memory_id": "mem_0097",
+      "category": "project",
+      "value": "Maintaining an append-only log that stores each test run as a single JSON object per line, including request details, results, responses, timing, and summary",
+      "confidence": 0.4,
+      "importance": 1.0,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_14",
+      "last_seen": "msg_14",
+      "trend": "new",
+      "source_refs": [
+        "msg_14"
+      ]
+    },
+    {
+      "memory_id": "mem_0098",
+      "category": "goal",
+      "value": "Provide run outcomes with short explanations for non-technical users, enable operators to quickly scan failures, and facilitate easy sharing of reports",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_18",
+      "last_seen": "msg_18",
+      "trend": "new",
+      "source_refs": [
+        "msg_18"
+      ]
+    },
+    {
+      "memory_id": "mem_0099",
+      "category": "project",
+      "value": "Building or maintaining a system with a flow: UI → system_eval_operator → system_eval → results → tool1_run_log → UI display",
+      "confidence": 0.4,
+      "importance": 1.0,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_22",
+      "last_seen": "msg_22",
+      "trend": "new",
+      "source_refs": [
+        "msg_22"
+      ]
+    },
+    {
+      "memory_id": "mem_0100",
+      "category": "identity",
+      "value": "User works with or conceptualizes an execution layer tool that runs tests, records results, and provides evidence without performing reasoning.",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_24",
+      "last_seen": "msg_24",
+      "trend": "new",
+      "source_refs": [
+        "msg_24"
+      ]
+    },
+    {
+      "memory_id": "mem_0101",
+      "category": "identity",
+      "value": "Joshua is a user who values real-world validation, test execution, and evidence generation in their workflow",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_26",
+      "last_seen": "msg_26",
+      "trend": "new",
+      "source_refs": [
+        "msg_26"
+      ]
+    },
+    {
+      "memory_id": "mem_0102",
+      "category": "goal",
+      "value": "Move from thinking to acting and verifying through real-world validation and test execution",
+      "confidence": 0.4,
+      "importance": 0.95,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_26",
+      "last_seen": "msg_26",
+      "trend": "new",
+      "source_refs": [
+        "msg_26"
+      ]
+    },
+    {
+      "memory_id": "mem_0103",
+      "category": "project",
+      "value": "Designing and implementing SYSTEM UNDERSTANDING — TOOL 1 WIRING, which includes UI and execution path",
+      "confidence": 0.4,
+      "importance": 0.9,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_0",
+      "last_seen": "msg_0",
+      "trend": "new",
+      "source_refs": [
+        "msg_0"
+      ]
+    },
+    {
+      "memory_id": "mem_0104",
+      "category": "project",
+      "value": "Developing a UI integrated with Tool 1 that provides controls for running tests and displays test results",
+      "confidence": 0.4,
+      "importance": 0.9,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_4",
+      "last_seen": "msg_4",
+      "trend": "new",
+      "source_refs": [
+        "msg_4"
+      ]
+    },
+    {
+      "memory_id": "mem_0105",
+      "category": "project",
+      "value": "Developing a UI that imports operator and log modules and triggers execution functions for testing, specifically using tool1_operator.run_tool1_system_eval_http",
+      "confidence": 0.4,
+      "importance": 0.9,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_6",
+      "last_seen": "msg_6",
+      "trend": "new",
+      "source_refs": [
+        "msg_6"
+      ]
+    },
+    {
+      "memory_id": "mem_0106",
+      "category": "project",
+      "value": "Developing system_eval_operator.py as an execution wrapper that receives input from the UI, prepares the test suite, and triggers the core evaluation engine",
+      "confidence": 0.4,
+      "importance": 0.9,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_8",
+      "last_seen": "msg_8",
+      "trend": "new",
+      "source_refs": [
+        "msg_8"
+      ]
+    },
+    {
+      "memory_id": "mem_0107",
+      "category": "project",
+      "value": "A system that loads test suites, executes them via a system_eval engine, generates results, writes artifacts, and sends results back to the UI",
+      "confidence": 0.4,
+      "importance": 0.9,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_10",
+      "last_seen": "msg_10",
+      "trend": "new",
+      "source_refs": [
+        "msg_10"
+      ]
+    },
+    {
+      "memory_id": "mem_0108",
+      "category": "project",
+      "value": "core/system_eval.py is the core testing engine that executes test cases, validates responses, measures results, and produces structured outputs",
+      "confidence": 0.4,
+      "importance": 0.9,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_12",
+      "last_seen": "msg_12",
+      "trend": "new",
+      "source_refs": [
+        "msg_12"
+      ]
+    },
+    {
+      "memory_id": "mem_0109",
+      "category": "project",
+      "value": "Develop a system that generates JSON and Markdown artifacts containing detailed results of test execution",
+      "confidence": 0.4,
+      "importance": 1.0,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_14",
+      "last_seen": "msg_14",
+      "trend": "new",
+      "source_refs": [
+        "msg_14"
+      ]
+    },
+    {
+      "memory_id": "mem_0110",
+      "category": "project",
+      "value": "Maintaining or building a tool that logs each run in an append-only log file at logs/tool1_runs.jsonl",
+      "confidence": 0.4,
+      "importance": 1.0,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_16",
+      "last_seen": "msg_16",
+      "trend": "new",
+      "source_refs": [
+        "msg_16"
+      ]
+    },
+    {
+      "memory_id": "mem_0111",
+      "category": "project",
+      "value": "Developing tool1_run_log.py to write structured records of each test run into log files, capturing request details, results, and summaries",
+      "confidence": 0.4,
+      "importance": 1.0,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_18",
+      "last_seen": "msg_18",
+      "trend": "new",
+      "source_refs": [
+        "msg_18"
+      ]
+    },
+    {
+      "memory_id": "mem_0112",
+      "category": "project",
+      "value": "Tool 1 is the execution pipeline connecting the UI to the core testing engine and logging system, enabling API testing, result generation, and persistent run tracking",
+      "confidence": 0.4,
+      "importance": 0.9,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "msg_26",
+      "last_seen": "msg_26",
+      "trend": "new",
+      "source_refs": [
+        "msg_26"
+      ]
+    },
+    {
+      "memory_id": "mem_0113",
+      "category": "identity",
+      "value": "I'm pasting llm.py which is part of you. Describe it to me in detail, and how it relates to other parts of your system. from config.settings import ( get openai api key, get openai max tokens, get openai model name, load environment, ) DEFAULT SYSTEM PROMPT = \"\"\" You are an AI agent. If the user asks about a website or something you need to read online: Respond ONLY with: TOOL:fetch https://url Do NOT explain. Do NOT answer yet. Otherwise: Respond normally. \"\"\".strip() def llm preflight check(): load environment() issues = [] api key = get openai api key() if not api key: issues.append(\"Missing OPENAI API KEY environment variable.\") try: from openai import OpenAI # noqa: F401 except Exception: issues.append(\"Missing dependency: openai (install with `pip install r requirements.txt`).\") return { \"ok\": len(issues) == 0, \"issues\": issues, } def build client(): load environment() try: from openai import OpenAI except Exception as exc: raise RuntimeError( \"OpenAI SDK is not installed. Run `pip install r requirements.txt`.\" ) from exc api key = get openai api key() if not api key: raise RuntimeError( \"OPENAI API KEY is missing. Add it to your environment or .env file.\" ) return OpenAI(api key=api key) def ask ai(messages, system prompt=None): final system prompt = system prompt or DEFAULT SYSTEM PROMPT client = build client() api messages = [{\"role\": \"system\", \"content\": final system prompt}] for m in messages: role = m.get(\"role\", \"user\") content = m.get(\"content\", \"\") if role == \"system\": continue api messages.append({\"role\": role, \"content\": content}) response = client.chat.completions.create( model=get openai model name(), max tokens=get openai max tokens(), messages=api messages, ) choice = response.choices[0].message text = (choice.content or \"\").strip() return text def chat(system prompt, user message): return ask ai( messages=[{\"role\": \"user\", \"content\": user message}], system prompt=system prompt, )",
+      "confidence": 0.4,
+      "importance": 0.85,
+      "status": "active",
+      "memory_kind": "tentative",
+      "evidence_count": 1,
+      "first_seen": "runtime",
+      "last_seen": "runtime",
+      "trend": "new",
+      "source_refs": [
+        "runtime"
       ]
     }
   ]

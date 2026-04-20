@@ -123,12 +123,29 @@ def test_generic_next_step():
     playground.current_state["focus"] = "ai-agent project"
     playground.current_state["stage"] = "Phase 5 testing"
 
-    result = playground.handle_user_input("What should I do next?")
+    structured = (
+        "Progress:\n\n"
+        "Risks:\n\n"
+        "Decisions:\n\n"
+        "Next Steps:\n"
+        "- Test memory retrieval first.\n"
+        "- Test memory retrieval with one known preference question, then ask a follow-up.\n"
+    )
+    original = playground.ask_ai
+    try:
 
-    assert "Answer:" in result, "Missing Answer section"
-    assert "Current state:" in result, "Missing Current state section"
-    assert "Next step:" in result, "Missing Next step section"
-    assert "Action type: test" in result, "Expected test action type"
+        def fake_ask_ai(messages, system_prompt=None):
+            return structured
+
+        playground.ask_ai = fake_ask_ai
+        result = playground.handle_user_input("What should I do next?")
+    finally:
+        playground.ask_ai = original
+
+    assert "Progress:" in result, "Missing Progress section"
+    assert "Risks:" in result, "Missing Risks section"
+    assert "Decisions:" in result, "Missing Decisions section"
+    assert "Next Steps:" in result, "Missing Next Steps section"
     assert "Test memory retrieval first." in result, "Expected focused answer line"
     assert "Test memory retrieval with one known preference question" in result, "Expected memory retrieval next step"
 
@@ -505,7 +522,7 @@ def test_retrieve_personal_context_memory_stale_weak_import_does_not_crowd_reinf
 def test_retrieve_personal_context_memory_strong_stable_import_beats_weaker_runtime_emerging():
     reset_agent_state()
     with isolated_runtime_files() as (temp_memory_path, _, _, _):
-        shared = "I am a backend engineer who prefers precise steps"
+        shared = "I am a backend engineer who favors precise steps"
         payload = {
             "meta": {},
             "memory_items": [
@@ -704,7 +721,7 @@ def test_retrieve_personal_context_memory_weak_transient_rows_do_not_dominate():
                 {
                     "memory_id": "mem_identity_durable",
                     "category": "identity",
-                    "value": "I am a backend engineer who prefers precise steps",
+                    "value": "I am a backend engineer who favors precise steps",
                     "confidence": 0.78,
                     "importance": 0.85,
                     "memory_kind": "stable",
@@ -2767,8 +2784,8 @@ def test_packaging04_snapshot_body_unchanged_inside_package():
         r_cnt, new_cnt = playground._count_project_memory_snapshot_strengths(pr)
         assert n == _packaging_snapshot_bullet_row_count(snap)
         assert s == _packaging_snapshot_section_count(snap)
-        top_block = _packaging_top_priorities_block(pr)
-        assert pkg == _packaging05_instruction_prefix(n, s, r_cnt, new_cnt) + top_block + snap
+        pre_block = _packaging_package_preface_block(pr)
+        assert pkg == _packaging05_instruction_prefix(n, s, r_cnt, new_cnt) + pre_block + snap
         assert playground.build_project_memory_snapshot() == snap
 
 
@@ -2784,9 +2801,13 @@ def _packaging05_instruction_prefix(row_count, section_count, reinforced_count, 
     )
 
 
-def _packaging_top_priorities_block(packaged_rows):
-    top_priorities = playground._build_project_memory_package_top_priorities(packaged_rows)
-    return f"{top_priorities}\n\n" if top_priorities else ""
+def _packaging_package_preface_block(packaged_rows):
+    tp = playground._build_project_memory_package_top_priorities(packaged_rows)
+    cr = playground._build_project_memory_package_current_risks(packaged_rows)
+    cd = playground._build_project_memory_package_current_decisions(packaged_rows)
+    cp = playground._build_project_memory_package_current_progress(packaged_rows)
+    ns = playground._build_project_memory_package_next_steps(packaged_rows)
+    return playground._join_project_memory_package_prefaces(tp, cr, cd, cp, ns)
 
 
 def test_packaging05_package_contains_instruction_header():
@@ -2819,8 +2840,8 @@ def test_packaging05_snapshot_body_unchanged_in_package():
         r_cnt, new_cnt = playground._count_project_memory_snapshot_strengths(pr)
     n = len(pr)
     s = sc
-    top_block = _packaging_top_priorities_block(pr)
-    assert pkg == _packaging05_instruction_prefix(n, s, r_cnt, new_cnt) + top_block + snap
+    pre_block = _packaging_package_preface_block(pr)
+    assert pkg == _packaging05_instruction_prefix(n, s, r_cnt, new_cnt) + pre_block + snap
 
 
 def test_packaging05_empty_package_returns_empty_string():
@@ -2895,9 +2916,9 @@ def test_packaging06_snapshot_body_same_in_full_and_compact_modes():
         r_cnt, new_cnt = playground._count_project_memory_snapshot_strengths(pr)
     n = len(pr)
     s = sc
-    top_block = _packaging_top_priorities_block(pr)
-    assert full == _packaging05_instruction_prefix(n, s, r_cnt, new_cnt) + top_block + snap
-    assert compact == _packaging06_compact_instruction_prefix(n, s, r_cnt, new_cnt) + top_block + snap
+    pre_block = _packaging_package_preface_block(pr)
+    assert full == _packaging05_instruction_prefix(n, s, r_cnt, new_cnt) + pre_block + snap
+    assert compact == _packaging06_compact_instruction_prefix(n, s, r_cnt, new_cnt) + pre_block + snap
     assert snap in full and snap in compact
 
 
@@ -3257,6 +3278,1267 @@ def test_packaging10_show_package_fallback_unchanged():
             playground.show_project_memory_package(compact=True)
             == "No packaged project memory available."
         )
+
+
+def test_packaging11_full_package_includes_current_risks_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("p1", "the project is packaging11fullA", evidence_count=2),
+        _packaging02_row("p2", "the risk is packaging11fullB", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Top project priorities:" in pkg
+    assert "Current project risks:" in pkg
+    assert "- the risk is packaging11fullB" in pkg
+
+
+def test_packaging11_compact_package_includes_current_risks_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("c1", "the project is packaging11compactA", evidence_count=2),
+        _packaging02_row("c2", "the bug is packaging11compactB", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=True)
+    assert "Top project priorities:" in pkg
+    assert "Current project risks:" in pkg
+    assert "- the bug is packaging11compactB" in pkg
+
+
+def test_packaging11_current_risks_follow_first_qualifying_packaged_order():
+    reset_agent_state()
+    pr = [
+        {"value": "the project is packaging11ordPlain", "trend": "new"},
+        {"value": "the bug is packaging11ordBug", "trend": "new"},
+        {"value": "the issue is packaging11ordIssue", "trend": "new"},
+    ]
+    risks = playground._build_project_memory_package_current_risks(pr)
+    assert risks == (
+        "Current project risks:\n"
+        "- the bug is packaging11ordBug\n"
+        "- the issue is packaging11ordIssue"
+    )
+
+
+def test_packaging11_risks_block_after_priorities_before_snapshot_body():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("a", "the project is packaging11layerA", evidence_count=2),
+        _packaging02_row("b", "the concern is packaging11layerB", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+        snap = playground.build_project_memory_snapshot()
+    i_top = pkg.index("Top project priorities:")
+    i_risk = pkg.index("Current project risks:")
+    i_snap = pkg.index("Project memory snapshot:")
+    assert i_top < i_risk < i_snap
+    assert pkg.endswith(snap)
+
+
+def test_packaging11_no_risk_keywords_preserves_package_without_risks_section():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("x", "the project is packaging11safeA", evidence_count=2),
+        _packaging02_row("y", "the flow is packaging11safeB", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Current project risks:" not in pkg
+    assert "Top project priorities:" in pkg
+
+
+def test_packaging11_empty_package_returns_empty_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_package() == ""
+        assert playground.build_project_memory_package(compact=True) == ""
+
+
+def test_packaging11_priorities_block_unchanged_for_plain_rows():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("u", "the project is packaging11plainprio", evidence_count=2),
+        _packaging02_row("v", "the flow is packaging11plainflow", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        _, pr, _ = playground._project_memory_snapshot_package_context(12)
+        top = playground._build_project_memory_package_top_priorities(pr)
+    assert top == (
+        "Top project priorities:\n"
+        "- the project is packaging11plainprio\n"
+        "- the flow is packaging11plainflow"
+    )
+
+
+def test_packaging12_norisk_token_does_not_trigger_risks_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("n1", "the project is packaging12norisktoken", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Current project risks:" not in pkg
+
+
+def test_packaging12_no_problem_idiom_does_not_trigger():
+    reset_agent_state()
+    rows = [
+        _packaging02_row(
+            "p1", "no problem here for packaging12idiom", evidence_count=2
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Current project risks:" not in pkg
+
+
+def test_packaging12_this_is_a_risk_triggers():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("r1", "this is a risk for packaging12risky", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Current project risks:" in pkg
+    assert "- this is a risk for packaging12risky" in pkg
+
+
+def test_packaging12_critical_bug_found_triggers():
+    reset_agent_state()
+    rows = [
+        _packaging02_row(
+            "b1", "critical bug found in packaging12bugpath", evidence_count=2
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Current project risks:" in pkg
+    assert "- critical bug found in packaging12bugpath" in pkg
+
+
+def test_packaging12_debugging_does_not_trigger_bug_keyword():
+    reset_agent_state()
+    rows = [
+        _packaging02_row(
+            "d1", "the debugging process for packaging12nodebug", evidence_count=2
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Current project risks:" not in pkg
+
+
+def test_packaging12_risks_order_unchanged_vs_packaging11_shape():
+    reset_agent_state()
+    pr = [
+        {"value": "the project is packaging12ordPlain", "trend": "new"},
+        {"value": "the bug is packaging12ordBug", "trend": "new"},
+        {"value": "the issue is packaging12ordIssue", "trend": "new"},
+    ]
+    risks = playground._build_project_memory_package_current_risks(pr)
+    assert risks == (
+        "Current project risks:\n"
+        "- the bug is packaging12ordBug\n"
+        "- the issue is packaging12ordIssue"
+    )
+
+
+def test_packaging13_full_package_includes_current_decisions_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("d1", "the project is packaging13fullP", evidence_count=2),
+        _packaging02_row(
+            "d2", "we decided to packaging13fullD", evidence_count=2
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Current project decisions:" in pkg
+    assert "- we decided to packaging13fullD" in pkg
+
+
+def test_packaging13_compact_package_includes_current_decisions_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("c1", "the project is packaging13compactP", evidence_count=2),
+        _packaging02_row(
+            "c2", "the plan is packaging13compactPlan", evidence_count=2
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=True)
+    assert "Current project decisions:" in pkg
+    assert "- the plan is packaging13compactPlan" in pkg
+
+
+def test_packaging13_current_decisions_follow_first_qualifying_order():
+    reset_agent_state()
+    pr = [
+        {"value": "the project is packaging13ordPlain", "trend": "new"},
+        {"value": "we chose packaging13ordChose", "trend": "new"},
+        {"value": "chosen path packaging13ordChosen", "trend": "new"},
+    ]
+    dec = playground._build_project_memory_package_current_decisions(pr)
+    assert dec == (
+        "Current project decisions:\n"
+        "- we chose packaging13ordChose\n"
+        "- chosen path packaging13ordChosen"
+    )
+
+
+def test_packaging13_decisions_after_risks_before_snapshot_body():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("a", "the project is packaging13layerP", evidence_count=2),
+        _packaging02_row("b", "the risk is packaging13layerR", evidence_count=2),
+        _packaging02_row("c", "we decided to packaging13layerD", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+        snap = playground.build_project_memory_snapshot()
+    assert pkg.index("Top project priorities:") < pkg.index("Current project risks:")
+    assert pkg.index("Current project risks:") < pkg.index("Current project decisions:")
+    assert pkg.index("Current project decisions:") < pkg.index("Project memory snapshot:")
+    assert pkg.endswith(snap)
+
+
+def test_packaging13_no_decision_keywords_omits_decisions_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("x", "the project is packaging13nodecA", evidence_count=2),
+        _packaging02_row("y", "the flow is packaging13nodecB", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Current project decisions:" not in pkg
+
+
+def test_packaging13_empty_package_returns_empty_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_package() == ""
+        assert playground.build_project_memory_package(compact=True) == ""
+
+
+def test_packaging14_full_package_includes_current_progress_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("p1", "the project is packaging14fullP", evidence_count=2),
+        _packaging02_row(
+            "p2", "the milestone is packaging14fullM", evidence_count=2
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Current project progress:" in pkg
+    assert "- the milestone is packaging14fullM" in pkg
+
+
+def test_packaging14_compact_package_includes_current_progress_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("q1", "the project is packaging14compactP", evidence_count=2),
+        _packaging02_row(
+            "q2", "we finished packaging14compactF", evidence_count=2
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=True)
+    assert "Current project progress:" in pkg
+    assert "- we finished packaging14compactF" in pkg
+
+
+def test_packaging14_current_progress_follow_first_qualifying_order():
+    reset_agent_state()
+    pr = [
+        {"value": "the project is packaging14ordPlain", "trend": "new"},
+        {"value": "the milestone is packaging14ordM", "trend": "new"},
+        {"value": "finished step packaging14ordF", "trend": "new"},
+    ]
+    prog = playground._build_project_memory_package_current_progress(pr)
+    assert prog == (
+        "Current project progress:\n"
+        "- the milestone is packaging14ordM\n"
+        "- finished step packaging14ordF"
+    )
+
+
+def test_packaging14_progress_after_decisions_before_snapshot_body():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("a", "the project is packaging14layerP", evidence_count=2),
+        _packaging02_row("b", "the risk is packaging14layerR", evidence_count=2),
+        _packaging02_row("c", "we decided to packaging14layerD", evidence_count=2),
+        _packaging02_row(
+            "d", "we completed packaging14layerProg", evidence_count=2
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+        snap = playground.build_project_memory_snapshot()
+    assert pkg.index("Top project priorities:") < pkg.index("Current project risks:")
+    assert pkg.index("Current project risks:") < pkg.index("Current project decisions:")
+    assert pkg.index("Current project decisions:") < pkg.index("Current project progress:")
+    assert pkg.index("Current project progress:") < pkg.index("Project memory snapshot:")
+    assert pkg.endswith(snap)
+
+
+def test_packaging14_no_progress_keywords_omits_progress_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("x", "the project is packaging14noprogA", evidence_count=2),
+        _packaging02_row("y", "the flow is packaging14noprogB", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Current project progress:" not in pkg
+
+
+def test_packaging14_empty_package_returns_empty_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_package() == ""
+        assert playground.build_project_memory_package(compact=True) == ""
+
+
+def test_packaging15_full_package_includes_next_steps_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("n1", "the project is packaging15fullP", evidence_count=2),
+        _packaging02_row(
+            "n2", "we need to packaging15fullNeed", evidence_count=2
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Next project steps:" in pkg
+    assert "- we need to packaging15fullNeed" in pkg
+
+
+def test_packaging15_compact_package_includes_next_steps_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("m1", "the project is packaging15compactP", evidence_count=2),
+        _packaging02_row(
+            "m2", "next steps packaging15compactNs", evidence_count=2
+        ),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=True)
+    assert "Next project steps:" in pkg
+    assert "- next steps packaging15compactNs" in pkg
+
+
+def test_packaging15_next_steps_follow_first_qualifying_order():
+    reset_agent_state()
+    pr = [
+        {"value": "the project is packaging15ordPlain", "trend": "new"},
+        {"value": "upcoming packaging15ordU", "trend": "new"},
+        {"value": "planning phase packaging15ordP", "trend": "new"},
+    ]
+    ns = playground._build_project_memory_package_next_steps(pr)
+    assert ns == (
+        "Next project steps:\n"
+        "- upcoming packaging15ordU\n"
+        "- planning phase packaging15ordP"
+    )
+
+
+def test_packaging15_progress_before_next_steps_before_snapshot_body():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("a", "the project is packaging15layerP", evidence_count=2),
+        _packaging02_row("b", "the risk is packaging15layerR", evidence_count=2),
+        _packaging02_row("c", "we decided to packaging15layerD", evidence_count=2),
+        _packaging02_row("d", "we completed packaging15layerProg", evidence_count=2),
+        _packaging02_row("e", "we need to packaging15layerNext", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+        snap = playground.build_project_memory_snapshot()
+    assert pkg.index("Current project progress:") < pkg.index("Next project steps:")
+    assert pkg.index("Next project steps:") < pkg.index("Project memory snapshot:")
+    assert pkg.endswith(snap)
+
+
+def test_packaging15_no_next_steps_keywords_omits_next_steps_block():
+    reset_agent_state()
+    rows = [
+        _packaging02_row("x", "the project is packaging15nonextA", evidence_count=2),
+        _packaging02_row("y", "the flow is packaging15nonextB", evidence_count=2),
+    ]
+    with patch.object(playground, "load_memory", return_value=list(rows)):
+        pkg = playground.build_project_memory_package(compact=False)
+    assert "Next project steps:" not in pkg
+
+
+def test_packaging15_empty_package_returns_empty_string():
+    reset_agent_state()
+    payload = {"meta": {"schema_version": "2.0", "memory_count": 0}, "memory_items": []}
+    with isolated_runtime_files() as (temp_memory_path, *_):
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert playground.build_project_memory_package() == ""
+        assert playground.build_project_memory_package(compact=True) == ""
+
+
+def test_runtime01_prompt_includes_execution_enforcement():
+    reset_agent_state()
+    q = (
+        "Classify each token as X or Y: alpha, beta. "
+        "Output only the labels runtime01classuniq."
+    )
+    system_prompt, messages = playground.build_messages(q)
+    assert prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK in system_prompt
+    assert messages == [{"role": "user", "content": q}]
+
+
+def test_runtime02_prompt_enforces_no_preamble():
+    reset_agent_state()
+    block = prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    assert "You must execute the task directly" in block
+    assert "Output shape (RUNTIME-02):" in block
+    assert "Your output must begin immediately with the final answer." in block
+    assert "Do not include any text before or after the answer." in block
+    assert '"Here is..."' in block
+    assert '"The result is..."' in block
+    q = "runtime02uniq: name two primes under 10, one per line only."
+    system_prompt, _ = playground.build_messages(q)
+    assert block in system_prompt
+
+
+def test_runtime03_prompt_enforces_structure():
+    reset_agent_state()
+    block = prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    assert "Structural output (RUNTIME-03):" in block
+    assert "Output shape (RUNTIME-02):" in block
+    assert "You must execute the task directly" in block
+    structure_snippet = (
+        "Progress:\n"
+        "Risks:\n"
+        "Decisions:\n"
+        "Next Steps:"
+    )
+    assert structure_snippet in block
+    p = block.index("Progress:")
+    r = block.index("Risks:", p + 1)
+    d = block.index("Decisions:", r + 1)
+    n = block.index("Next Steps:", d + 1)
+    assert p < r < d < n
+    assert "Section headers must match exactly:" in block
+    q = "runtime03uniq: structural enforcement prompt check."
+    system_prompt, _ = playground.build_messages(q)
+    assert block in system_prompt
+
+
+def test_runtime04_prompt_enforces_category_integrity():
+    reset_agent_state()
+    block = prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    assert "Category integrity (RUNTIME-04):" in block
+    assert (
+        "Only include completed work, finished tasks, validated systems, or achieved milestones."
+        in block
+    )
+    assert "Only include potential issues, uncertainties, or threats." in block
+    assert "Only include explicit choices or conclusions that were made." in block
+    assert "Only include future actions, planned work, or upcoming tasks." in block
+    assert "Do NOT include future or planned work." in block
+    assert "Do NOT include actions or completed items." in block
+    assert "Do NOT include speculation or future plans." in block
+    assert "Do NOT include completed work." in block
+    assert (
+        "Do not place any item in a section if it does not strictly match that section's definition."
+        in block
+    )
+    assert "If unsure, do not include the item." in block
+    assert "Do not infer meaning beyond what is explicitly stated." in block
+    assert "Do not reinterpret ambiguous statements." in block
+    assert "Skip ambiguous entries rather than misclassifying." in block
+    q = "runtime04uniq: category integrity prompt check."
+    system_prompt, _ = playground.build_messages(q)
+    assert block in system_prompt
+
+
+def test_runtime05_prompt_excludes_in_progress_language():
+    reset_agent_state()
+    block = prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    assert "In-progress exclusion (RUNTIME-05):" in block
+    assert "Include ONLY clearly completed or clearly finished items." in block
+    assert (
+        'EXCLUDE items described with or implying: "ongoing", "in progress", "working", '
+        '"currently working", "being worked on".'
+    ) in block
+    assert "Include ONLY clearly future or clearly planned actions." in block
+    assert 'EXCLUDE present-continuous statements that describe ongoing work (e.g. "is working on", "is improving")' in block
+    assert "other ongoing work descriptions." in block
+    assert (
+        "If an item describes ongoing or in-progress work, do not include it in any section."
+        in block
+    )
+    assert (
+        "When an item is not clearly completed, clearly a risk, clearly a decision, or clearly a future step, it must be omitted."
+        in block
+    )
+    q = "runtime05uniq: in-progress exclusion prompt check."
+    system_prompt, _ = playground.build_messages(q)
+    assert block in system_prompt
+
+
+def test_memory_quality01_filters_low_signal_items():
+    from services import memory_service
+
+    assert memory_service._is_low_signal_memory_item("User prefers quiet mornings")
+    assert memory_service._is_low_signal_memory_item("We track various loose ideas")
+    assert memory_service._is_low_signal_memory_item("Something might change later")
+    assert memory_service._is_low_signal_memory_item("No concrete plan yet for rollout")
+    assert not memory_service._is_low_signal_memory_item("Ship regression gate before merge")
+
+    rows = [
+        {
+            "memory_id": "mq01_low",
+            "category": "project",
+            "value": "User enjoys vague descriptions of various things",
+            "confidence": 0.9,
+            "importance": 0.9,
+            "memory_kind": "stable",
+            "evidence_count": 4,
+            "last_seen": "runtime",
+            "trend": "reinforced",
+            "source_refs": ["runtime"],
+        },
+        {
+            "memory_id": "mq01_high",
+            "category": "project",
+            "value": "memoryquality01highsignaluniq stable delivery",
+            "confidence": 0.85,
+            "importance": 0.88,
+            "memory_kind": "stable",
+            "evidence_count": 3,
+            "last_seen": "runtime",
+            "trend": "reinforced",
+            "source_refs": ["runtime"],
+        },
+        {
+            "memory_id": "mq01_high2",
+            "category": "project",
+            "value": "memoryquality01orderseconduniq regression discipline",
+            "confidence": 0.84,
+            "importance": 0.87,
+            "memory_kind": "stable",
+            "evidence_count": 3,
+            "last_seen": "runtime",
+            "trend": "reinforced",
+            "source_refs": ["runtime"],
+        },
+        {
+            "memory_id": "mq01_low2",
+            "category": "project",
+            "value": "Team wants something general soon",
+            "confidence": 0.82,
+            "importance": 0.84,
+            "memory_kind": "stable",
+            "evidence_count": 3,
+            "last_seen": "runtime",
+            "trend": "reinforced",
+            "source_refs": ["runtime"],
+        },
+    ]
+
+    def _payload():
+        return {"meta": {}, "memory_items": list(rows)}
+
+    filtered = memory_service.load_memory(_payload)
+    assert [m.get("memory_id") for m in filtered] == ["mq01_high", "mq01_high2"]
+
+
+def test_memory_quality02_filters_vague_project_state_language():
+    from services import memory_service
+
+    assert memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "We are working on improving the system"}
+    )
+    assert memory_service._is_low_signal_memory_item({"category": "project", "value": "Work is ongoing for the refactor"})
+    assert memory_service._is_low_signal_memory_item({"category": "project", "value": "The work is in progress"})
+    assert memory_service._is_low_signal_memory_item({"category": "project", "value": "We are trying to improve reliability"})
+    assert memory_service._is_low_signal_memory_item({"category": "project", "value": "The project is progressing"})
+
+    assert memory_service._is_low_signal_memory_item(
+        {
+            "category": "project",
+            "value": "We completed the regression gate after working on flaky tests",
+        }
+    )
+    assert not memory_service._is_low_signal_memory_item(
+        {
+            "category": "project",
+            "value": "memoryquality02highuniq milestone achieved with sign-off",
+        }
+    )
+    assert not memory_service._is_low_signal_memory_item(
+        {"category": "preference", "value": "I favor trying to learn one topic at a time"}
+    )
+
+    base = {
+        "confidence": 0.85,
+        "importance": 0.88,
+        "memory_kind": "stable",
+        "evidence_count": 3,
+        "last_seen": "runtime",
+        "trend": "reinforced",
+        "source_refs": ["runtime"],
+    }
+    rows = [
+        {**base, "memory_id": "mq02_vague_a", "category": "project", "value": "We are working on it"},
+        {**base, "memory_id": "mq02_vague_b", "category": "project", "value": "Ongoing cleanup only"},
+        {
+            **base,
+            "memory_id": "mq02_ok",
+            "category": "project",
+            "value": "memoryquality02orderuniq validated in CI",
+        },
+        {**base, "memory_id": "mq02_vague_c", "category": "project", "value": "Trying to move forward slowly"},
+        {
+            **base,
+            "memory_id": "mq02_ok2",
+            "category": "project",
+            "value": "memoryquality02seconduniq passing regression harness",
+        },
+    ]
+
+    def _payload():
+        return {"meta": {}, "memory_items": list(rows)}
+
+    filtered = memory_service.load_memory(_payload)
+    assert [m.get("memory_id") for m in filtered] == ["mq02_ok", "mq02_ok2"]
+
+
+def test_memory_quality03_blocks_false_high_signal_rows():
+    from services import memory_service
+
+    assert memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "We are working on the milestone plan"}
+    )
+    assert memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "We are improving regression handling"}
+    )
+    assert memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "In progress on risk cleanup"}
+    )
+
+    assert not memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "completed milestone X with sign-off"}
+    )
+    assert not memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "decided to do Y before the next release"}
+    )
+    assert not memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "risk identified in Z during triage"}
+    )
+
+    assert memory_service._is_low_signal_memory_item(
+        {
+            "category": "project",
+            "value": "We completed the regression gate after working on flaky tests",
+        }
+    )
+
+    base = {
+        "confidence": 0.85,
+        "importance": 0.88,
+        "memory_kind": "stable",
+        "evidence_count": 3,
+        "last_seen": "runtime",
+        "trend": "reinforced",
+        "source_refs": ["runtime"],
+    }
+    rows = [
+        {**base, "memory_id": "mq03_bad", "category": "project", "value": "improving regression coverage slowly"},
+        {
+            **base,
+            "memory_id": "mq03_ok",
+            "category": "project",
+            "value": "memoryquality03keepuniq validated in staging",
+        },
+        {**base, "memory_id": "mq03_bad2", "category": "project", "value": "working on milestone tracking only"},
+        {
+            **base,
+            "memory_id": "mq03_ok2",
+            "category": "project",
+            "value": "memoryquality03seconduniq risk identified in auth flow",
+        },
+    ]
+
+    def _payload():
+        return {"meta": {}, "memory_items": list(rows)}
+
+    filtered = memory_service.load_memory(_payload)
+    assert [m.get("memory_id") for m in filtered] == ["mq03_ok", "mq03_ok2"]
+
+
+def test_memory_quality04_filters_mixed_contaminated_rows():
+    from services import memory_service
+
+    assert memory_service._is_low_signal_memory_item(
+        {
+            "category": "project",
+            "value": "Completed milestone implementation and working on optimization",
+        }
+    )
+    assert memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "Decided to deploy and improving performance"}
+    )
+    assert memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "Risk identified in system latency and ongoing monitoring"}
+    )
+    assert memory_service._is_low_signal_memory_item(
+        {
+            "category": "project",
+            "value": "Next, we will finalize deployment and working on fixes",
+        }
+    )
+
+    assert not memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "Completed milestone implementation"}
+    )
+    assert not memory_service._is_low_signal_memory_item({"category": "project", "value": "Decided to deploy"})
+    assert not memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "Risk identified in system latency"}
+    )
+    assert not memory_service._is_low_signal_memory_item(
+        {"category": "project", "value": "Next, we will finalize deployment"}
+    )
+
+    base = {
+        "confidence": 0.85,
+        "importance": 0.88,
+        "memory_kind": "stable",
+        "evidence_count": 3,
+        "last_seen": "runtime",
+        "trend": "reinforced",
+        "source_refs": ["runtime"],
+    }
+    rows = [
+        {
+            **base,
+            "memory_id": "mq04_bad",
+            "category": "project",
+            "value": "completed rollout and still working on polish",
+        },
+        {
+            **base,
+            "memory_id": "mq04_ok",
+            "category": "project",
+            "value": "memoryquality04keepuniq validated in staging",
+        },
+        {
+            **base,
+            "memory_id": "mq04_bad2",
+            "category": "project",
+            "value": "decided to ship and improving latency",
+        },
+        {
+            **base,
+            "memory_id": "mq04_ok2",
+            "category": "project",
+            "value": "memoryquality04seconduniq risk identified in auth flow",
+        },
+    ]
+
+    def _payload():
+        return {"meta": {}, "memory_items": list(rows)}
+
+    filtered = memory_service.load_memory(_payload)
+    assert [m.get("memory_id") for m in filtered] == ["mq04_ok", "mq04_ok2"]
+
+
+def test_memory_quality05_blocks_contamination_patterns():
+    from services import memory_service
+
+    user_input = "How do I run API checks today?"
+    rows = [
+        {
+            "memory_id": "mq05_bad_phase",
+            "category": "project",
+            "value": "Phase 4 action-layer refinement",
+            "confidence": 0.95,
+            "importance": 0.90,
+            "memory_kind": "stable",
+            "evidence_count": 3,
+        },
+        {
+            "memory_id": "mq05_bad_focus",
+            "category": "project",
+            "value": "Focus: I prefer testing",
+            "confidence": 0.95,
+            "importance": 0.90,
+            "memory_kind": "stable",
+            "evidence_count": 3,
+        },
+        {
+            "memory_id": "mq05_bad_testnum",
+            "category": "project",
+            "value": "Test 5 failed in prior run",
+            "confidence": 0.95,
+            "importance": 0.90,
+            "memory_kind": "stable",
+            "evidence_count": 3,
+        },
+    ]
+
+    got = memory_service.retrieve_relevant_memory(user_input, lambda: list(rows))
+    assert got == []
+
+
+def test_memory_quality05_allows_grounded_memory():
+    from services import memory_service
+
+    user_input = "Can Tool 1 run API tests from the UI?"
+    rows = [
+        {
+            "memory_id": "mq05_good_tool1",
+            "category": "project",
+            "value": "Tool 1 runs API tests from the UI through system_eval_operator",
+            "confidence": 0.95,
+            "importance": 0.90,
+            "memory_kind": "stable",
+            "evidence_count": 3,
+        },
+        {
+            "memory_id": "mq05_bad_phase2",
+            "category": "project",
+            "value": "Phase 4 action-layer refinement",
+            "confidence": 0.95,
+            "importance": 0.90,
+            "memory_kind": "stable",
+            "evidence_count": 3,
+        },
+    ]
+
+    got = memory_service.retrieve_relevant_memory(user_input, lambda: list(rows))
+    ids = [m.get("memory_id") for m in got]
+    assert "mq05_good_tool1" in ids
+    assert "mq05_bad_phase2" not in ids
+
+
+def test_memory_quality05_does_not_empty_all_memory():
+    from services import memory_service
+
+    user_input = "Is Tool 1 connected to the UI?"
+    rows = [
+        {
+            "memory_id": "mq05_relevant",
+            "category": "project",
+            "value": "Tool 1 is connected to the UI and system_eval_operator",
+            "confidence": 0.95,
+            "importance": 0.90,
+            "memory_kind": "stable",
+            "evidence_count": 3,
+        },
+        {
+            "memory_id": "mq05_filtered",
+            "category": "project",
+            "value": "Stage 2 workflow state from previous runs",
+            "confidence": 0.95,
+            "importance": 0.90,
+            "memory_kind": "stable",
+            "evidence_count": 3,
+        },
+    ]
+
+    got = memory_service.retrieve_relevant_memory(user_input, lambda: list(rows))
+    assert got, "Expected relevant memory to survive grounding filter"
+    assert [m.get("memory_id") for m in got] == ["mq05_relevant"]
+
+
+def test_runtime06_prompt_enforces_invalidity_constraints():
+    reset_agent_state()
+    block = prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    assert "Correctness constraints (RUNTIME-06):" in block
+    assert "Including an item in the wrong section is incorrect." in block
+    assert "Including an ambiguous item is incorrect." in block
+    assert "Including ongoing or in-progress work in any section is incorrect." in block
+    assert 'The following are INVALID (examples — do not output items like these):' in block
+    assert '"Work is ongoing..." in Progress' in block
+    assert '"Work is in progress..." in Next Steps' in block
+    assert '"The system is working..." in Progress' in block
+    assert "There is only one correct output." in block
+    assert "Any inclusion of invalid items makes the entire answer incorrect." in block
+    assert (
+        "If an item does not clearly belong to exactly one section, it must be omitted."
+        in block
+    )
+    assert "Do not attempt to reinterpret or force it into a category." in block
+    low = block.lower()
+    assert low.count("incorrect") >= 4
+    q = "runtime06uniq: invalidity constraints prompt check."
+    system_prompt, _ = playground.build_messages(q)
+    assert block in system_prompt
+
+
+def test_reasoning01_prompt_enforces_missing_information_admission():
+    reset_agent_state()
+    block = prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    assert "Missing information (REASONING-01):" in block
+    assert (
+        "If the provided information is not enough to answer reliably, say that directly."
+        in block
+    )
+    assert "State what information is missing." in block
+    assert "Do not guess." in block
+    assert "Do not act as if missing information is already known." in block
+    assert (
+        "A partial answer is allowed, but it must clearly distinguish known information from missing information."
+        in block
+    )
+    assert "Do not pretend to know missing facts." in block
+    assert "This is not chain-of-thought:" in block
+    assert "Execution enforcement (RUNTIME-01):" in block
+    assert "Correctness constraints (RUNTIME-06):" in block
+    assert "Structural output (RUNTIME-03):" in block
+    q = "reasoning01uniq: missing-information admission prompt check."
+    system_prompt, _ = playground.build_messages(q)
+    assert block in system_prompt
+
+
+def test_reasoning02_prompt_blocks_completion_by_invention():
+    reset_agent_state()
+    block = prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    assert "Non-completion constraints (REASONING-02):" in block
+    assert "If required information is missing, do NOT complete all sections." in block
+    assert "Do NOT add generic or placeholder content to fill sections." in block
+    assert "Do NOT invent risks, decisions, or next steps that are not explicitly supported." in block
+    assert '"further analysis is needed"' in block
+    assert '"identify strategies"' in block
+    assert '"improve the system"' in block
+    assert '"determine the next steps"' in block
+    assert '"additional work is required"' in block
+    assert "A section may be left with header only (no bullets) if no valid items exist." in block
+    assert "It is correct to leave a section empty rather than include invalid content." in block
+    assert "Adding unsupported items to complete the answer is incorrect." in block
+    assert "Leaving a section empty when information is insufficient is correct." in block
+    assert "Missing information (REASONING-01):" in block
+    q = "reasoning02uniq: non-completion constraints prompt check."
+    system_prompt, _ = playground.build_messages(q)
+    assert block in system_prompt
+
+
+def test_reasoning03_prompt_enforces_explanation_structure():
+    reset_agent_state()
+    block = prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    assert "Explanation structure (REASONING-03):" in block
+    assert "When explanation is needed, separate the response into:" in block
+    assert "- Known:" in block
+    assert "- Missing:" in block
+    assert "- Conclusion:" in block
+    assert '"Known" must contain only facts supported by the provided input.' in block
+    assert '"Missing" must contain only the information not provided but needed for a stronger answer.' in block
+    assert '"Conclusion" must contain only what can be validly concluded from the Known section.' in block
+    assert "Do not place guessed content in Known." in block
+    assert "Do not place invented solutions in Conclusion." in block
+    assert "Do not use Missing as an excuse to speculate." in block
+    assert "The Conclusion must be narrower when the Missing section is large." in block
+    assert "Missing information (REASONING-01):" in block
+    assert "Non-completion constraints (REASONING-02):" in block
+    q = "reasoning03uniq: explanation-structure prompt check."
+    system_prompt, _ = playground.build_messages(q)
+    assert block in system_prompt
+
+
+def test_reasoning04_forces_structure_over_runtime():
+    reset_agent_state()
+    block = prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    assert "Reasoning enforcement (REASONING-04):" in block
+    assert (
+        "When the response depends on incomplete, ambiguous, or uncertain input,"
+        in block
+    )
+    assert "This structure OVERRIDES all other output formats." in block
+    assert "* Known" in block
+    assert "* Missing" in block
+    assert "* Conclusion" in block
+    assert "If required information is not explicitly present in the input," in block
+    assert "or multiple interpretations are possible," in block
+    assert "the reasoning structure MUST be used." in block
+    assert (
+        "When the reasoning structure is required, the following are FORBIDDEN:"
+        in block
+    )
+    assert "* Progress" in block
+    assert "* Risks" in block
+    assert "* Decisions" in block
+    assert "* Next Steps" in block
+    assert "* generic procedural answers" in block
+    assert "* default advice patterns" in block
+    assert "A response is INCORRECT if:" in block
+    assert "* Known contains inferred or assumed information" in block
+    assert "* Missing is empty when information is absent" in block
+    assert (
+        "* Conclusion provides a complete solution without sufficient Known" in block
+    )
+    assert "* The reasoning structure is not used when required" in block
+    assert "* Each section must be short and direct" in block
+    assert "* No repetition across sections" in block
+    assert "Conclusion must become more limited as Missing increases" in block
+    assert "Structural output (RUNTIME-03):" in block
+    assert "Explanation structure (REASONING-03):" in block
+    q = "reasoning04uniq: enforcement tail embed without reasoning06 gate triggers."
+    system_prompt, _ = playground.build_messages(q)
+    assert block in system_prompt
+
+
+def test_reasoning05_makes_reasoning_structure_mandatory():
+    reset_agent_state()
+    block = prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    assert "Reasoning structure mandate (REASONING-05):" in block
+    assert "Reasoning enforcement (REASONING-04):" in block
+    assert "Explanation structure (REASONING-03):" in block
+    assert "Non-completion constraints (REASONING-02):" in block
+    assert "Missing information (REASONING-01):" in block
+    assert "Structural output (RUNTIME-03):" in block
+    assert "Execution enforcement (RUNTIME-01):" in block
+    assert "**Mandatory structure rule:**" in block
+    assert (
+        "All analytical, evaluative, diagnostic, ambiguous, incomplete, or uncertainty-bearing responses MUST use exactly this structure:"
+        in block
+    )
+    assert "This is the default reasoning response structure." in block
+    assert "**No-choice rule:**" in block
+    assert (
+        "The model is not allowed to choose another response format when the answer depends on interpreting input, diagnosing issues, evaluating readiness, proposing fixes, explaining causes, or acting under incomplete information."
+        in block
+    )
+    assert "**Override rule:**" in block
+    assert "When REASONING-05 applies, it overrides:" in block
+    assert "* Answer / Current State / Next Step" in block
+    assert "* generic procedural advice" in block
+    assert "* generic planning language" in block
+    assert "**Invalidity rule:**" in block
+    assert "A response is incorrect if it:" in block
+    assert "* omits Known / Missing / Conclusion when required" in block
+    assert "* includes guessed or inferred facts in Known" in block
+    assert "* leaves Missing empty despite absent information" in block
+    assert (
+        "* gives a full fix, diagnosis, or readiness judgment without sufficient Known"
+        in block
+    )
+    assert (
+        "* falls back to a procedural or action template instead of the reasoning structure"
+        in block
+    )
+    assert "**Constraint rule:**" in block
+    assert "Known must contain only facts directly supported by the input" in block
+    assert (
+        "Missing must name the specific absent information that blocks certainty"
+        in block
+    )
+    assert "Conclusion must remain narrow, conditional, and limited by Missing" in block
+    assert "As Missing increases, Conclusion must become less decisive" in block
+    assert "**Concision rule:**" in block
+    assert "* Keep each section short" in block
+    assert "* No repetition between sections" in block
+    assert "* No emotional, motivational, or persuasive filler" in block
+    assert "* No prefacing or framing before the structure" in block
+    q = "reasoning05uniq: reasoning-structure mandate prompt check."
+    system_prompt, _ = playground.build_messages(q)
+    assert block in system_prompt
+
+
+def test_reasoning06_routes_known_failure_prompts_to_reasoning_mode():
+    reset_agent_state()
+    prompts = (
+        "The system failed after the update. What is the fix?",
+        "User says: 'The API returned something weird.' Diagnose it.",
+        "We ran 100 tests and some failed. What does this mean?",
+        "Is this system production-ready?",
+        (
+            "A client wants an API reliability report, but they didn't give the API endpoint. "
+            "What should the report say?"
+        ),
+    )
+    for q in prompts:
+        assert prompt_builder.user_input_needs_reasoning_structure_mode(q), repr(q)
+        tail = prompt_builder.build_runtime_01_execution_enforcement_block(
+            q, reasoning_structure_mode=True
+        )
+        assert "Reasoning-structure control gate (REASONING-06):" in tail
+        assert "Structural output (RUNTIME-03):" not in tail
+        assert "Begin your reply with the first section header line: Progress:" not in tail
+        assert "Missing information (REASONING-01):" in tail
+        assert "Reasoning structure mandate (REASONING-05):" in tail
+
+
+def test_reasoning06_preserves_non_reasoning_action_path():
+    reset_agent_state()
+    q = "Implement a function that returns 1 in utils.py for reasoning06uniq."
+    assert not prompt_builder.user_input_needs_reasoning_structure_mode(q)
+    tail = prompt_builder.build_runtime_01_execution_enforcement_block(
+        q, reasoning_structure_mode=False
+    )
+    assert tail == prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    assert "Structural output (RUNTIME-03):" in tail
+    system_prompt, _ = playground.build_messages(q)
+    assert prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK in system_prompt
+
+
+def test_reasoning06_does_not_remove_existing_reasoning_rules():
+    reset_agent_state()
+    gated = "The system failed. Fix it for reasoning06uniq."
+    tail_g = prompt_builder.build_runtime_01_execution_enforcement_block(
+        gated, reasoning_structure_mode=True
+    )
+    for label in (
+        "Missing information (REASONING-01):",
+        "Non-completion constraints (REASONING-02):",
+        "Explanation structure (REASONING-03):",
+        "Reasoning enforcement (REASONING-04):",
+        "Reasoning structure mandate (REASONING-05):",
+    ):
+        assert label in tail_g
+    full = prompt_builder.RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK
+    for label in (
+        "Missing information (REASONING-01):",
+        "Reasoning structure mandate (REASONING-05):",
+        "Structural output (RUNTIME-03):",
+    ):
+        assert label in full
+
+
+def test_reasoning06_prompt_builder_embeds_selected_structure():
+    reset_agent_state()
+    gated = "Diagnose this for reasoning06uniq: the API returned something weird."
+    sp_g, _ = playground.build_messages(gated)
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" in sp_g
+    assert "Reasoning-structure control gate (REASONING-06):" in sp_g
+    assert "Structural output (RUNTIME-03):" not in sp_g
+    direct = "Add a function add_one in math.py for reasoning06uniq."
+    sp_d, _ = playground.build_messages(direct)
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in sp_d
+    assert "Structural output (RUNTIME-03):" in sp_d
+
+
+def test_reasoning061_routes_unknown_plan_prompt_to_reasoning_mode():
+    reset_agent_state()
+    q = "Build a testing plan for an API you haven't seen."
+    assert prompt_builder.user_input_needs_reasoning_structure_mode(q)
+    tail = prompt_builder.build_runtime_01_execution_enforcement_block(q)
+    assert "Reasoning-structure control gate (REASONING-06):" in tail
+    assert "Structural output (RUNTIME-03):" not in tail
+    assert "Begin your reply with the first section header line: Progress:" not in tail
+    system_prompt, _ = playground.build_messages(q)
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" in system_prompt
+    assert "Structural output (RUNTIME-03):" not in system_prompt
+    concrete = (
+        "Build a testing plan for the documented public API in README.md for reasoning061uniq."
+    )
+    assert not prompt_builder.user_input_needs_reasoning_structure_mode(concrete)
+
+
+def test_reasoning062_strengthens_unknown_plan_routing_in_final_prompt():
+    reset_agent_state()
+    ascii_q = "Build a testing plan for an API you haven't seen."
+    curly_q = "Build a testing plan for an API you haven\u2019t seen."
+    variant_q = "Create a plan for a system not yet specified."
+    for q in (ascii_q, curly_q, variant_q):
+        assert prompt_builder.user_input_needs_reasoning_structure_mode(q), repr(q)
+        system_prompt, _ = playground.build_messages(q)
+        assert "REASONING OUTPUT MODE (REASONING-06 gate active):" in system_prompt
+        assert "Structural output (RUNTIME-03):" not in system_prompt
+        assert "Use exactly these three sections in this order:\n\nKnown:" in system_prompt
+    documented = (
+        "Build a testing plan for the documented public API in README.md for reasoning062uniq."
+    )
+    assert not prompt_builder.user_input_needs_reasoning_structure_mode(documented)
+    sp_doc, _ = playground.build_messages(documented)
+    assert "Structural output (RUNTIME-03):" in sp_doc
+
+
+def test_interaction01_routes_simple_conversation_to_conversation_mode():
+    reset_agent_state()
+    for q in ("Joshua?", "Are you ready to help me every day?"):
+        assert prompt_builder.user_input_needs_conversation_mode(q)
+        assert not prompt_builder.user_input_needs_reasoning_structure_mode(q)
+        system_prompt, _ = playground.build_messages(q)
+        assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+        assert "Conversation mode (INTERACTION-01):" in system_prompt
+        assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in system_prompt
+        assert "OPEN CONVERSATION MODE:" not in system_prompt
+        assert "OUTPUT FORMAT RULES:" not in system_prompt
+        assert "Structural output (RUNTIME-03):" not in system_prompt
+
+
+def test_interaction01_reasoning_mode_still_wins():
+    reset_agent_state()
+    q = "The system failed after the update. What is the fix?"
+    assert prompt_builder.user_input_needs_reasoning_structure_mode(q)
+    assert not prompt_builder.user_input_needs_conversation_mode(q)
+    system_prompt, _ = playground.build_messages(q)
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" in system_prompt
+    assert "CONVERSATION MODE (INTERACTION-01):" not in system_prompt
+
+
+def test_interaction01_preserves_action_path():
+    reset_agent_state()
+    q = "Implement a function that parses JSON input."
+    assert not prompt_builder.user_input_needs_conversation_mode(q)
+    assert not prompt_builder.user_input_needs_reasoning_structure_mode(q)
+    system_prompt, _ = playground.build_messages(q)
+    assert "CONVERSATION MODE (INTERACTION-01):" not in system_prompt
+    assert "Conversation mode (INTERACTION-01):" not in system_prompt
+    assert "Structural output (RUNTIME-03):" in system_prompt
+
+
+def test_interaction01_build_messages_contains_conversation_instructions():
+    reset_agent_state()
+    q = "Joshua?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+    assert prompt_builder.INTERACTION_01_CONVERSATION_ENFORCEMENT_BLOCK in system_prompt
+    assert "Do not output Progress:, Risks:, Decisions:, Next Steps:" in system_prompt
+
+
+def test_interaction011_routes_conditional_help_tool_prompt_to_conversation_mode():
+    reset_agent_state()
+    prompts = (
+        "If I give you the information you need, can you help me use this tool to run the tests?",
+        "Can you help me use this tool?",
+        "If I give you the details, can you help me run the tests?",
+        "Can you help me with this tool?",
+        "But if I give you the information you need to run the tests, you can help me use this tool to run them?",
+    )
+    for q in prompts:
+        assert prompt_builder.user_input_needs_conversation_mode(q), repr(q)
+        assert not prompt_builder.user_input_needs_reasoning_structure_mode(q), repr(q)
+        system_prompt, _ = playground.build_messages(q)
+        assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+        assert "Conversation mode (INTERACTION-01):" in system_prompt
+        assert "Structural output (RUNTIME-03):" not in system_prompt
+        assert "OUTPUT FORMAT RULES:" not in system_prompt
+
+
+def test_interaction012_routes_clarification_prompt_to_conversation_mode():
+    reset_agent_state()
+    prompts = (
+        "What tool am I talking about?",
+        "Which tool?",
+        "What do you mean?",
+    )
+    for q in prompts:
+        assert prompt_builder.user_input_is_simple_clarification(q), repr(q)
+        assert prompt_builder.user_input_needs_conversation_mode(q), repr(q)
+        assert not prompt_builder.user_input_needs_reasoning_structure_mode(q), repr(q)
+        system_prompt, _ = playground.build_messages(q)
+        assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+        assert "Conversation mode (INTERACTION-01):" in system_prompt
+        assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in system_prompt
+        assert "Structural output (RUNTIME-03):" not in system_prompt
+        assert "OUTPUT FORMAT RULES:" not in system_prompt
 
 
 def test_formatting_review():
@@ -4529,12 +5811,12 @@ def test_missing_llm_configuration_handling():
     original_ask_ai = playground.ask_ai
     try:
         def fake_ask_ai(messages, system_prompt=None):
-            raise RuntimeError("ANTHROPIC_API_KEY is missing.")
+            raise RuntimeError("OPENAI_API_KEY is missing.")
 
         playground.ask_ai = fake_ask_ai
         result = playground.handle_user_input("What should I do next?")
         assert result.startswith("LLM configuration error:"), f"Unexpected result: {result}"
-        assert "ANTHROPIC_API_KEY is missing." in result, "Missing specific preflight error"
+        assert "OPENAI_API_KEY is missing." in result, "Missing specific preflight error"
     finally:
         playground.ask_ai = original_ask_ai
 
@@ -10328,6 +11610,67 @@ def main():
         ("packaging10_snapshot_body_unchanged_after_priorities_preface", test_packaging10_snapshot_body_unchanged_after_priorities_preface),
         ("packaging10_empty_package_returns_empty_string", test_packaging10_empty_package_returns_empty_string),
         ("packaging10_show_package_fallback_unchanged", test_packaging10_show_package_fallback_unchanged),
+        ("packaging11_full_package_includes_current_risks_block", test_packaging11_full_package_includes_current_risks_block),
+        ("packaging11_compact_package_includes_current_risks_block", test_packaging11_compact_package_includes_current_risks_block),
+        ("packaging11_current_risks_follow_first_qualifying_packaged_order", test_packaging11_current_risks_follow_first_qualifying_packaged_order),
+        ("packaging11_risks_block_after_priorities_before_snapshot_body", test_packaging11_risks_block_after_priorities_before_snapshot_body),
+        ("packaging11_no_risk_keywords_preserves_package_without_risks_section", test_packaging11_no_risk_keywords_preserves_package_without_risks_section),
+        ("packaging11_empty_package_returns_empty_string", test_packaging11_empty_package_returns_empty_string),
+        ("packaging11_priorities_block_unchanged_for_plain_rows", test_packaging11_priorities_block_unchanged_for_plain_rows),
+        ("packaging12_norisk_token_does_not_trigger_risks_block", test_packaging12_norisk_token_does_not_trigger_risks_block),
+        ("packaging12_no_problem_idiom_does_not_trigger", test_packaging12_no_problem_idiom_does_not_trigger),
+        ("packaging12_this_is_a_risk_triggers", test_packaging12_this_is_a_risk_triggers),
+        ("packaging12_critical_bug_found_triggers", test_packaging12_critical_bug_found_triggers),
+        ("packaging12_debugging_does_not_trigger_bug_keyword", test_packaging12_debugging_does_not_trigger_bug_keyword),
+        ("packaging12_risks_order_unchanged_vs_packaging11_shape", test_packaging12_risks_order_unchanged_vs_packaging11_shape),
+        ("packaging13_full_package_includes_current_decisions_block", test_packaging13_full_package_includes_current_decisions_block),
+        ("packaging13_compact_package_includes_current_decisions_block", test_packaging13_compact_package_includes_current_decisions_block),
+        ("packaging13_current_decisions_follow_first_qualifying_order", test_packaging13_current_decisions_follow_first_qualifying_order),
+        ("packaging13_decisions_after_risks_before_snapshot_body", test_packaging13_decisions_after_risks_before_snapshot_body),
+        ("packaging13_no_decision_keywords_omits_decisions_block", test_packaging13_no_decision_keywords_omits_decisions_block),
+        ("packaging13_empty_package_returns_empty_string", test_packaging13_empty_package_returns_empty_string),
+        ("packaging14_full_package_includes_current_progress_block", test_packaging14_full_package_includes_current_progress_block),
+        ("packaging14_compact_package_includes_current_progress_block", test_packaging14_compact_package_includes_current_progress_block),
+        ("packaging14_current_progress_follow_first_qualifying_order", test_packaging14_current_progress_follow_first_qualifying_order),
+        ("packaging14_progress_after_decisions_before_snapshot_body", test_packaging14_progress_after_decisions_before_snapshot_body),
+        ("packaging14_no_progress_keywords_omits_progress_block", test_packaging14_no_progress_keywords_omits_progress_block),
+        ("packaging14_empty_package_returns_empty_string", test_packaging14_empty_package_returns_empty_string),
+        ("packaging15_full_package_includes_next_steps_block", test_packaging15_full_package_includes_next_steps_block),
+        ("packaging15_compact_package_includes_next_steps_block", test_packaging15_compact_package_includes_next_steps_block),
+        ("packaging15_next_steps_follow_first_qualifying_order", test_packaging15_next_steps_follow_first_qualifying_order),
+        ("packaging15_progress_before_next_steps_before_snapshot_body", test_packaging15_progress_before_next_steps_before_snapshot_body),
+        ("packaging15_no_next_steps_keywords_omits_next_steps_block", test_packaging15_no_next_steps_keywords_omits_next_steps_block),
+        ("packaging15_empty_package_returns_empty_string", test_packaging15_empty_package_returns_empty_string),
+        ("runtime01_prompt_includes_execution_enforcement", test_runtime01_prompt_includes_execution_enforcement),
+        ("runtime02_prompt_enforces_no_preamble", test_runtime02_prompt_enforces_no_preamble),
+        ("runtime03_prompt_enforces_structure", test_runtime03_prompt_enforces_structure),
+        ("runtime04_prompt_enforces_category_integrity", test_runtime04_prompt_enforces_category_integrity),
+        ("runtime05_prompt_excludes_in_progress_language", test_runtime05_prompt_excludes_in_progress_language),
+        ("runtime06_prompt_enforces_invalidity_constraints", test_runtime06_prompt_enforces_invalidity_constraints),
+        ("reasoning01_prompt_enforces_missing_information_admission", test_reasoning01_prompt_enforces_missing_information_admission),
+        ("reasoning02_prompt_blocks_completion_by_invention", test_reasoning02_prompt_blocks_completion_by_invention),
+        ("reasoning03_prompt_enforces_explanation_structure", test_reasoning03_prompt_enforces_explanation_structure),
+        ("reasoning04_forces_structure_over_runtime", test_reasoning04_forces_structure_over_runtime),
+        ("reasoning05_makes_reasoning_structure_mandatory", test_reasoning05_makes_reasoning_structure_mandatory),
+        ("reasoning06_routes_known_failure_prompts_to_reasoning_mode", test_reasoning06_routes_known_failure_prompts_to_reasoning_mode),
+        ("reasoning06_preserves_non_reasoning_action_path", test_reasoning06_preserves_non_reasoning_action_path),
+        ("reasoning06_does_not_remove_existing_reasoning_rules", test_reasoning06_does_not_remove_existing_reasoning_rules),
+        ("reasoning06_prompt_builder_embeds_selected_structure", test_reasoning06_prompt_builder_embeds_selected_structure),
+        ("reasoning061_routes_unknown_plan_prompt_to_reasoning_mode", test_reasoning061_routes_unknown_plan_prompt_to_reasoning_mode),
+        ("reasoning062_strengthens_unknown_plan_routing_in_final_prompt", test_reasoning062_strengthens_unknown_plan_routing_in_final_prompt),
+        ("interaction01_routes_simple_conversation_to_conversation_mode", test_interaction01_routes_simple_conversation_to_conversation_mode),
+        ("interaction01_reasoning_mode_still_wins", test_interaction01_reasoning_mode_still_wins),
+        ("interaction01_preserves_action_path", test_interaction01_preserves_action_path),
+        ("interaction01_build_messages_contains_conversation_instructions", test_interaction01_build_messages_contains_conversation_instructions),
+        ("interaction011_routes_conditional_help_tool_prompt_to_conversation_mode", test_interaction011_routes_conditional_help_tool_prompt_to_conversation_mode),
+        ("interaction012_routes_clarification_prompt_to_conversation_mode", test_interaction012_routes_clarification_prompt_to_conversation_mode),
+        ("memory_quality01_filters_low_signal_items", test_memory_quality01_filters_low_signal_items),
+        ("memory_quality02_filters_vague_project_state_language", test_memory_quality02_filters_vague_project_state_language),
+        ("memory_quality03_blocks_false_high_signal_rows", test_memory_quality03_blocks_false_high_signal_rows),
+        ("memory_quality04_filters_mixed_contaminated_rows", test_memory_quality04_filters_mixed_contaminated_rows),
+        ("memory_quality05_blocks_contamination_patterns", test_memory_quality05_blocks_contamination_patterns),
+        ("memory_quality05_allows_grounded_memory", test_memory_quality05_allows_grounded_memory),
+        ("memory_quality05_does_not_empty_all_memory", test_memory_quality05_does_not_empty_all_memory),
         ("formatting_review", test_formatting_review),
         ("state_command_test", test_state_command_test),
         ("multiline_paste_starting_with_set_focus_does_not_mutate_state", test_multiline_paste_starting_with_set_focus_does_not_mutate_state),

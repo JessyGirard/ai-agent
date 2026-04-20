@@ -711,6 +711,8 @@
 
 ### 2026-04-18 — **→ CHATGPT: READ THIS ENTRY FIRST ←** DOC-SYNC-01 (391 baseline across README + handoffs)
 
+**Note (2026-04-19):** For the **current** regression **X / Y** total, use the **newer** **`DOC-SYNC-02`** block at the **bottom** of this file (**480 / 480** at last recorded run). **DOC-SYNC-01** remains the record of the **391** doc-alignment wave.
+
 **Purpose:** Bring **stale regression counts** in **README**, **`docs/specs/PROJECT_SPECIFICATION.md`**, **`HANDOFF_RECENT_WORK.md`**, **`CHATGPT_DAILY_BOOTSTRAP.md`**, **`CHATGPT_COLLAB_SYNC.md`**, **`memory_log_system.md`** (**RETRIEVAL-07–10 + PACKAGING-01** session row + intro anchor line; added earlier in the same doc wave), and the **2026-04-19 session-wrap** regression bullet in **this file** in line with **`391 / 391`**. **No code changes** in this increment — documentation and log alignment only.
 
 **Files touched:** **`README.md`**, **`docs/specs/PROJECT_SPECIFICATION.md`**, **`docs/handoffs/HANDOFF_RECENT_WORK.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**, **`docs/specs/memory_log_system.md`**, this log.
@@ -718,6 +720,326 @@
 **Regression:** **`391 / 391`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) — re-run in Cursor before commit.
 
 **Prior entries still true:** **RETRIEVAL-07–10 + PACKAGING-01** block immediately above for **scoring + snapshot helpers**; **MEMORY-01** … **MEMORY-10** roadmap; **UI-09**, **LATENCY-04–06**, older same-day blocks.
+
+---
+
+### 2026-04-19 — Joshua recovery: live LLM path **Anthropic → OpenAI** (8-increment plan, executed)
+
+**Context:** Anthropic account usage capped until **2026-05-01**; live agent (`ask_ai`) blocked on **`ANTHROPIC_API_KEY`**. Goal: restore **Joshua** on **OpenAI** without rewriting **`playground.py`** or agent architecture; preserve **`ask_ai(messages, system_prompt)`** contract.
+
+**Branch:** **`openai-migration`** (rollback = checkout prior branch / revert these files).
+
+**Regression:** **`438 / 438`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) — confirmed after migration.
+
+**Increments shipped (mapped to Jessie’s recovery plan):**
+
+1. **SAFE BRANCH** — **`openai-migration`** created from prior HEAD.
+2. **SETTINGS** — **`config/settings.py`:** added **`get_openai_api_key`**, **`get_openai_model_name`** (default **`gpt-4o-mini`**), **`get_openai_max_tokens`**; **Anthropic getters retained** (no removal).
+3. **CORE ADAPTER** — **`core/llm.py`:** **`OpenAI`** + **`chat.completions.create`**, system prompt as leading **`system`** message, **`max_tokens`**, return string **`.strip()`**; duplicate **`system`** rows in `messages` skipped.
+4. **PREFLIGHT** — same file: **`OPENAI_API_KEY`** + **`openai`** import checks; runtime errors aligned with OpenAI.
+5. **DEPS** — **`openai`** already in **`requirements.txt`**; **`anthropic`** kept for **`test_claude.py`** / future dual use.
+6. **REGRESSION** — **`tests/run_regression.py`:** missing-key fake + assertion → **`OPENAI_API_KEY`**; **`test_agent_meta_routing_answer_and_next_step`** anchor **`anthropic` → `openai`** in next-step substring check.
+7. **OPERATOR COPY** — **`services/routing_service.py`** (meta next-step + stack marker), **`services/prompt_builder.py`** (**`get_openai_model_name`**, OpenAI wording), **`README.md`** (architecture line + regression baseline **`438`**), **`playground.py`** docstring comment (LLM messages, not vendor-specific).
+8. **SMOKE** — Jessy: **no key** → startup / preflight should report missing **`OPENAI_API_KEY`**; with key → normal chat + **`TOOL:fetch`** path in UI.
+
+**`.env` contract for live Joshua:** **`OPENAI_API_KEY`** (required); optional **`OPENAI_MODEL`**, **`OPENAI_MAX_TOKENS`**. Offline extractor (**`memory/extractors/run_extractor.py`**) still uses **`OPENAI_API_KEY`** for structured extract (same env var name; two features).
+
+**Next:** Merge when satisfied; set **`.env`** on operator machines; optional follow-up: dual-provider flag (**Anthropic vs OpenAI**) if Anthropic returns after May 1.
+
+---
+
+### 2026-04-19 — MEMORY-DOC-01: **`MEMORY_SYSTEM.md`** + **`memory_log_system.md`** alignment (memory lane prep)
+
+**Purpose:** Before the next **memory lane** code increment, align **as-built** docs with **RETRIEVAL-04–10** and **PACKAGING-01–10**, backfill the missing **RETRIEVAL-04–06** row in **`memory_log_system.md`**, and fix stale “latest pointer” copy that referenced only **DOC-SYNC-01** (counts and LLM provider drift over time).
+
+**What changed:**
+
+1. **`docs/specs/MEMORY_SYSTEM.md`:** §1 **where to log** bullets (**`memory_log_system.md`** + **`SESSION_SYNC_LOG.md`** + this spec); new **§7.6** (retrieval boost table **RETRIEVAL-04–10**) and **§7.7** (read-only **PACKAGING** helpers in **`playground.py`**, prompt non-wiring note).
+2. **`docs/specs/memory_log_system.md`:** **Session increments** row **MEMORY-DOC-01**; **RETRIEVAL-04–06** register row inserted above **MEMORY-01**; **Last assembled** paragraph now points ChatGPT to **`SESSION_SYNC_LOG` bottom** for current regression count and provider context.
+
+**Regression:** Docs only — re-run **`python tests/run_regression.py`** after pull; latest gate at time of this append remains **`438 / 438`** (**OpenAI** migration block immediately above).
+
+**Next:** Ship the next **MEMORY-*** or **Lane 1 M*** increment per **`docs/specs/UX_system.md`**; append **both** here **and** under **`docs/specs/memory_log_system.md`** → **Session increments (logged)**.
+
+---
+
+### 2026-04-19 — PACKAGING-02 (top project priorities preface) — **register + spec clarification**
+
+**Purpose:** Close the loop on **PACKAGING-02** (already shipped in **`playground.py`** via **`_build_project_memory_package_top_priorities`** + **`build_project_memory_package`** / compact path): document increment id in **`MEMORY_SYSTEM.md`** §7.7 and **`docs/specs/memory_log_system.md`**, with this **bottom** anchor for ChatGPT.
+
+**Behavior (summary):** Up to **3** **`- {value}`** lines after **`Top project priorities:`**, taken in **packaged row order**; omitted entirely when no non-empty values; **snapshot** text remains **`endswith`**-identical to **`build_project_memory_snapshot()`** for the same data.
+
+**Regression:** **`438 / 438`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) — re-run after pull.
+
+**Next:** **PACKAGING-03+** or prompt wiring only when Jessy approves; still **read-only** packaging lane.
+
+---
+
+### 2026-04-19 — PACKAGING-03 (current project risks block on package)
+
+**Purpose:** After **PACKAGING-02** priorities preface, add an optional **Current project risks:** block (max **2** bullets) from **first qualifying** packaged rows in **fixed order**, using **substring** checks on row **`value`** only (**`problem`**, **`risk`**, **`bug`**, **`failure mode`**, **`blocker`**, **`concern`**, **`issue`**). **No** retrieval, runtime extraction, write-path, or prompt changes.
+
+**Primary files:** **`playground.py`** (**`_build_project_memory_package_current_risks`**, **`_join_project_memory_package_prefaces`**, **`build_project_memory_package`**), **`tests/run_regression.py`** (**`packaging11_*`** + preface helper rename in composition tests), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**.
+
+**Regression:** **`445 / 445`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** **PACKAGING-04+** or optional prompt wiring when Jessy approves.
+
+---
+
+### 2026-04-19 — PACKAGING-04 (precise risk keyword matching)
+
+**Purpose:** Remove **PACKAGING-03** false positives from substring matching (**`norisk`**, **`debugging`**, accidental **`problem`** inside tokens) while keeping the same package layout and caps.
+
+**Primary files:** **`playground.py`** (**`_compile_project_memory_package_risk_patterns`**, **`_value_matches_project_memory_risk_keyword`**, **`_build_project_memory_package_current_risks`**), **`tests/run_regression.py`** (**`packaging12_*`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**.
+
+**Rules:** Case-insensitive **`\\b…\\b`** for single-token keywords; **`\\bfailure\\s+mode\\b`**; **`(?<!no )\\bproblem\\b`** for **`problem`** so **“no problem …”** does not open a risks block.
+
+**Regression:** **`451 / 451`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** Superseded same day by **PACKAGING-05**; see the following block for the current packaging gate count.
+
+---
+
+### 2026-04-19 — PACKAGING-05 (current project decisions preface on package)
+
+**Purpose:** After **PACKAGING-02** priorities and **PACKAGING-03**/**04** risks, add an optional **Current project decisions:** block (max **2** bullets) from the **first** qualifying **`packaged_rows`** in **snapshot package order**, using **precompiled case-insensitive** whole-word / phrase patterns aligned with **PACKAGING-04** style (**`decision`**, **`decided`**, **`chose`**, **`chosen`**, **`plan`**, **`planned`**, **`going with`**, **`will use`**, **`move to`**). **No** retrieval, runtime extraction, write-path, or prompt changes.
+
+**Primary files:** **`playground.py`** (**`_compile_project_memory_package_decision_patterns`**, **`_build_project_memory_package_current_decisions`**, **`_join_project_memory_package_prefaces`**, **`build_project_memory_package`**), **`tests/run_regression.py`** (**`packaging13_*`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**.
+
+**Regression:** **`457 / 457`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** Superseded by **PACKAGING-06** (same packaging lane); see the following block.
+
+---
+
+### 2026-04-19 — PACKAGING-06 (current project progress preface on package)
+
+**Purpose:** After **PACKAGING-05** decisions, add an optional **Current project progress:** block (max **2** bullets) from the **first** qualifying **`packaged_rows`** in **snapshot package order**, using **precompiled case-insensitive** whole-word patterns (**`completed`**, **`done`**, **`finished`**, **`milestone`**, **`progress`**, **`shipped`**, **`working`**, **`validated`**, **`passing`**). **No** retrieval, runtime extraction, write-path, or prompt changes.
+
+**Primary files:** **`playground.py`** (**`_compile_project_memory_package_progress_patterns`**, **`_build_project_memory_package_current_progress`**, **`_join_project_memory_package_prefaces`**, **`build_project_memory_package`**), **`tests/run_regression.py`** (**`packaging14_*`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`463 / 463`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** Superseded by **PACKAGING-07** (same packaging lane); see the following block.
+
+---
+
+### 2026-04-19 — PACKAGING-07 (next project steps preface on package)
+
+**Purpose:** After **PACKAGING-06** progress, add an optional **`Next project steps:`** block (max **2** bullets) from the **first** qualifying **`packaged_rows`** in **snapshot package order**, using **precompiled case-insensitive** phrase / whole-word patterns (**`next step`**, **`next steps`**, **`going to`**, **`need to`**, **`to do`**, **`next`**, **`plan`**, **`planning`**, **`upcoming`**, **`will`**, **`todo`**). **No** retrieval, runtime extraction, write-path, or prompt changes.
+
+**Primary files:** **`playground.py`** (**`_compile_project_memory_package_next_steps_patterns`**, **`_build_project_memory_package_next_steps`**, **`_join_project_memory_package_prefaces`**, **`build_project_memory_package`**), **`tests/run_regression.py`** (**`packaging15_*`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`469 / 469`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** **PACKAGING-08+** or optional prompt wiring when approved.
+
+---
+
+### 2026-04-19 — RUNTIME-01 (`build_messages` execution enforcement)
+
+**Purpose:** Reduce instruction-echo / meta-explanation replies by appending a **fixed** execution-enforcement block to the **`build_messages`** system prompt after all dynamic context and **`_latency_cap_system_prompt`**. **No** packaging, retrieval, extraction, **`playground.py`**, or **`build_post_fetch_messages`** changes.
+
+**Primary files:** **`services/prompt_builder.py`** (**`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`**, **`build_messages`**), **`tests/run_regression.py`** (**`runtime01_prompt_includes_execution_enforcement`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`470 / 470`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** Superseded by **RUNTIME-02** (same enforcement constant); see the following block.
+
+---
+
+### 2026-04-19 — RUNTIME-02 (strict output shape on `build_messages` enforcement block)
+
+**Purpose:** Extend **`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`** with **RUNTIME-02** rules so the model must start with the final answer only—no preamble, no trailing commentary, no “Here is… / The result is… / Below is… / This shows… / Based on…” framing. **No** new injection site, **no** branching, **no** **`playground.py`**.
+
+**Primary files:** **`services/prompt_builder.py`**, **`tests/run_regression.py`** (**`runtime02_prompt_enforces_no_preamble`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`471 / 471`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** Superseded by **RUNTIME-03** (same enforcement constant); see the following block.
+
+---
+
+### 2026-04-19 — RUNTIME-03 (fixed four-section structure on `build_messages` enforcement block)
+
+**Purpose:** Extend **`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`** with **RUNTIME-03** so the model must output exactly **Progress:** → **Risks:** → **Decisions:** → **Next Steps:** in that order, with **`- item`** bullets only when items exist, headers always present, no extra sections—**no** fabrication rule, **no** branching, **no** **`playground.py`**.
+
+**Primary files:** **`services/prompt_builder.py`**, **`tests/run_regression.py`** (**`runtime03_prompt_enforces_structure`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`472 / 472`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** Superseded by **RUNTIME-04** (same enforcement constant); see the following block.
+
+---
+
+### 2026-04-19 — RUNTIME-04 (category integrity on `build_messages` enforcement block)
+
+**Purpose:** Extend **`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`** with **RUNTIME-04** semantic placement rules for **Progress** / **Risks** / **Decisions** / **Next Steps**, **strict separation** (omit if unsure), and reinforced **no-inference** language—**no** branching, **no** **`playground.py`**.
+
+**Primary files:** **`services/prompt_builder.py`**, **`tests/run_regression.py`** (**`runtime04_prompt_enforces_category_integrity`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`473 / 473`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** Superseded by **RUNTIME-05** (same enforcement constant); see the following block.
+
+---
+
+### 2026-04-19 — RUNTIME-05 (in-progress language exclusion on `build_messages` enforcement block)
+
+**Purpose:** Extend **`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`** with **RUNTIME-05** so **Progress** accepts only clearly completed/finished items (explicit exclusions for ongoing/in-progress/working phrasing), **Next Steps** only clearly future/planned actions (exclude present-continuous ongoing descriptions), **strict ambiguity** (ongoing/in-progress items in no section), and **omission** when category fit is unclear—**no** branching, **no** **`playground.py`**.
+
+**Primary files:** **`services/prompt_builder.py`**, **`tests/run_regression.py`** (**`runtime05_prompt_excludes_in_progress_language`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`474 / 474`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** Superseded by **RUNTIME-06** (same enforcement constant); see the following block.
+
+---
+
+### 2026-04-19 — RUNTIME-06 (correctness / invalid framing on `build_messages` enforcement block)
+
+**Purpose:** Extend **`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`** with **RUNTIME-06** **Correctness constraints**: wrong-section / ambiguous / ongoing items are **incorrect**; explicit **INVALID** examples; binary one-correct-output rule; omission without forcing category—**no** branching, **no** **`playground.py`**.
+
+**Primary files:** **`services/prompt_builder.py`**, **`tests/run_regression.py`** (**`runtime06_prompt_enforces_invalidity_constraints`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`475 / 475`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** **RUNTIME-07+** or other lanes per plan.
+
+---
+
+### 2026-04-19 — MEMORY-QUALITY-01 (low-signal filter in `memory_service.load_memory`)
+
+**Purpose:** Remove preference-heavy / vague / simple non-actionable **`memory_items`** **`value`** rows (substring-only **`_is_low_signal_memory_item`**) before **`playground.load_memory`** consumers (retrieval + read-only packaging snapshot); **no** **`playground.py`**, **`prompt_builder.py`**, or packaging algorithm changes.
+
+**Primary files:** **`services/memory_service.py`**, **`tests/run_regression.py`** (**`memory_quality01_filters_low_signal_items`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`476 / 476`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) at original ship; see **MEMORY-QUALITY-04** for current gate count.
+
+**Next:** Superseded by **MEMORY-QUALITY-02** … **MEMORY-QUALITY-04** (same filter path); see the following blocks.
+
+---
+
+### 2026-04-19 — MEMORY-QUALITY-02 (vague project-state filter in `memory_service.load_memory`)
+
+**Purpose:** Extend **`_is_low_signal_memory_item`** so **`category == "project"`** rows with soft in-progress **`value`** phrasing are candidates for removal—substring-only, order preserved, **`load_memory_payload`** unchanged; **no** **`playground.py`**, **`prompt_builder.py`**, packaging, or scoring changes. **MEMORY-QUALITY-03** / **MEMORY-QUALITY-04** refined follow-on project **`value`** rules (see following blocks).
+
+**Primary files:** **`services/memory_service.py`**, **`tests/run_regression.py`** (**`memory_quality02_filters_vague_project_state_language`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`477 / 477`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) at original ship; see **MEMORY-QUALITY-04** for current gate count.
+
+**Next:** Superseded by **MEMORY-QUALITY-03** / **MEMORY-QUALITY-04** for project soft-state rules; see the following blocks.
+
+---
+
+### 2026-04-19 — MEMORY-QUALITY-03 (false high-signal rescue removed in `memory_service.load_memory`)
+
+**Purpose:** When a **project** **`value`** contains soft in-progress phrasing (**MEMORY-QUALITY-02** list), treat the row as **low-signal** unless a **narrow concrete rescue** substring matches (**`_CONCRETE_PROJECT_OVERRIDE_WHEN_SOFT_PRESENT`**)—so vague lines that only mention milestone/regression/risk no longer survive; substring-only; survivor order unchanged; **`load_memory_payload`** unchanged; **no** scoring/ranking/write-path edits. **MEMORY-QUALITY-04** removes **mixed** rows that combine soft + concrete markers in one line (see next block).
+
+**Primary files:** **`services/memory_service.py`**, **`tests/run_regression.py`** (**`memory_quality03_blocks_false_high_signal_rows`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/SESSION_SYNC_LOG.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`478 / 478`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) at original ship; see **MEMORY-QUALITY-04** for current gate count.
+
+**Next:** Superseded by **MEMORY-QUALITY-04** for mixed contaminated rows; see the following block.
+
+---
+
+### 2026-04-19 — MEMORY-QUALITY-04 (mixed contaminated project rows in `memory_service.load_memory`)
+
+**Purpose:** **`category == "project"`** rows with **both** soft in-progress **`value`** phrasing and a concrete marker substring (**`_CONCRETE_PROJECT_OVERRIDE_WHEN_SOFT_PRESENT`**) are **always** low-signal (completed + ongoing, decision + improving, risk + ongoing, next step + working on, etc.); **any** soft phrase without a concrete marker remains low-signal; **no** rescue when both appear; substring-only; survivor order unchanged; **`load_memory_payload`** unchanged; **no** scoring/ranking/write-path edits.
+
+**Primary files:** **`services/memory_service.py`**, **`tests/run_regression.py`** (**`memory_quality04_filters_mixed_contaminated_rows`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/SESSION_SYNC_LOG.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`479 / 479`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** **MEMORY-QUALITY-05+** or other lanes per plan.
+
+---
+
+### 2026-04-19 — REASONING-01 (missing-information admission on `build_messages` enforcement block)
+
+**Purpose:** Extend **`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`** with **REASONING-01** so the model must admit insufficient input clearly: name what is missing, avoid guessing or implied certainty, allow partial answers only when known vs missing is distinguished—**not** chain-of-thought; same append after **`_latency_cap_system_prompt`**; **RUNTIME-01–06** unchanged in intent; **no** **`playground.py`**, retrieval, packaging, or memory-extractor edits.
+
+**Primary files:** **`services/prompt_builder.py`**, **`tests/run_regression.py`** (**`reasoning01_prompt_enforces_missing_information_admission`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/SESSION_SYNC_LOG.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`480 / 480`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** **REASONING-02+** or other lanes per plan.
+
+---
+
+### 2026-04-19 — REASONING-02 (non-completion constraints on `build_messages` enforcement block)
+
+**Purpose:** Extend **`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`** with **REASONING-02** to prevent completion-by-invention: do not fill sections with generic placeholders, do not invent risks/decisions/next steps, explicitly allow header-only empty sections when unsupported, and treat unsupported completion as incorrect. Same append point after **`_latency_cap_system_prompt`**; **RUNTIME-01–06** + **REASONING-01** remain intact; **no** **`playground.py`**, packaging, retrieval scoring, or memory extraction edits.
+
+**Primary files:** **`services/prompt_builder.py`**, **`tests/run_regression.py`** (**`reasoning02_prompt_blocks_completion_by_invention`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/SESSION_SYNC_LOG.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`481 / 481`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** **REASONING-03+** or other lanes per plan.
+
+---
+
+### 2026-04-19 — REASONING-03 (Known / Missing / Conclusion explanation structure on enforcement block)
+
+**Purpose:** Extend **`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`** with **REASONING-03** so explanation under limited information is explicitly structured as **Known / Missing / Conclusion** with hard grounding: no guessed Known content, no invented Conclusion content, no speculation through Missing, and concise non-redundant phrasing. Same append point after **`_latency_cap_system_prompt`**; **RUNTIME-01–06** + **REASONING-01/02** preserved; **no** **`playground.py`**, packaging, retrieval scoring, or memory extraction edits.
+
+**Primary files:** **`services/prompt_builder.py`**, **`tests/run_regression.py`** (**`reasoning03_prompt_enforces_explanation_structure`**), **`docs/specs/MEMORY_SYSTEM.md`**, **`docs/specs/memory_log_system.md`**, **`docs/handoffs/SESSION_SYNC_LOG.md`**, **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`**, **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`**.
+
+**Regression:** **`482 / 482`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset).
+
+**Next:** **REASONING-04+** or other lanes per plan.
+
+---
+
+### 2026-04-19 — **→ CHATGPT: READ THIS ENTRY FIRST ←** DOC-SYNC-02 (482 baseline; memory log + daily bootstrap + collab sync)
+
+**Purpose:** Give external ChatGPT sessions a **single current anchor** for the **regression harness count** and **packaging lane** context, without deleting history. **`DOC-SYNC-01`** (391 wave) stays above; this block **supersedes it for X / Y totals** and for **bootstrap / collab / memory-log** copy that previously still said **391** or omitted **PACKAGING-05** / **PACKAGING-06** / **PACKAGING-07**.
+
+**What changed (cumulative for this anchor):**
+
+1. **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`** — *Latest target* + Jessy paste block: regression **482 / 482**; read-only **`build_project_memory_package`** prefaces **PACKAGING-02**–**PACKAGING-07** (**priorities → risks → decisions → progress → next steps** → unchanged snapshot); **`packaging13_*`** … **`packaging15_*`**; **RUNTIME-01** … **RUNTIME-06** + **REASONING-01/02/03** on **`build_messages`** (**`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`**); **MEMORY-QUALITY-01** … **MEMORY-QUALITY-04** on **`memory_service.load_memory`** (tests **`memory_quality03_blocks_false_high_signal_rows`**, **`memory_quality04_filters_mixed_contaminated_rows`**); **Cursor `afterFileEdit` hooks** (`.cursor/hooks.json`); pointer to **this** log entry instead of **DOC-SYNC-01** for counts.
+2. **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`** — **Current Project Snapshot** + **Copy/Paste Bootstrap**: **482** scenarios; packaging through **PACKAGING-07** + **`packaging15_*`**; **RUNTIME-01** … **RUNTIME-06** + **REASONING-01/02/03** on **`build_messages`**; **MEMORY-QUALITY-01** … **MEMORY-QUALITY-04** on **`load_memory`**.
+3. **`docs/specs/memory_log_system.md`** — **Last assembled** line; **Session bookkeeping** historical note (no stale **301 / 301**); **Session increments** rows through **PACKAGING-07**, **RUNTIME-06**, **REASONING-03**, and **MEMORY-QUALITY-04**; **Semi-automatic** note on **`.cursor/hooks.json`** + **`memory_log_reminder.py`**.
+4. **`docs/specs/MEMORY_SYSTEM.md`** — §§1, 3, 7–8: **MEMORY-QUALITY-01** … **MEMORY-QUALITY-04** read-path filters on **`load_memory`**; §8 **RUNTIME-01–06** + **REASONING-01/02/03** on **`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`**.
+5. **`.cursor/hooks.json`** — **`afterFileEdit`**: **`python scripts/ux_log_drift_check.py --cursor-hook-stdin`** and **`python scripts/memory_log_reminder.py --cursor-hook-stdin`** (operator nudges for **UX** / **memory** logs when relevant files are saved).
+
+**Code reference (packaging lane):** **PACKAGING-05** … **PACKAGING-07** blocks immediately above in this log; **`playground.py`** tuple fix for decision patterns remains as shipped in **PACKAGING-05**.
+
+**Regression:** **`482 / 482`** PASS (`python tests/run_regression.py`, **`FETCH_MODE`** unset) — re-run after pull.
+
+**Prior entries still true:** **OpenAI** migration; **MEMORY-01 … MEMORY-10**; **RETRIEVAL-07–10 + PACKAGING-01**; **PACKAGING-02** … **PACKAGING-07** behavior detail in blocks above **DOC-SYNC-01**; **RUNTIME-01** … **RUNTIME-06** + **REASONING-01/02/03** in **`services/prompt_builder.py`** (**`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`**; blocks immediately above); **MEMORY-QUALITY-01** … **MEMORY-QUALITY-04** in **`services/memory_service.py`** (blocks immediately above); **`.cursor/hooks.json`** scripts **`ux_log_drift_check`** / **`memory_log_reminder`** (see block below).
+
+---
+
+### 2026-04-19 — Cursor `afterFileEdit` hooks (UX log drift + memory log reminder)
+
+**Purpose:** Wire **Cursor** **`afterFileEdit`** so saving relevant files can print **Hooks**-channel nudges: update **`docs/specs/UX_log_system.md`** when UX-touched files change (**`scripts/ux_log_drift_check.py`**), and append **`docs/specs/memory_log_system.md`** when memory-touched files change (**`scripts/memory_log_reminder.py`**). Config only; behavior described in **`memory_log_system.md`** **Semi-automatic** note.
+
+**Primary files:** **`.cursor/hooks.json`**, **`scripts/ux_log_drift_check.py`**, **`scripts/memory_log_reminder.py`**
+
+**Regression:** Full gate **482 / 482** at last recorded run; re-run after pull.
+
+**Next:** Per lane plan.
+
+---
+
+### 2026-04-19 — DOC-SYNC-03 (499 baseline; reasoning/interaction routing + memory contamination control)
+
+**Purpose:** Refresh ChatGPT handoff anchors to the current regression baseline and include the latest shipped routing/grounding controls: **REASONING-04/05/06/06.1/06.2**, **INTERACTION-01/01.1/01.2**, and **MEMORY-QUALITY-05**.
+
+**What changed (cumulative for this anchor):**
+
+1. **`services/prompt_builder.py`** + **`tests/run_regression.py`** — reasoning routing/control hardened through **REASONING-06.2** (gated Known/Missing/Conclusion path for reasoning-dependent prompts, including unknown-target planning and apostrophe-normalized variants).
+2. **`services/prompt_builder.py`** + **`tests/run_regression.py`** — conversational routing added and tuned via **INTERACTION-01**, **INTERACTION-01.1**, **INTERACTION-01.2** (simple/conditional help prompts and short clarification prompts remain conversational; no forced action templates).
+3. **`services/memory_service.py`** + **`tests/run_regression.py`** — **MEMORY-QUALITY-05** contamination/bleeding control: only input-grounded memory survives retrieval; phase/focus/stage/test-number/system-state/project-state leak patterns are blocked.
+4. **`docs/handoffs/CHATGPT_DAILY_BOOTSTRAP.md`** — latest target and bootstrap bullets aligned to **499 / 499** and new routing/grounding increments.
+5. **`docs/handoffs/CHATGPT_COLLAB_SYNC.md`** — snapshot and copy/paste bootstrap aligned to **499 / 499** and same increment set.
+
+**Regression:** **`499 / 499`** PASS (`python tests/run_regression.py`, `FETCH_MODE` unset).
+
+**Next:** Continue per lane plan; keep bottom-anchor handoff blocks current after each shipped increment.
 
 ---
 

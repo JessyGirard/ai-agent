@@ -17,7 +17,13 @@ The agent uses **file-backed persistence** so memory survives process restarts a
 | **`memory/project_journal.jsonl`** | **Append-only session/project log** (conversations, state commands, outcome feedback). Used for retrieval blocks and guards—not the same as structured `memory_items`. |
 | **`memory/history.json`** | **Legacy** rolling list (last 10 entries) via `memory/memory.py`; parallel to the structured system; not the main path for `playground` / `prompt_builder`. |
 
-**Important:** Retrieval uses **strength gates** (confidence, evidence count, `memory_kind`). Rows that exist on disk may still **not** appear in “Supporting memory” until they are strong enough (see §6).
+**Important:** Retrieval uses **strength gates** (confidence, evidence count, `memory_kind`). Rows that exist on disk may still **not** appear in “Supporting memory” until they are strong enough (see §6). **MEMORY-QUALITY-01** … **MEMORY-QUALITY-04** additionally drop **low-signal** rows at **`load_memory`** time (substring-only; on-disk JSON unchanged via **`load_memory_payload`**).
+
+**Where to log shipped memory work (operator + Cursor contract):**
+
+1. **`docs/specs/memory_log_system.md`** — **Session increments (logged):** each shipped **MEMORY-NN**, retrieval/packaging slice, or Lane 1 **M*** step gets a dated subsection with **one-line outcome**, **primary files**, and **`python tests/run_regression.py` → X / X** when code changed.
+2. **`docs/handoffs/SESSION_SYNC_LOG.md`** — Append a **bottom block** for the same session when the repo or plan changes (ChatGPT cold-start anchor); **newest entry wins** on conflicts.
+3. **This file (`MEMORY_SYSTEM.md`)** — Update **§§6–7** (and packaging notes below) when **behavior** or on-disk contracts change, not only when adding a log row.
 
 ---
 
@@ -44,10 +50,10 @@ The agent uses **file-backed persistence** so memory survives process restarts a
 
 | Module | Responsibility |
 |--------|----------------|
-| **`services/memory_service.py`** | Default payload shape, tokenization, scoring, **`retrieve_relevant_memory`**, **`retrieve_personal_context_memory`**, **`retrieve_user_purpose_memory`**, **`retrieve_memory_for_purpose`**, runtime **`write_runtime_memory`**, dedupe keys, transient-identity filters, conflict rules for runtime writes. |
+| **`services/memory_service.py`** | Default payload shape, tokenization, scoring, **`load_memory`** (**MEMORY-QUALITY-01**–**04** low-signal filters before retrieval/packaging reads), **`retrieve_relevant_memory`**, **`retrieve_personal_context_memory`**, **`retrieve_user_purpose_memory`**, **`retrieve_memory_for_purpose`**, runtime **`write_runtime_memory`**, dedupe keys, transient-identity filters, conflict rules for runtime writes. |
 | **`playground.py`** | Paths: `MEMORY_FILE`, `STATE_FILE`, `JOURNAL_FILE`; **`ALLOWED_MEMORY_CATEGORIES`**; thin wrappers delegating to `memory_service` + persistence; **`handle_user_input`** calls **`write_runtime_memory`** then builds messages. |
 | **`core/persistence.py`** | **`load_memory_payload`** / **`save_memory_payload`**: JSON load with repair events, **`dedupe_memory_items`** on load, **`_normalize_memory_items_with_unique_ids`** on save, atomic write via temp file. |
-| **`services/prompt_builder.py`** | **`build_messages`**: calls retrieval functions, **`format_memory_block`**, appends “Supporting memory”, personal context, user-purpose blocks; **state-over-memory** rules in system prompt text. |
+| **`services/prompt_builder.py`** | **`build_messages`**: calls retrieval functions, **`format_memory_block`**, appends “Supporting memory”, personal context, user-purpose blocks; **state-over-memory** rules in system prompt text. **RUNTIME-01–06 + REASONING-01/02/03:** after context assembly and **`_latency_cap_system_prompt`**, appends **`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`** (execution through correctness/invalid framing + missing-information admission + non-completion/explanation-structure constraints; no task-type branching). **`build_post_fetch_messages`** unchanged. |
 | **`services/journal_service.py`** | Journal commands, formatting, outcome feedback, recent-answer history (complements memory in prompts). |
 | **`memory/import_chat.py`** | CLI: `raw_chat.txt` → `imported.json` (alternating roles; strips `USER:` / `AI:` / `ASSISTANT:`). |
 | **`memory/extractors/run_extractor.py`** | CLI: `imported.json` → merged **`extracted_memory.json`** (OpenAI); categories; noise/`?`/length filters; **`EXTRACT_MESSAGE_LIMIT`**. |
@@ -139,6 +145,8 @@ Fields commonly present (exact set may vary by source):
 
 All retrieval ultimately reads **`memory_items`** via **`playground.load_memory`** → `memory_service.load_memory(load_memory_payload_fn)`.
 
+**MEMORY-QUALITY-01 … MEMORY-QUALITY-04 (`load_memory` only):** **`_is_low_signal_memory_item`** (accepts a **`value` string** for MQ-01-only checks, or a **full memory dict** for MQ-02–04) returns **true** when `value` (case-insensitive substring match) hits preference-heavy tokens (**`likes`**, **`prefers`**, **`enjoys`**, **`wants`**), vague tokens (**`something`**, **`various`**, **`general`**, **`things`**), or non-actionable filler (**`no concrete`**, **`nothing specific`**, **`unclear what`**, **`not actionable`**). **MEMORY-QUALITY-02–04:** for **`category == "project"`** only, if `value` contains **any** soft in-progress phrase (**`working on`**, **`ongoing`**, **`in progress`**, **`moving forward`**, **`trying to`**, **`improving`**, **`progressing`**), the row is dropped. **MEMORY-QUALITY-04** implements this as a **hard mixed-row rule** when **both** soft and a concrete marker substring appear (**`_CONCRETE_PROJECT_OVERRIDE_WHEN_SOFT_PRESENT`**: e.g. **`completed`**, **`decided to`**, **`risk identified`**, **`next we will`**, etc.)—contaminated lines cannot be “rescued” by the concrete half. **Fully clean** project lines with **only** concrete phrasing (no soft substring) remain. **`load_memory`** returns **`memory_items`** with those rows removed, **preserving order** among survivors. **`load_memory_payload`** / persistence / **`write_runtime_memory`** still see the **full** list.
+
 ### 7.1 `retrieve_relevant_memory(user_input)`
 
 - Scores each item with **`score_memory_item`** (overlap with user tokens, category intent from **`detect_memory_intent`**, recency/staleness bonuses, safety-query boosts, etc.).
@@ -165,6 +173,39 @@ All retrieval ultimately reads **`memory_items`** via **`playground.load_memory`
 
 Renders selected rows as bullet lines: `- (category) value` for the system prompt.
 
+### 7.6 Project-category retrieval boosts (**RETRIEVAL-04–10**)
+
+Implemented in **`services/memory_service.py`** inside **`score_memory_item`** (and helpers it calls). These apply when scoring **`category == "project"`** rows against the user query (especially when **`is_project_query`** is true). They **do not** replace strength gates in §7.1 — they adjust **ranking** among eligible rows.
+
+| Increment | Behavior (summary) |
+|-----------|---------------------|
+| **RETRIEVAL-04** | Bonus when **`is_project_query`**, **`evidence_count > 1`**, **`trend != "new"`** (favors reinforced project rows). |
+| **RETRIEVAL-05** | Small bonus when project **`value`** matches engineering-discipline substrings (**`step by step`**, **`incremental`**, **`test`**, **`stable`**, **`controlled`**). |
+| **RETRIEVAL-06** | Adds **`0.05 * confidence`** to **`score`** for **project** rows (after R05), tightening separation without changing non-project math. |
+| **RETRIEVAL-07** | Accumulates earlier project-related line bonuses into **`project_bonus`**, then **`project_bonus = min(project_bonus, 0.8)`** before applying (caps stacked boosts). |
+| **RETRIEVAL-08** | **`project_bonus += 0.05`** when the user query matches early **project-query** phrasing (e.g. **my/this/the** + **system/project** signals — see code `project_query_signals`). |
+| **RETRIEVAL-09** | **`project_bonus += 0.05`** on explicit **risk / priority / problem** phrasing in the user query (`explicit_project_priority_risk_signals`). |
+| **RETRIEVAL-10** | **`project_bonus += 0.05`** on explicit **decision / progress** phrasing (`explicit_project_decision_progress_signals`). |
+
+**Register / dates:** `docs/specs/memory_log_system.md` (session rows **RETRIEVAL-04–06**, **RETRIEVAL-07–10 + PACKAGING-01**, **PACKAGING-02**, **PACKAGING-03**, **PACKAGING-04**, **PACKAGING-05**, **PACKAGING-06**, **PACKAGING-07**) and `docs/handoffs/SESSION_SYNC_LOG.md` (same-day blocks + **bottom** anchors).
+
+### 7.7 Read-only project memory packaging (**PACKAGING-01–10**)
+
+**Location:** **`playground.py`** only (no retrieval scoring changes).
+
+| Increment / helper | Role |
+|--------------------|------|
+| **PACKAGING-01** — **`build_project_memory_snapshot`**, **`show_project_memory_snapshot`** | Compact **active `project`** rows only, deterministic sort, max item cap — **read-only** snapshot text. |
+| **PACKAGING-02** — **`_build_project_memory_package_top_priorities`**, used from **`build_project_memory_package`** | Prepends **`Top project priorities:`** plus up to **3** bullets (**`- {value}`**) built from the **first** non-empty **`packaged_rows`** values in **existing package order** (same order as snapshot bullets). If no non-empty values, **no** extra block or blank section — package body matches pre-PACKAGING-02 layout aside from the optional preface. |
+| **PACKAGING-03** — **`_build_project_memory_package_current_risks`**, **`_join_project_memory_package_prefaces`** | After priorities (when present), optional **`Current project risks:`** block: up to **2** bullets from the **first** qualifying packaged rows. Prefaces joined with **`\\n\\n`** only between non-empty blocks, then **`\\n\\n`** before the snapshot. |
+| **PACKAGING-04** — **`_compile_project_memory_package_risk_patterns`**, **`_value_matches_project_memory_risk_keyword`** | Risk qualification uses **case-insensitive whole-word** regex (**`\\b…\\b`**); **`failure mode`** allows internal whitespace; **`problem`** uses **`(?<!no )\\bproblem\\b`** so idiomatic **“no problem …”** does not qualify. Avoids substring hits such as **`norisk`** or **`bug`** inside **`debugging`**. |
+| **PACKAGING-05** — **`_compile_project_memory_package_decision_patterns`**, **`_value_matches_project_memory_decision_keyword`**, **`_build_project_memory_package_current_decisions`** | After risks (when present), optional **`Current project decisions:`** block: up to **2** bullets from the **first** qualifying **`packaged_rows`** in **existing order** (phrases **`going with`**, **`will use`**, **`move to`**; whole words **`decision`**, **`decided`**, **`chose`**, **`chosen`**, **`plan`**, **`planned`**). **No** block when none qualify. |
+| **PACKAGING-06** — **`_compile_project_memory_package_progress_patterns`**, **`_value_matches_project_memory_progress_keyword`**, **`_build_project_memory_package_current_progress`** | After decisions (when present), optional **`Current project progress:`** block: up to **2** bullets from the **first** qualifying **`packaged_rows`** in **existing order** (whole words **`completed`**, **`done`**, **`finished`**, **`milestone`**, **`progress`**, **`shipped`**, **`working`**, **`validated`**, **`passing`**). **No** block when none qualify. |
+| **PACKAGING-07** — **`_compile_project_memory_package_next_steps_patterns`**, **`_value_matches_project_memory_next_steps_keyword`**, **`_build_project_memory_package_next_steps`** | After progress (when present), optional **`Next project steps:`** block: up to **2** bullets from the **first** qualifying **`packaged_rows`** in **existing order** (phrases **`next step`**, **`next steps`**, **`going to`**, **`need to`**, **`to do`**; whole words **`next`**, **`plan`**, **`planning`**, **`upcoming`**, **`will`**, **`todo`**). **No** block when none qualify. **`_join_project_memory_package_prefaces`** joins up to **five** optional blocks (priorities, risks, decisions, progress, next steps). |
+| **`build_project_memory_package`**, **`show_project_memory_package`** | Full vs **`compact`** instruction prefix, row/section/strength metadata lines, optional **PACKAGING-02** through **PACKAGING-07** prefaced blocks, then **unchanged** snapshot body. Later **PACKAGING-08–10** rows may extend metadata / layout (see regression ids **`packaging04`** … **`packaging15`**). |
+
+**Prompt contract:** By design, **`build_messages`** / **`build_post_fetch_messages`** do **not** automatically inject these strings unless a future increment wires an explicit call site (see §8: post-fetch hop also omits structured memory). **Regression** covers behavior via **`tests/run_regression.py`** (`packaging01` … `packaging15` scenarios; **`packaging10_*`** … **`packaging15_*`** cover prefaces, ordering, **PACKAGING-04** risk word boundaries, **PACKAGING-05** decisions, **PACKAGING-06** progress, and **PACKAGING-07** next steps).
+
 ---
 
 ## 8. How memory reaches the LLM (`prompt_builder.build_messages`)
@@ -173,6 +214,8 @@ Renders selected rows as bullet lines: `- (category) value` for the system promp
 2. **Personal context:** If personal-context question → extra block from **`retrieve_personal_context_memory`** with instructions (durable vs weak, no invention, **do not override focus/stage**).
 3. **User purpose:** If personal-context **or** purpose query signals **or** money/context-lock/fallback heuristics → **`retrieve_user_purpose_memory`** and optional rules that **prioritize user purpose** in the answer ordering.
 4. **Agent purpose:** Merges **`retrieve_memory_for_purpose`** with general memories for wider recall.
+
+**RUNTIME-01 / RUNTIME-02 / RUNTIME-03 / RUNTIME-04 / RUNTIME-05 / RUNTIME-06 + REASONING-01 / REASONING-02 / REASONING-03 (`build_messages` only):** After dynamic blocks and **`_latency_cap_system_prompt`**, **`services/prompt_builder`** appends **`RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK`**: **RUNTIME-01** (execute directly), **RUNTIME-02** (no preamble/framing), **RUNTIME-03** (fixed four sections + order), **RUNTIME-04** (semantic rules per section; strict separation; skip if unsure; no inference beyond explicit text), **RUNTIME-05** (in-progress exclusions and ambiguity omission), **RUNTIME-06** (correctness constraints—wrong section / ambiguous / ongoing items are **incorrect**; explicit INVALID examples; binary “one correct output”; strict omission without forcing category), **REASONING-01** (if information is insufficient, state missing information directly; no guessing), **REASONING-02** (non-completion constraints: no invented filler to complete sections; empty headers are correct when valid items are absent; unsupported completion is incorrect), and **REASONING-03** (when explanation is needed, use **Known / Missing / Conclusion** with grounded, concise separation: Known = supported facts only; Missing = absent required inputs only; Conclusion = only validly implied outcomes, narrower when Missing is large). Same constant, same injection point—no **`if`** routing by task type.
 
 **Governance (system prompt text, paraphrased):**
 

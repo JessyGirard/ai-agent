@@ -652,6 +652,7 @@ def _count_project_memory_snapshot_strengths(project_rows):
 
 
 def _build_project_memory_package_top_priorities(packaged_rows, max_priority_items=3):
+    """PACKAGING-02: first ``max_priority_items`` non-empty ``value`` rows in ``packaged_rows`` order, or ``\"\"``."""
     if not packaged_rows:
         return ""
 
@@ -671,6 +672,246 @@ def _build_project_memory_package_top_priorities(packaged_rows, max_priority_ite
         return ""
 
     return "\n".join(lines)
+
+
+def _compile_project_memory_package_risk_patterns():
+    """PACKAGING-04: whole-word, case-insensitive patterns; ``problem`` skips idiomatic ``no problem``."""
+    out = []
+    for kw in (
+        "problem",
+        "risk",
+        "bug",
+        "failure mode",
+        "blocker",
+        "concern",
+        "issue",
+    ):
+        if kw == "failure mode":
+            out.append(re.compile(r"\bfailure\s+mode\b", re.I))
+        elif kw == "problem":
+            out.append(re.compile(r"(?<!no )\bproblem\b", re.I))
+        else:
+            out.append(re.compile(rf"\b{re.escape(kw)}\b", re.I))
+    return tuple(out)
+
+
+_PROJECT_MEMORY_PACKAGE_RISK_PATTERNS = _compile_project_memory_package_risk_patterns()
+
+
+def _value_matches_project_memory_risk_keyword(value):
+    if not (value or "").strip():
+        return False
+    return any(p.search(value) for p in _PROJECT_MEMORY_PACKAGE_RISK_PATTERNS)
+
+
+def _build_project_memory_package_current_risks(packaged_rows, max_risk_items=2):
+    """PACKAGING-03/04: first ``max_risk_items`` rows whose ``value`` matches a risk keyword (whole words)."""
+    if not packaged_rows:
+        return ""
+
+    lines = ["Current project risks:"]
+    count = 0
+
+    for mem in packaged_rows:
+        value = (mem.get("value") or "").strip()
+        if not value:
+            continue
+        if not _value_matches_project_memory_risk_keyword(value):
+            continue
+        lines.append(f"- {value}")
+        count += 1
+        if count >= max_risk_items:
+            break
+
+    if count == 0:
+        return ""
+
+    return "\n".join(lines)
+
+
+def _compile_project_memory_package_decision_patterns():
+    """PACKAGING-05: whole-word / phrase patterns for decision-like project lines."""
+    out = []
+    phrases = (
+        r"\bgoing\s+with\b",
+        r"\bwill\s+use\b",
+        r"\bmove\s+to\b",
+    )
+    for pat in phrases:
+        out.append(re.compile(pat, re.I))
+    for kw in (
+        "decision",
+        "decided",
+        "chose",
+        "chosen",
+        "plan",
+        "planned",
+    ):
+        out.append(re.compile(rf"\b{re.escape(kw)}\b", re.I))
+    return tuple(out)
+
+
+_PROJECT_MEMORY_PACKAGE_DECISION_PATTERNS = _compile_project_memory_package_decision_patterns()
+
+
+def _value_matches_project_memory_decision_keyword(value):
+    if not (value or "").strip():
+        return False
+    return any(p.search(value) for p in _PROJECT_MEMORY_PACKAGE_DECISION_PATTERNS)
+
+
+def _build_project_memory_package_current_decisions(packaged_rows, max_decision_items=2):
+    """PACKAGING-05: first ``max_decision_items`` rows whose ``value`` matches a decision keyword."""
+    if not packaged_rows:
+        return ""
+
+    lines = ["Current project decisions:"]
+    count = 0
+
+    for mem in packaged_rows:
+        value = (mem.get("value") or "").strip()
+        if not value:
+            continue
+        if not _value_matches_project_memory_decision_keyword(value):
+            continue
+        lines.append(f"- {value}")
+        count += 1
+        if count >= max_decision_items:
+            break
+
+    if count == 0:
+        return ""
+
+    return "\n".join(lines)
+
+
+def _compile_project_memory_package_progress_patterns():
+    """PACKAGING-06: whole-word patterns for progress / completion-like project lines."""
+    out = []
+    for kw in (
+        "completed",
+        "done",
+        "finished",
+        "milestone",
+        "progress",
+        "shipped",
+        "working",
+        "validated",
+        "passing",
+    ):
+        out.append(re.compile(rf"\b{re.escape(kw)}\b", re.I))
+    return tuple(out)
+
+
+_PROJECT_MEMORY_PACKAGE_PROGRESS_PATTERNS = _compile_project_memory_package_progress_patterns()
+
+
+def _value_matches_project_memory_progress_keyword(value):
+    if not (value or "").strip():
+        return False
+    return any(p.search(value) for p in _PROJECT_MEMORY_PACKAGE_PROGRESS_PATTERNS)
+
+
+def _build_project_memory_package_current_progress(packaged_rows, max_progress_items=2):
+    """PACKAGING-06: first ``max_progress_items`` rows whose ``value`` matches a progress keyword."""
+    if not packaged_rows:
+        return ""
+
+    lines = ["Current project progress:"]
+    count = 0
+
+    for mem in packaged_rows:
+        value = (mem.get("value") or "").strip()
+        if not value:
+            continue
+        if not _value_matches_project_memory_progress_keyword(value):
+            continue
+        lines.append(f"- {value}")
+        count += 1
+        if count >= max_progress_items:
+            break
+
+    if count == 0:
+        return ""
+
+    return "\n".join(lines)
+
+
+def _compile_project_memory_package_next_steps_patterns():
+    """PACKAGING-07: whole-word / phrase patterns for upcoming / planned-work lines."""
+    out = []
+    phrases = (
+        r"\bnext\s+steps\b",
+        r"\bnext\s+step\b",
+        r"\bgoing\s+to\b",
+        r"\bneed\s+to\b",
+        r"\bto\s+do\b",
+    )
+    for pat in phrases:
+        out.append(re.compile(pat, re.I))
+    for kw in (
+        "next",
+        "plan",
+        "planning",
+        "upcoming",
+        "will",
+        "todo",
+    ):
+        out.append(re.compile(rf"\b{re.escape(kw)}\b", re.I))
+    return tuple(out)
+
+
+_PROJECT_MEMORY_PACKAGE_NEXT_STEPS_PATTERNS = _compile_project_memory_package_next_steps_patterns()
+
+
+def _value_matches_project_memory_next_steps_keyword(value):
+    if not (value or "").strip():
+        return False
+    return any(p.search(value) for p in _PROJECT_MEMORY_PACKAGE_NEXT_STEPS_PATTERNS)
+
+
+def _build_project_memory_package_next_steps(packaged_rows, max_next_step_items=2):
+    """PACKAGING-07: first ``max_next_step_items`` rows whose ``value`` matches a next-steps keyword."""
+    if not packaged_rows:
+        return ""
+
+    lines = ["Next project steps:"]
+    count = 0
+
+    for mem in packaged_rows:
+        value = (mem.get("value") or "").strip()
+        if not value:
+            continue
+        if not _value_matches_project_memory_next_steps_keyword(value):
+            continue
+        lines.append(f"- {value}")
+        count += 1
+        if count >= max_next_step_items:
+            break
+
+    if count == 0:
+        return ""
+
+    return "\n".join(lines)
+
+
+def _join_project_memory_package_prefaces(
+    top_priorities, current_risks, current_decisions, current_progress, next_steps
+):
+    """Non-empty preface blocks in order; trailing ``\\n\\n`` only when at least one block."""
+    parts = []
+    for block in (
+        top_priorities,
+        current_risks,
+        current_decisions,
+        current_progress,
+        next_steps,
+    ):
+        if block:
+            parts.append(block)
+    if not parts:
+        return ""
+    return "\n\n".join(parts) + "\n\n"
 
 
 def _count_project_memory_snapshot_sections(snapshot):
@@ -705,7 +946,13 @@ def build_project_memory_package(max_items=12, compact=False):
         packaged_rows
     )
     top_priorities = _build_project_memory_package_top_priorities(packaged_rows)
-    top_priorities_block = f"{top_priorities}\n\n" if top_priorities else ""
+    current_risks = _build_project_memory_package_current_risks(packaged_rows)
+    current_decisions = _build_project_memory_package_current_decisions(packaged_rows)
+    current_progress = _build_project_memory_package_current_progress(packaged_rows)
+    next_steps = _build_project_memory_package_next_steps(packaged_rows)
+    preface_block = _join_project_memory_package_prefaces(
+        top_priorities, current_risks, current_decisions, current_progress, next_steps
+    )
 
     if compact:
         return (
@@ -714,7 +961,7 @@ def build_project_memory_package(max_items=12, compact=False):
             f"Packaged project rows: {row_count}\n"
             f"Packaged sections: {section_count}\n"
             f"Packaged strengths: reinforced={reinforced_count}, new={new_count}\n\n"
-            f"{top_priorities_block}"
+            f"{preface_block}"
             f"{snapshot}"
         )
 
@@ -726,7 +973,7 @@ def build_project_memory_package(max_items=12, compact=False):
         f"Packaged project rows: {row_count}\n"
         f"Packaged sections: {section_count}\n"
         f"Packaged strengths: reinforced={reinforced_count}, new={new_count}\n\n"
-        f"{top_priorities_block}"
+        f"{preface_block}"
         f"{snapshot}"
     )
 
