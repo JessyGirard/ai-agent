@@ -1,0 +1,25 @@
+{
+  "suite_name": "tool2_prompt_response_smoke",
+  "target_name": "llm_prompt_response",
+  "cases": [
+    {
+      "name": "hello_world_smoke",
+      "lane": "prompt_response",
+      "prompt_input": "Say exactly: hello world",
+      "expected_response_contains": [
+        "hello",
+        "world"
+      ],
+      "assertions": {}
+    },
+    {
+      "name": "short_explanation_smoke",
+      "lane": "prompt_response",
+      "prompt_input": "In one short sentence, explain what onboarding means.",
+      "expected_response_contains": [
+        "onboarding"
+      ],
+      "assertions": {}
+    }
+  ]
+}

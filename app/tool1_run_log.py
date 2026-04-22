@@ -17,6 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app import tool1_log_redaction
+
 TOOL1_RUN_LOG_SCHEMA_VERSION = 1
 TOOL1_RUN_LOG_REL_PATH = Path("logs") / "tool1_runs.jsonl"
 
@@ -53,6 +55,10 @@ def append_tool1_run_record(record: dict, *, project_root: Path | None = None) -
         return False, f"{type(exc).__name__}: {exc}"
 
 
+def _redact_tool1_record(record: dict[str, Any]) -> dict[str, Any]:
+    return tool1_log_redaction.redact_tool1_record(record)
+
+
 def _requests_from_suite_cases(suite: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     cases = suite.get("cases") if isinstance(suite, dict) else None
@@ -67,6 +73,10 @@ def _requests_from_suite_cases(suite: dict[str, Any]) -> list[dict[str, Any]]:
                 "case_name": str(case.get("name") or ""),
                 "method": str(case.get("method") or ""),
                 "url": str(case.get("url") or ""),
+                "prompt_input": str(case.get("prompt_input") or ""),
+                "expected_response_contains": list(case.get("expected_response_contains") or [])
+                if isinstance(case.get("expected_response_contains"), list)
+                else [],
                 "headers": dict(case.get("headers") or {}),
                 "payload": case.get("payload") if isinstance(case.get("payload"), dict) else {},
                 "assertions": case.get("assertions") if isinstance(case.get("assertions"), dict) else {},
@@ -92,6 +102,10 @@ def _cases_outcome_from_result(result: dict[str, Any] | None) -> list[dict[str, 
             "name": c.get("name"),
             "ok": c.get("ok"),
             "lane": c.get("lane"),
+            "prompt_input": c.get("prompt_input"),
+            "expected_response_contains": list(c.get("expected_response_contains") or [])
+            if isinstance(c.get("expected_response_contains"), list)
+            else [],
             "status_code": c.get("status_code"),
             "latency_ms": c.get("latency_ms"),
             "failures": list(c.get("failures") or []) if isinstance(c.get("failures"), list) else [],
@@ -449,6 +463,8 @@ def try_log_suite_run(
         error=error,
         project_root=project_root,
     )
+    rec = _redact_tool1_record(rec)
+    rec["summary"] = compose_tool1_run_human_summary(rec)
     ok, err = append_tool1_run_record(rec, project_root=project_root)
     return None if ok else (err or "unknown logging error")
 
@@ -479,5 +495,7 @@ def try_log_single_request_run(
         input_snapshot=input_snapshot,
         project_root=project_root,
     )
+    rec = _redact_tool1_record(rec)
+    rec["summary"] = compose_tool1_run_human_summary(rec)
     ok, err = append_tool1_run_record(rec, project_root=project_root)
     return None if ok else (err or "unknown logging error")

@@ -23,6 +23,8 @@ from tools.fetch_page import fetch_failure_tag, fetch_page
 import playground
 from core import persistence as persistence_core
 from app.system_eval_operator import run_tool1_system_eval_http
+from app.tool2_operator import run_tool2_prompt_response_eval
+from app.tool3_operator import run_tool3_regression_eval
 from core import system_eval as system_eval_core
 
 
@@ -4473,6 +4475,34 @@ def test_interaction01_routes_simple_conversation_to_conversation_mode():
         assert "Structural output (RUNTIME-03):" not in system_prompt
 
 
+def test_interaction01_routes_greeting_variants_to_conversation_mode():
+    reset_agent_state()
+    prompts = (
+        "Hello Joshua",
+        "Bonjour Joshua",
+        "Hi Joshua",
+        "Hey Joshua",
+        "  hello   joshua  ",
+        "HELLO JOSHUA",
+        "bonjour joshua!",
+    )
+    for q in prompts:
+        assert prompt_builder.user_input_needs_conversation_mode(q), repr(q)
+        system_prompt, _ = playground.build_messages(q)
+        assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+        assert "Structural output (RUNTIME-03):" not in system_prompt
+        assert "OUTPUT FORMAT RULES:" not in system_prompt
+
+
+def test_interaction01_greeting_with_task_intent_not_pure_conversation_mode():
+    reset_agent_state()
+    q = "Hello Joshua, what should I do next?"
+    assert not prompt_builder.user_input_needs_conversation_mode(q)
+    system_prompt, _ = playground.build_messages(q)
+    assert "CONVERSATION MODE (INTERACTION-01):" not in system_prompt
+    assert "OUTPUT FORMAT RULES:" in system_prompt
+
+
 def test_interaction01_reasoning_mode_still_wins():
     reset_agent_state()
     q = "The system failed after the update. What is the fix?"
@@ -4539,6 +4569,198 @@ def test_interaction012_routes_clarification_prompt_to_conversation_mode():
         assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in system_prompt
         assert "Structural output (RUNTIME-03):" not in system_prompt
         assert "OUTPUT FORMAT RULES:" not in system_prompt
+
+
+def test_interaction013_routes_acknowledgment_followups_to_conversation_mode():
+    reset_agent_state()
+    prompts = (
+        "That's much better",
+        "Thats much better",
+        "Nice",
+        "Yeah that makes sense now",
+        "That makes sense now",
+        "nice.",
+        "NICE!",
+    )
+    for q in prompts:
+        assert prompt_builder.user_input_needs_conversation_mode(q), repr(q)
+        system_prompt, _ = playground.build_messages(q)
+        assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+        assert "Structural output (RUNTIME-03):" not in system_prompt
+        assert "OUTPUT FORMAT RULES:" not in system_prompt
+        assert "For short acknowledgment follow-ups (about 1-8 tokens, no task intent), the reply MUST be exactly one short sentence." in system_prompt
+        assert "the reply MUST NOT contain a question mark" in system_prompt
+
+
+def test_interaction013_acknowledgment_with_task_intent_stays_task_oriented():
+    reset_agent_state()
+    q = "That's better, what should I do next?"
+    assert not prompt_builder.user_input_needs_conversation_mode(q)
+    system_prompt, _ = playground.build_messages(q)
+    assert "CONVERSATION MODE (INTERACTION-01):" not in system_prompt
+    assert "LIGHT TASK MODE:" in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+
+
+def test_interaction013_help_prompt_remains_conversational():
+    reset_agent_state()
+    q = "Can you help me with this?"
+    assert prompt_builder.user_input_needs_conversation_mode(q)
+    system_prompt, _ = playground.build_messages(q)
+    assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+    assert "Structural output (RUNTIME-03):" not in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+    assert "For generic help asks (for example \"Can you help me with this?\"), a single short clarifying question is allowed." in system_prompt
+
+
+def test_interaction014_format_style_questions_require_plain_prose_guidance():
+    reset_agent_state()
+    q = "Why do you give me answers in that format?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+    assert "Questions about answer format, style, or why a format was used MUST still be answered in plain prose." in system_prompt
+    assert "unless the user explicitly requests those exact headers." in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+    assert "Reasoning-structure control gate (REASONING-06):" not in system_prompt
+
+
+def test_interaction015_plain_answer_override_routes_to_conversation_mode():
+    reset_agent_state()
+    q = "Can you answer that normally?"
+    assert prompt_builder.user_input_needs_plain_answer_override(q)
+    assert prompt_builder.user_input_needs_conversation_mode(q)
+    system_prompt, _ = playground.build_messages(q)
+    assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+    assert "PLAIN ANSWER OVERRIDE (narrow):" in system_prompt
+    assert "The reply MUST be plain prose" in system_prompt
+    assert "The reply MUST NOT introduce analysis framing" in system_prompt
+    assert "Briefly mirror what they asked for" in system_prompt
+    assert "Do not let the entire reply be only a generic open-ended question" in system_prompt
+    assert "What would you like to know?" in system_prompt
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+    assert "Use exactly these three sections in this order:\n\nKnown:" not in system_prompt
+
+
+def test_optiona_simple_factual_routes_to_direct_answer_mode():
+    reset_agent_state()
+    q = "What is the capital of France?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+    assert "Structural output (RUNTIME-03):" not in system_prompt
+
+
+def test_optiona_simple_explanation_routes_to_direct_answer_mode():
+    reset_agent_state()
+    q = "What does Tool 1 do?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+    assert "Structural output (RUNTIME-03):" not in system_prompt
+
+
+def test_optiona_task_oriented_prompt_keeps_structured_path():
+    reset_agent_state()
+    q = "What should I do next?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "CONVERSATION MODE (INTERACTION-01):" not in system_prompt
+    assert "LIGHT TASK MODE:" in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+    assert "Use exactly these three sections in this order:\n\nAnswer:" not in system_prompt
+    assert "Conversation mode (INTERACTION-01):" in system_prompt
+
+
+def test_light_task_mode_accepts_short_prefix_with_comma_before_next_step():
+    reset_agent_state()
+    q = "That's better, what should I do next?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "LIGHT TASK MODE:" in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+    assert "Use exactly these three sections in this order:\n\nAnswer:" not in system_prompt
+
+
+def test_light_task_mode_okay_whats_next_step_with_prefix():
+    reset_agent_state()
+    q = "Okay, what's the next step?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "LIGHT TASK MODE:" in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+
+
+def test_light_task_mode_alright_what_should_i_try_with_prefix():
+    reset_agent_state()
+    q = "Alright, what should I try?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "LIGHT TASK MODE:" in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+
+
+def test_light_task_mode_prompt_requires_one_concrete_action_or_one_question():
+    """LIGHT TASK MODE: decisiveness block (Jessy + ChatGPT increment)."""
+    reset_agent_state()
+    for q in (
+        "What should I do next?",
+        "That's better, what should I do next?",
+        "Alright, what should I try?",
+    ):
+        system_prompt, _ = playground.build_messages(q)
+        assert "LIGHT TASK MODE:" in system_prompt
+        assert "OUTPUT FORMAT RULES:" not in system_prompt
+        assert "DECISIVENESS:" in system_prompt
+        assert "FIRST SENTENCE:" in system_prompt
+        assert "one precise clarifying question" in system_prompt
+        assert "vague-only coaching" in system_prompt
+        assert "do NOT invent repo paths" in system_prompt
+
+
+def test_clarify_first_undefined_implement_placeholder_routes_without_structured_template():
+    reset_agent_state()
+    for q in (
+        "What should I do next to implement X?",
+        "How should I build Y?",
+        "OK, what should I do next to implement z?",
+    ):
+        system_prompt, _ = playground.build_messages(q)
+        assert "CLARIFY-FIRST (UNDEFINED IMPLEMENT/BUILD TARGET):" in system_prompt
+        assert "OUTPUT FORMAT RULES:" not in system_prompt
+        assert "LIGHT TASK MODE:" not in system_prompt
+
+
+def test_implement_with_py_path_stays_heavy_not_clarify_first():
+    reset_agent_state()
+    q = "What should I do next to implement the fix in parser.py?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "CLARIFY-FIRST (UNDEFINED IMPLEMENT/BUILD TARGET):" not in system_prompt
+    assert "OUTPUT FORMAT RULES:" in system_prompt
+
+
+def test_light_task_comma_still_heavy_when_implement_follows():
+    reset_agent_state()
+    q = "OK, what should I do next to implement X?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "LIGHT TASK MODE:" not in system_prompt
+    assert "CLARIFY-FIRST (UNDEFINED IMPLEMENT/BUILD TARGET):" in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+
+
+def test_heavy_next_step_stays_open_conversation_structure():
+    reset_agent_state()
+    q = "What should I do next to implement the fix in parser.py?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "LIGHT TASK MODE:" not in system_prompt
+    assert "OUTPUT FORMAT RULES:" in system_prompt
+    assert "Current state:" in system_prompt
+
+
+def test_optiona_no_mode_collision_for_simple_factual_prompt():
+    reset_agent_state()
+    q = "What is the capital of France?"
+    system_prompt, _ = playground.build_messages(q)
+    assert "CONVERSATION MODE (INTERACTION-01):" in system_prompt
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in system_prompt
+    assert "OUTPUT FORMAT RULES:" not in system_prompt
+    assert "Structural output (RUNTIME-03):" not in system_prompt
 
 
 def test_formatting_review():
@@ -6205,6 +6427,969 @@ def test_system_eval_validate_suite_rejects_invalid_lane():
         assert "throughput" in str(exc), exc
 
 
+def test_system_eval_prompt_response_lane_requires_prompt_fields():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "pr-missing-fields",
+                "target_name": "t",
+                "cases": [
+                    {
+                        "name": "pr1",
+                        "lane": "prompt_response",
+                        "assertions": {},
+                    }
+                ],
+            }
+        )
+        assert False, "Expected ValueError for missing prompt_response fields"
+    except ValueError as exc:
+        msg = str(exc).lower()
+        assert "prompt_input" in msg or "expected_response_contains" in msg, exc
+
+
+def test_system_eval_prompt_response_lane_normalizes_prompt_fields():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-normalize",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "  hello model  ",
+                    "expected_response_contains": ["answer", "done"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+    case = suite["cases"][0]
+    assert case["lane"] == "prompt_response", case
+    assert case["prompt_input"] == "hello model", case
+    assert case["expected_response_contains"] == ["answer", "done"], case
+
+
+def test_system_eval_prompt_response_lane_normalizes_not_contains_field():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-normalize-not-contains",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello model",
+                    "expected_response_contains": ["hello"],
+                    "expected_response_not_contains": ["error", "forbidden"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+    case = suite["cases"][0]
+    assert case["expected_response_not_contains"] == ["error", "forbidden"], case
+
+
+def test_system_eval_prompt_response_lane_executes_with_prompt_adapter_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-execute",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_case(self, case):
+            _ = case
+            assert False, "prompt_response lane should use run_prompt_case, not run_case"
+
+        def run_prompt_case(self, case):
+            assert case["prompt_input"] == "hello", case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=7,
+                response_headers={"Content-Type": "text/plain"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert row["lane"] == "prompt_response", row
+    assert row["ok"] is True, row
+    assert row["failures"] == [], row
+
+
+def test_system_eval_prompt_response_lane_fails_on_forbidden_substring():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-forbidden-fail",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_not_contains": ["secret-token"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world secret-token",
+                latency_ms=4,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert row["ok"] is False, row
+    assert any("expected_response_forbidden_substring_present: secret-token" in f for f in row["failures"]), row
+
+
+def test_system_eval_prompt_response_lane_regex_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-regex-pass",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["hello"],
+                    "expected_response_regex": r"world\s+2026",
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world 2026",
+                latency_ms=3,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_prompt_response_lane_regex_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-regex-fail",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["hello"],
+                    "expected_response_regex": r"forbidden\d+",
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=3,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert any("expected_response_regex_mismatch:" in f for f in row["failures"]), row
+
+
+def test_system_eval_prompt_response_lane_starts_with_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-starts-with-pass",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_starts_with": "hello",
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=2,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert row["expected_response_starts_with"] == "hello", row
+
+
+def test_system_eval_prompt_response_lane_starts_with_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-starts-with-fail",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_starts_with": "greetings",
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=2,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert row["ok"] is False, row
+    assert any("expected_response_prefix_mismatch:" in f for f in row["failures"]), row
+
+
+def test_system_eval_prompt_response_lane_ends_with_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-ends-with-pass",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_ends_with": "world",
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=2,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert row["expected_response_ends_with"] == "world", row
+
+
+def test_system_eval_prompt_response_lane_ends_with_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-ends-with-fail",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_ends_with": "goodbye",
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=2,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert row["ok"] is False, row
+    assert any("expected_response_suffix_mismatch:" in f for f in row["failures"]), row
+
+
+def test_system_eval_prompt_response_lane_equals_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-equals-pass",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_equals": "hello world",
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=2,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert row["expected_response_equals"] == "hello world", row
+
+
+def test_system_eval_prompt_response_lane_equals_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-equals-fail",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_equals": "HELLO WORLD",
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=2,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert row["ok"] is False, row
+    assert any("expected_response_exact_mismatch" in f for f in row["failures"]), row
+
+
+def test_system_eval_prompt_response_lane_length_min_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-length-min-pass",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_length_min": 5,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=2,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert row["expected_response_length_min"] == 5, row
+
+
+def test_system_eval_prompt_response_lane_length_min_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-length-min-fail",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_length_min": 20,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=2,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert row["ok"] is False, row
+    assert any("expected_response_length_too_short:" in f for f in row["failures"]), row
+
+
+def test_system_eval_prompt_response_lane_length_max_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-length-max-pass",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_length_max": 20,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=2,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert row["expected_response_length_max"] == 20, row
+
+
+def test_system_eval_prompt_response_lane_length_max_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-length-max-fail",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_length_max": 5,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=2,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert row["ok"] is False, row
+    assert any("expected_response_length_too_long:" in f for f in row["failures"]), row
+
+
+def test_system_eval_prompt_response_lane_length_bounds_validate_when_ordered():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-length-bounds-valid",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "expected_response_length_min": 5,
+                    "expected_response_length_max": 20,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+    case = suite["cases"][0]
+    assert case["expected_response_length_min"] == 5, case
+    assert case["expected_response_length_max"] == 20, case
+
+
+def test_system_eval_prompt_response_lane_length_bounds_reject_inverted_range():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "pr-length-bounds-invalid",
+                "target_name": "t",
+                "cases": [
+                    {
+                        "name": "pr1",
+                        "lane": "prompt_response",
+                        "prompt_input": "hello",
+                        "expected_response_contains": ["world"],
+                        "expected_response_length_min": 50,
+                        "expected_response_length_max": 10,
+                        "assertions": {},
+                    }
+                ],
+            }
+        )
+        assert False, "Expected ValueError for inverted response length bounds"
+    except ValueError as exc:
+        msg = str(exc)
+        assert "expected_response_length_min" in msg and "expected_response_length_max" in msg, msg
+
+
+def test_system_eval_prompt_response_lane_length_min_rejects_bool():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "pr-length-min-bool",
+                "target_name": "t",
+                "cases": [
+                    {
+                        "name": "pr1",
+                        "lane": "prompt_response",
+                        "prompt_input": "hello",
+                        "expected_response_contains": ["world"],
+                        "expected_response_length_min": True,
+                        "assertions": {},
+                    }
+                ],
+            }
+        )
+        assert False, "Expected ValueError for bool expected_response_length_min"
+    except ValueError as exc:
+        msg = str(exc)
+        assert "expected_response_length_min" in msg, msg
+
+
+def test_system_eval_prompt_response_lane_length_max_rejects_bool():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "pr-length-max-bool",
+                "target_name": "t",
+                "cases": [
+                    {
+                        "name": "pr1",
+                        "lane": "prompt_response",
+                        "prompt_input": "hello",
+                        "expected_response_contains": ["world"],
+                        "expected_response_length_max": False,
+                        "assertions": {},
+                    }
+                ],
+            }
+        )
+        assert False, "Expected ValueError for bool expected_response_length_max"
+    except ValueError as exc:
+        msg = str(exc)
+        assert "expected_response_length_max" in msg, msg
+
+
+def test_system_eval_prompt_response_fields_rejected_outside_prompt_lane():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "pr-fields-outside-lane",
+                "target_name": "t",
+                "cases": [
+                    {
+                        "name": "c1",
+                        "lane": "correctness",
+                        "method": "GET",
+                        "url": "https://example.com/health",
+                        "expected_response_contains": ["ok"],
+                        "assertions": {"status_code": 200},
+                    }
+                ],
+            }
+        )
+        assert False, "Expected ValueError for prompt-response-only field outside prompt_response lane"
+    except ValueError as exc:
+        msg = str(exc)
+        assert "prompt-response-only field" in msg and "expected_response_contains" in msg, msg
+
+
+def test_system_eval_prompt_input_rejected_when_lane_omitted():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "pr-input-without-lane",
+                "target_name": "t",
+                "cases": [
+                    {
+                        "name": "c1",
+                        "method": "GET",
+                        "url": "https://example.com/health",
+                        "prompt_input": "hello model",
+                        "assertions": {"status_code": 200},
+                    }
+                ],
+            }
+        )
+        assert False, "Expected ValueError for prompt_input without prompt_response lane"
+    except ValueError as exc:
+        msg = str(exc)
+        assert "prompt-response-only field" in msg and "prompt_input" in msg, msg
+
+
+def test_system_eval_prompt_response_lane_fails_on_missing_substring():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-execute-fail",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world", "banana"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="hello world",
+                latency_ms=4,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert row["ok"] is False, row
+    assert any("expected_response_missing_substring: banana" in f for f in row["failures"]), row
+
+
+def test_system_eval_prompt_response_lane_fails_when_prompt_adapter_missing():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-no-adapter",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class HttpOnlyAdapter:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(ok=True, status_code=200, output_text="ok", latency_ms=1)
+
+    result = system_eval_core.execute_suite(suite, adapter=HttpOnlyAdapter())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert row["ok"] is False, row
+    assert any("prompt_response_adapter_missing" in f for f in row["failures"]), row
+
+
+def test_system_eval_prompt_response_lane_coerces_non_string_output_text():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-non-string-output",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["42"],
+                    "expected_response_equals": "42",
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text=42,
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert row["ok"] is True, row
+    assert row["output_full"] == "42", row
+
+
+def test_system_eval_prompt_response_lane_non_string_output_fails_cleanly():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-non-string-output-fail",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["nomatch-token"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text={"status": "ok"},
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert row["ok"] is False, row
+    assert any("expected_response_missing_substring: nomatch-token" in f for f in row["failures"]), row
+    assert "{'status': 'ok'}" in row["output_preview"], row
+
+
+def test_system_eval_prompt_response_lane_adapter_exception_fails_cleanly():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-adapter-exception",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def run_prompt_case(self, case):
+            _ = case
+            raise RuntimeError("mock prompt adapter boom")
+
+    result = system_eval_core.execute_suite(suite, adapter=PromptAdapter())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert row["ok"] is False, row
+    assert any("prompt_response_adapter_exception:" in f for f in row["failures"]), row
+
+
+def test_system_eval_prompt_response_lane_fail_fast_stops_after_first_failure():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-fail-fast-true",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "first",
+                    "expected_response_contains": ["must-not-match"],
+                    "assertions": {},
+                },
+                {
+                    "name": "pr2",
+                    "lane": "prompt_response",
+                    "prompt_input": "second",
+                    "expected_response_contains": ["second"],
+                    "assertions": {},
+                },
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def __init__(self):
+            self.calls = 0
+
+        def run_prompt_case(self, case):
+            self.calls += 1
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="first response",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    adapter = PromptAdapter()
+    result = system_eval_core.execute_suite(suite, adapter=adapter, fail_fast=True)
+    assert result["ok"] is False, result
+    assert result["executed_cases"] == 1, result
+    assert adapter.calls == 1, adapter.calls
+
+
+def test_system_eval_prompt_response_lane_fail_fast_false_runs_all_cases():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "pr-fail-fast-false",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "first",
+                    "expected_response_contains": ["must-not-match"],
+                    "assertions": {},
+                },
+                {
+                    "name": "pr2",
+                    "lane": "prompt_response",
+                    "prompt_input": "second",
+                    "expected_response_contains": ["second"],
+                    "assertions": {},
+                },
+            ],
+        }
+    )
+
+    class PromptAdapter:
+        def __init__(self):
+            self.calls = 0
+
+        def run_prompt_case(self, case):
+            self.calls += 1
+            prompt = str(case.get("prompt_input") or "")
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text=f"{prompt} response",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    adapter = PromptAdapter()
+    result = system_eval_core.execute_suite(suite, adapter=adapter, fail_fast=False)
+    assert result["ok"] is False, result
+    assert result["executed_cases"] == 2, result
+    assert adapter.calls == 2, adapter.calls
+
+
 def test_system_eval_lane_preserved_in_results_and_artifacts():
     suite = system_eval_core.validate_suite(
         {
@@ -6474,6 +7659,1171 @@ def test_run_tool1_system_eval_operator_missing_suite_file():
         assert "not found" in bundle["error"].lower()
 
 
+def test_run_tool1_system_eval_operator_default_adapter_prompt_lane_fails_cleanly():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        out = root / "out"
+        suite_data = {
+            "suite_name": "prompt-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "pr1",
+                    "lane": "prompt_response",
+                    "prompt_input": "Say hello world",
+                    "expected_response_contains": ["hello", "world"],
+                    "assertions": {},
+                }
+            ],
+        }
+        suite_path = root / "suite_prompt.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+
+        bundle = run_tool1_system_eval_http(
+            str(suite_path),
+            str(out),
+            "prompt_run",
+            project_root=root,
+            adapter=None,
+        )
+        assert bundle.get("error") in (None, ""), bundle
+        assert bundle["ok"] is False, bundle
+        row = (bundle.get("result") or {}).get("cases", [{}])[0]
+        fails = row.get("failures") or []
+        assert any("prompt_response_adapter_missing" in str(f) for f in fails), row
+        assert Path(bundle["artifact_paths"]["json_path"]).is_file(), bundle
+
+
+def test_run_tool1_system_eval_operator_default_adapter_keeps_http_path():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        out = root / "out"
+        suite_data = {
+            "suite_name": "http-suite-default-adapter",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {"status_code": 200, "contains_all": ["ok"]},
+                }
+            ],
+        }
+        suite_path = root / "suite_http.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+
+        fake_res = system_eval_core.AdapterResult(
+            ok=True, status_code=200, output_text="ok body", latency_ms=2, response_headers={}
+        )
+        with patch("core.system_eval.HttpTargetAdapter.run_case", return_value=fake_res):
+            bundle = run_tool1_system_eval_http(
+                str(suite_path),
+                str(out),
+                "http_run",
+                project_root=root,
+                adapter=None,
+            )
+        assert bundle.get("error") in (None, ""), bundle
+        assert bundle["ok"] is True, bundle
+        assert Path(bundle["artifact_paths"]["json_path"]).is_file(), bundle
+
+
+def test_run_tool2_prompt_response_eval_rejects_non_prompt_lane():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool2-bad-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "http-case",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {},
+                }
+            ],
+        }
+        suite_path = root / "suite_bad.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        bundle = run_tool2_prompt_response_eval(
+            str(suite_path),
+            str(root / "out"),
+            "tool2_bad",
+            project_root=root,
+        )
+        assert bundle["ok"] is False, bundle
+        assert "lane='prompt_response'" in (bundle.get("error") or ""), bundle
+
+
+def test_run_tool2_prompt_response_eval_missing_suite_logs_failure_record():
+    from app import tool2_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        missing_suite = root / "does_not_exist_tool2_suite.json"
+        log_path = tool2_run_log.tool2_run_log_path(root)
+        bundle = run_tool2_prompt_response_eval(
+            str(missing_suite),
+            str(root / "out"),
+            "tool2_missing_suite",
+            project_root=root,
+        )
+        assert bundle["ok"] is False, bundle
+        assert "Suite file not found" in (bundle.get("error") or ""), bundle
+        assert bundle.get("run_log_error") in (None, ""), bundle
+        assert "tool2_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        assert log_path.is_file(), "missing suite should still write tool2 run log record"
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec.get("run_type") == "tool2_suite_run", rec
+        assert isinstance(rec.get("error"), str) and "Suite file not found" in rec.get("error"), rec
+
+
+def test_run_tool2_prompt_response_eval_invalid_json_logs_failure_record():
+    from app import tool2_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_path = root / "suite_tool2_invalid.json"
+        suite_path.write_text("{ invalid json", encoding="utf-8")
+        log_path = tool2_run_log.tool2_run_log_path(root)
+        bundle = run_tool2_prompt_response_eval(
+            str(suite_path),
+            str(root / "out"),
+            "tool2_invalid_json",
+            project_root=root,
+        )
+        assert bundle["ok"] is False, bundle
+        assert isinstance(bundle.get("error"), str) and bundle.get("error"), bundle
+        assert bundle.get("run_log_error") in (None, ""), bundle
+        assert "tool2_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        assert log_path.is_file(), "invalid JSON should still write tool2 run log record"
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec.get("run_type") == "tool2_suite_run", rec
+        assert isinstance(rec.get("error"), str) and rec.get("error"), rec
+
+
+def test_run_tool2_prompt_response_eval_invalid_timeout_rejected_and_logged():
+    from app import tool2_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_path = root / "suite_tool2_timeout_invalid.json"
+        suite_path.write_text(
+            json.dumps(
+                {
+                    "suite_name": "tool2-timeout-invalid",
+                    "target_name": "fake",
+                    "cases": [
+                        {
+                            "name": "prompt-case",
+                            "lane": "prompt_response",
+                            "prompt_input": "hello",
+                            "expected_response_contains": ["hello"],
+                            "assertions": {},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        log_path = tool2_run_log.tool2_run_log_path(root)
+        bundle = run_tool2_prompt_response_eval(
+            str(suite_path),
+            str(root / "out"),
+            "tool2_timeout_invalid",
+            project_root=root,
+            default_timeout_seconds=0,
+        )
+        assert bundle["ok"] is False, bundle
+        assert "default_timeout_seconds" in str(bundle.get("error") or ""), bundle
+        assert "tool2_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        assert log_path.is_file(), "invalid timeout should still write tool2 run log record"
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec.get("run_type") == "tool2_suite_run", rec
+        assert "default_timeout_seconds" in str(rec.get("error") or ""), rec
+
+
+def test_run_tool2_prompt_response_eval_timeout_bool_rejected():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_path = root / "suite_tool2_timeout_bool.json"
+        suite_path.write_text(
+            json.dumps(
+                {
+                    "suite_name": "tool2-timeout-bool",
+                    "target_name": "fake",
+                    "cases": [
+                        {
+                            "name": "prompt-case",
+                            "lane": "prompt_response",
+                            "prompt_input": "hello",
+                            "expected_response_contains": ["hello"],
+                            "assertions": {},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        bundle = run_tool2_prompt_response_eval(
+            str(suite_path),
+            str(root / "out"),
+            "tool2_timeout_bool",
+            project_root=root,
+            default_timeout_seconds=True,
+        )
+        assert bundle["ok"] is False, bundle
+        assert "default_timeout_seconds" in str(bundle.get("error") or ""), bundle
+
+
+def test_run_tool2_prompt_response_eval_default_adapter_passes():
+    from app import tool2_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool2-good-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "prompt-case",
+                    "lane": "prompt_response",
+                    "prompt_input": "say hello world",
+                    "expected_response_contains": ["hello", "world"],
+                    "assertions": {},
+                }
+            ],
+        }
+        suite_path = root / "suite_good.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        tool2_log_path = tool2_run_log.tool2_run_log_path(root)
+        with patch("app.tool2_operator._default_prompt_executor", return_value="hello world from tool2"):
+            bundle = run_tool2_prompt_response_eval(
+                str(suite_path),
+                str(root / "out"),
+                "tool2_good",
+                project_root=root,
+                default_timeout_seconds=37,
+            )
+        assert bundle.get("error") in (None, ""), bundle
+        assert bundle["ok"] is True, bundle
+        assert Path(bundle["artifact_paths"]["json_path"]).is_file(), bundle
+        assert "tool2_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        rec = json.loads(tool2_log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        cfg = rec.get("configuration") or {}
+        assert cfg.get("timeout_seconds") == 37, rec
+
+
+def test_tool2_prompt_response_logging_includes_prompt_fields():
+    from app import tool1_run_log, tool2_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool2-log-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "prompt-case",
+                    "lane": "prompt_response",
+                    "prompt_input": "Explain onboarding",
+                    "expected_response_contains": ["onboarding", "steps"],
+                    "expected_response_not_contains": ["secret"],
+                    "expected_response_regex": r"onboarding\s+steps",
+                    "expected_response_starts_with": "onboarding",
+                    "expected_response_ends_with": "listed",
+                    "expected_response_equals": "onboarding steps are listed",
+                    "expected_response_length_min": 10,
+                    "expected_response_length_max": 200,
+                    "assertions": {},
+                }
+            ],
+        }
+        suite_path = root / "suite_tool2_log.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        tool2_log_path = tool2_run_log.tool2_run_log_path(root)
+        tool1_log_path = tool1_run_log.tool1_run_log_path(root)
+
+        with patch("app.tool2_operator._default_prompt_executor", return_value="onboarding steps are listed"):
+            bundle = run_tool2_prompt_response_eval(
+                str(suite_path),
+                str(root / "out"),
+                "tool2_log",
+                project_root=root,
+            )
+        assert bundle["ok"] is True, bundle
+        assert tool2_log_path.is_file(), "tool2 run should be logged to tool2 log"
+        assert not tool1_log_path.exists(), "tool2 run should not write tool1 log"
+        rec = json.loads(tool2_log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec.get("run_type") == "tool2_suite_run", rec
+        req0 = (rec.get("requests") or [{}])[0]
+        case0 = (rec.get("cases_outcome") or [{}])[0]
+        assert req0.get("prompt_input") == "Explain onboarding", req0
+        assert req0.get("expected_response_contains") == ["onboarding", "steps"], req0
+        assert req0.get("expected_response_not_contains") == ["secret"], req0
+        assert req0.get("expected_response_regex") == r"onboarding\s+steps", req0
+        assert req0.get("expected_response_starts_with") == "onboarding", req0
+        assert req0.get("expected_response_ends_with") == "listed", req0
+        assert req0.get("expected_response_equals") == "onboarding steps are listed", req0
+        assert req0.get("expected_response_length_min") == 10, req0
+        assert req0.get("expected_response_length_max") == 200, req0
+        assert case0.get("prompt_input") == "Explain onboarding", case0
+        assert case0.get("expected_response_contains") == ["onboarding", "steps"], case0
+        assert case0.get("expected_response_not_contains") == ["secret"], case0
+        assert case0.get("expected_response_regex") == r"onboarding\s+steps", case0
+        assert case0.get("expected_response_starts_with") == "onboarding", case0
+        assert case0.get("expected_response_ends_with") == "listed", case0
+        assert case0.get("expected_response_equals") == "onboarding steps are listed", case0
+        assert case0.get("expected_response_length_min") == 10, case0
+        assert case0.get("expected_response_length_max") == 200, case0
+
+
+def test_tool2_logging_does_not_depend_on_tool1_build_helpers():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool2-decouple-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "prompt-case",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["hello"],
+                    "assertions": {},
+                }
+            ],
+        }
+        suite_path = root / "suite_tool2_decouple.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        with patch(
+            "app.tool1_run_log.build_tool1_run_record_suite",
+            side_effect=RuntimeError("tool1 helper should not be used by tool2 logger"),
+        ):
+            with patch("app.tool2_operator._default_prompt_executor", return_value="hello from tool2"):
+                bundle = run_tool2_prompt_response_eval(
+                    str(suite_path),
+                    str(root / "out"),
+                    "tool2_decouple",
+                    project_root=root,
+                )
+        assert bundle["ok"] is True, bundle
+
+
+def test_tool2_prompt_response_sample_suite_shape_validates():
+    suite_path = PROJECT_ROOT / "system_tests" / "suites" / "tool2_prompt_demo" / "tool2_prompt_response_smoke.json"
+    assert suite_path.is_file(), suite_path
+    raw = json.loads(suite_path.read_text(encoding="utf-8"))
+    suite = system_eval_core.validate_suite(raw)
+    assert suite.get("suite_name") == "tool2_prompt_response_smoke", suite
+    cases = suite.get("cases") or []
+    assert len(cases) >= 1, suite
+    for c in cases:
+        assert c.get("lane") == "prompt_response", c
+        assert isinstance(c.get("prompt_input"), str) and c.get("prompt_input").strip(), c
+        expected = c.get("expected_response_contains")
+        assert isinstance(expected, list) and len(expected) >= 1, c
+
+
+def test_run_tool2_prompt_response_eval_artifact_failure_is_reported_and_logged():
+    from app import tool2_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool2-artifact-fail-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "prompt-case",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "assertions": {},
+                }
+            ],
+        }
+        suite_path = root / "suite_tool2_artifact_fail.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        log_path = tool2_run_log.tool2_run_log_path(root)
+
+        with patch("app.tool2_operator._default_prompt_executor", return_value="hello world"):
+            with patch("app.tool2_operator.system_eval.write_result_artifacts", side_effect=OSError("disk full")):
+                bundle = run_tool2_prompt_response_eval(
+                    str(suite_path),
+                    str(root / "out"),
+                    "tool2_artifact_fail",
+                    project_root=root,
+                    default_timeout_seconds=37,
+                )
+
+        assert bundle["ok"] is False, bundle
+        assert "Artifact write/read failed" in (bundle.get("error") or ""), bundle
+        assert "tool2_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        assert "run_log_error" in bundle, bundle
+        assert log_path.is_file(), "artifact failure should still write tool2 run log"
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec.get("run_type") == "tool2_suite_run", rec
+        assert rec.get("error"), rec
+        cfg = rec.get("configuration") or {}
+        assert cfg.get("timeout_seconds") == 37, rec
+
+
+def test_run_tool2_prompt_response_eval_execution_exception_is_reported_and_logged():
+    from app import tool2_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool2-execution-fail-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "prompt-case",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["world"],
+                    "assertions": {},
+                }
+            ],
+        }
+        suite_path = root / "suite_tool2_execution_fail.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        log_path = tool2_run_log.tool2_run_log_path(root)
+
+        with patch("app.tool2_operator.system_eval.execute_suite", side_effect=RuntimeError("boom")):
+            bundle = run_tool2_prompt_response_eval(
+                str(suite_path),
+                str(root / "out"),
+                "tool2_execution_fail",
+                project_root=root,
+                default_timeout_seconds=37,
+            )
+
+        assert bundle["ok"] is False, bundle
+        assert "Suite execution failed:" in (bundle.get("error") or ""), bundle
+        assert "tool2_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        assert "run_log_error" in bundle, bundle
+        assert log_path.is_file(), "execution exception should still write tool2 run log"
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec.get("run_type") == "tool2_suite_run", rec
+        assert rec.get("error"), rec
+        cfg = rec.get("configuration") or {}
+        assert cfg.get("timeout_seconds") == 37, rec
+
+
+def test_run_tool1_system_eval_operator_artifact_failure_is_reported_and_logged():
+    from app import tool1_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "artifact-fail-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {},
+                }
+            ],
+        }
+        suite_path = root / "suite.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        log_path = tool1_run_log.tool1_run_log_path(root)
+
+        class FakeAdapter:
+            def run_case(self, case):
+                _ = case
+                return system_eval_core.AdapterResult(
+                    ok=True, status_code=200, output_text="{}", latency_ms=1
+                )
+
+        with patch("app.system_eval_operator.system_eval.write_result_artifacts", side_effect=OSError("disk full")):
+            bundle = run_tool1_system_eval_http(
+                str(suite_path),
+                str(root / "out"),
+                "x",
+                project_root=root,
+                adapter=FakeAdapter(),
+            )
+
+        assert bundle["ok"] is False, bundle
+        assert "Artifact write/read failed" in (bundle.get("error") or ""), bundle
+        assert "run_log_error" in bundle, bundle
+        assert log_path.is_file(), "artifact failure should still write suite_run log"
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec["run_type"] == "suite_run", rec
+        assert rec.get("error"), rec
+
+
+def test_run_tool1_system_eval_operator_execution_exception_is_reported_and_logged():
+    from app import tool1_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "execution-fail-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "http://fake.local/x",
+                    "payload": {},
+                    "assertions": {},
+                }
+            ],
+        }
+        suite_path = root / "suite.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        log_path = tool1_run_log.tool1_run_log_path(root)
+
+        class FakeAdapter:
+            def run_case(self, case):
+                _ = case
+                return system_eval_core.AdapterResult(
+                    ok=True, status_code=200, output_text="{}", latency_ms=1
+                )
+
+        with patch("app.system_eval_operator.system_eval.execute_suite", side_effect=RuntimeError("boom")):
+            bundle = run_tool1_system_eval_http(
+                str(suite_path),
+                str(root / "out"),
+                "x",
+                project_root=root,
+                adapter=FakeAdapter(),
+            )
+
+        assert bundle["ok"] is False, bundle
+        assert "Suite execution failed:" in (bundle.get("error") or ""), bundle
+        assert "run_log_error" in bundle, bundle
+        assert log_path.is_file(), "execution exception should still write suite_run log"
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec["run_type"] == "suite_run", rec
+        assert rec.get("error"), rec
+
+
+def test_run_tool1_system_eval_operator_failure_bundle_contract():
+    """
+    Tool 1 closure guard: all operator failure paths should return a stable bundle shape
+    so UI/render code never has to special-case error branches.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+
+        # Case 1: missing suite file
+        b_missing = run_tool1_system_eval_http(
+            str(root / "missing.json"),
+            str(root / "out"),
+            "x",
+            project_root=root,
+            adapter=None,
+        )
+        for b in (b_missing,):
+            assert b["ok"] is False, b
+            assert isinstance(b.get("artifact_paths"), dict), b
+            assert b.get("artifact_paths") == {}, b
+            assert b.get("json_preview") == "", b
+            assert b.get("markdown_preview") == "", b
+            assert isinstance(b.get("error"), str) and b.get("error"), b
+            assert "run_log_error" in b, b
+
+        # Case 2: invalid suite JSON
+        bad_suite = root / "bad.json"
+        bad_suite.write_text("{ bad json", encoding="utf-8")
+        b_bad = run_tool1_system_eval_http(
+            str(bad_suite),
+            str(root / "out"),
+            "x",
+            project_root=root,
+            adapter=None,
+        )
+        assert b_bad["ok"] is False, b_bad
+        assert isinstance(b_bad.get("artifact_paths"), dict), b_bad
+        assert b_bad.get("artifact_paths") == {}, b_bad
+        assert b_bad.get("json_preview") == "", b_bad
+        assert b_bad.get("markdown_preview") == "", b_bad
+        assert isinstance(b_bad.get("error"), str) and b_bad.get("error"), b_bad
+        assert "run_log_error" in b_bad, b_bad
+
+
+def test_run_tool2_prompt_response_eval_failure_bundle_contract():
+    """
+    Tool 2 closure guard: all operator failure paths should return a stable bundle shape
+    so UI/render code never has to special-case error branches.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+
+        # Case 1: missing suite file
+        b_missing = run_tool2_prompt_response_eval(
+            str(root / "missing_tool2.json"),
+            str(root / "out"),
+            "x",
+            project_root=root,
+            adapter=None,
+        )
+        for b in (b_missing,):
+            assert b["ok"] is False, b
+            assert isinstance(b.get("artifact_paths"), dict), b
+            assert b.get("artifact_paths") == {}, b
+            assert b.get("json_preview") == "", b
+            assert b.get("markdown_preview") == "", b
+            assert isinstance(b.get("error"), str) and b.get("error"), b
+            assert "run_log_error" in b, b
+            assert "tool2_runs.jsonl" in str(b.get("run_log_path") or ""), b
+
+        # Case 2: invalid suite JSON
+        bad_suite = root / "bad_tool2.json"
+        bad_suite.write_text("{ bad json", encoding="utf-8")
+        b_bad = run_tool2_prompt_response_eval(
+            str(bad_suite),
+            str(root / "out"),
+            "x",
+            project_root=root,
+            adapter=None,
+        )
+        assert b_bad["ok"] is False, b_bad
+        assert isinstance(b_bad.get("artifact_paths"), dict), b_bad
+        assert b_bad.get("artifact_paths") == {}, b_bad
+        assert b_bad.get("json_preview") == "", b_bad
+        assert b_bad.get("markdown_preview") == "", b_bad
+        assert isinstance(b_bad.get("error"), str) and b_bad.get("error"), b_bad
+        assert "run_log_error" in b_bad, b_bad
+        assert "tool2_runs.jsonl" in str(b_bad.get("run_log_path") or ""), b_bad
+
+        # Case 3: lane rejection (non-prompt lane)
+        lane_bad = root / "lane_bad_tool2.json"
+        lane_bad.write_text(
+            json.dumps(
+                {
+                    "suite_name": "lane-shape",
+                    "target_name": "fake",
+                    "cases": [
+                        {
+                            "name": "http-case",
+                            "method": "GET",
+                            "url": "http://fake.local/x",
+                            "payload": {},
+                            "assertions": {},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        b_lane = run_tool2_prompt_response_eval(
+            str(lane_bad),
+            str(root / "out"),
+            "x",
+            project_root=root,
+        )
+        assert b_lane["ok"] is False, b_lane
+        assert isinstance(b_lane.get("artifact_paths"), dict), b_lane
+        assert b_lane.get("artifact_paths") == {}, b_lane
+        assert b_lane.get("json_preview") == "", b_lane
+        assert b_lane.get("markdown_preview") == "", b_lane
+        assert isinstance(b_lane.get("error"), str) and b_lane.get("error"), b_lane
+        assert "run_log_error" in b_lane, b_lane
+        assert "tool2_runs.jsonl" in str(b_lane.get("run_log_path") or ""), b_lane
+
+        # Case 4: invalid timeout value
+        suite_ok = root / "suite_tool2_ok.json"
+        suite_ok.write_text(
+            json.dumps(
+                {
+                    "suite_name": "timeout-shape",
+                    "target_name": "fake",
+                    "cases": [
+                        {
+                            "name": "prompt-case",
+                            "lane": "prompt_response",
+                            "prompt_input": "hello",
+                            "expected_response_contains": ["hello"],
+                            "assertions": {},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        b_timeout = run_tool2_prompt_response_eval(
+            str(suite_ok),
+            str(root / "out"),
+            "x",
+            project_root=root,
+            default_timeout_seconds=0,
+        )
+        assert b_timeout["ok"] is False, b_timeout
+        assert isinstance(b_timeout.get("artifact_paths"), dict), b_timeout
+        assert b_timeout.get("artifact_paths") == {}, b_timeout
+        assert b_timeout.get("json_preview") == "", b_timeout
+        assert b_timeout.get("markdown_preview") == "", b_timeout
+        assert isinstance(b_timeout.get("error"), str) and b_timeout.get("error"), b_timeout
+        assert "run_log_error" in b_timeout, b_timeout
+        assert "tool2_runs.jsonl" in str(b_timeout.get("run_log_path") or ""), b_timeout
+
+
+def test_run_tool3_regression_eval_rejects_non_regression_lane():
+    from app import tool3_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool3-bad-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "prompt-case",
+                    "lane": "prompt_response",
+                    "prompt_input": "hello",
+                    "expected_response_contains": ["hello"],
+                    "assertions": {},
+                }
+            ],
+        }
+        suite_path = root / "suite_tool3_bad.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        log_path = tool3_run_log.tool3_run_log_path(root)
+        bundle = run_tool3_regression_eval(
+            str(suite_path),
+            str(root / "out"),
+            "tool3_bad",
+            project_root=root,
+        )
+        assert bundle["ok"] is False, bundle
+        assert "lane='regression'" in str(bundle.get("error") or ""), bundle
+        assert "tool3_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        assert bundle.get("run_log_error") in (None, ""), bundle
+        assert log_path.is_file(), "lane rejection should still write tool3 run log record"
+
+
+def test_run_tool3_regression_eval_scaffold_contract_on_regression_lane():
+    from app import tool3_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool3-scaffold-suite",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "reg-case",
+                    "lane": "regression",
+                    "assertions": {},
+                }
+            ],
+        }
+        suite_path = root / "suite_tool3_scaffold.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        log_path = tool3_run_log.tool3_run_log_path(root)
+        fake_proc = Mock(returncode=0, stdout="tool3 ok", stderr="")
+        with patch("app.tool3_operator.subprocess.run", return_value=fake_proc):
+            bundle = run_tool3_regression_eval(
+                str(suite_path),
+                str(root / "out"),
+                "tool3_scaffold",
+                project_root=root,
+            )
+        assert bundle["ok"] is True, bundle
+        assert isinstance(bundle.get("artifact_paths"), dict), bundle
+        assert Path(bundle["artifact_paths"]["json_path"]).is_file(), bundle
+        assert Path(bundle["artifact_paths"]["markdown_path"]).is_file(), bundle
+        assert "tool3 ok" in str(bundle.get("json_preview") or ""), bundle
+        md_text = Path(bundle["artifact_paths"]["markdown_path"]).read_text(encoding="utf-8")
+        assert "# Tool 3 Regression Summary" in md_text, md_text
+        assert "- Total tests: 1" in md_text, md_text
+        assert "- Passed: 1" in md_text, md_text
+        assert "- Failed: 0" in md_text, md_text
+        assert "# Tool 3 Regression Summary" in str(bundle.get("markdown_preview") or ""), bundle
+        assert bundle.get("error") in (None, ""), bundle
+        assert "tool3_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        assert bundle.get("run_log_error") in (None, ""), bundle
+        assert log_path.is_file(), "tool3 success run should write tool3 run log record"
+        result = bundle.get("result") or {}
+        assert result.get("ok") is True, result
+        assert result.get("executed_cases") == 1, result
+        row = (result.get("cases") or [{}])[0]
+        assert row.get("lane") == "regression", row
+        assert row.get("ok") is True, row
+        assert "tests/run_regression.py" in str(row.get("command") or ""), row
+
+
+def test_run_tool3_regression_eval_does_not_depend_on_tool1_operator():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool3-no-tool1-coupling",
+            "target_name": "fake",
+            "cases": [{"name": "reg-case", "lane": "regression", "assertions": {}}],
+        }
+        suite_path = root / "suite_tool3_no_tool1.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        fake_proc = Mock(returncode=0, stdout="tool3 ok", stderr="")
+        with patch(
+            "app.system_eval_operator.run_tool1_system_eval_http",
+            side_effect=RuntimeError("tool1 operator should not be called by tool3"),
+        ):
+            with patch("app.tool3_operator.subprocess.run", return_value=fake_proc):
+                bundle = run_tool3_regression_eval(
+                    str(suite_path),
+                    str(root / "out"),
+                    "tool3_no_tool1",
+                    project_root=root,
+                )
+        assert bundle["ok"] is True, bundle
+        assert "tool1 operator should not be called" not in str(bundle.get("error") or ""), bundle
+
+
+def test_run_tool3_regression_eval_does_not_depend_on_tool2_operator():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool3-no-tool2-coupling",
+            "target_name": "fake",
+            "cases": [{"name": "reg-case", "lane": "regression", "assertions": {}}],
+        }
+        suite_path = root / "suite_tool3_no_tool2.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        fake_proc = Mock(returncode=0, stdout="tool3 ok", stderr="")
+        with patch(
+            "app.tool2_operator.run_tool2_prompt_response_eval",
+            side_effect=RuntimeError("tool2 operator should not be called by tool3"),
+        ):
+            with patch("app.tool3_operator.subprocess.run", return_value=fake_proc):
+                bundle = run_tool3_regression_eval(
+                    str(suite_path),
+                    str(root / "out"),
+                    "tool3_no_tool2",
+                    project_root=root,
+                )
+        assert bundle["ok"] is True, bundle
+        assert "tool2 operator should not be called" not in str(bundle.get("error") or ""), bundle
+
+
+def test_run_tool3_regression_eval_uses_default_command_when_override_blank():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool3-default-command-suite",
+            "target_name": "fake",
+            "cases": [{"name": "reg-case", "lane": "regression", "assertions": {}}],
+        }
+        suite_path = root / "suite_tool3_default_cmd.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        fake_proc = Mock(returncode=0, stdout="ok", stderr="")
+        with patch("app.tool3_operator.subprocess.run", return_value=fake_proc) as mock_run:
+            bundle = run_tool3_regression_eval(
+                str(suite_path),
+                str(root / "out"),
+                "tool3_default_cmd",
+                "",
+                project_root=root,
+            )
+        assert bundle["ok"] is True, bundle
+        called_cmd = list(mock_run.call_args.args[0])
+        assert called_cmd[1:] == ["tests/run_regression.py"], called_cmd
+        row = (bundle.get("result") or {}).get("cases", [{}])[0]
+        assert "tests/run_regression.py" in str(row.get("command") or ""), row
+
+
+def test_run_tool3_regression_eval_uses_command_override_when_provided():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool3-override-command-suite",
+            "target_name": "fake",
+            "cases": [{"name": "reg-case", "lane": "regression", "assertions": {}}],
+        }
+        suite_path = root / "suite_tool3_override_cmd.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        fake_proc = Mock(returncode=0, stdout="ok", stderr="")
+        override = "python tests/run_regression.py --maxfail=1"
+        with patch("app.tool3_operator.subprocess.run", return_value=fake_proc) as mock_run:
+            bundle = run_tool3_regression_eval(
+                str(suite_path),
+                str(root / "out"),
+                "tool3_override_cmd",
+                override,
+                project_root=root,
+            )
+        assert bundle["ok"] is True, bundle
+        called_cmd = list(mock_run.call_args.args[0])
+        assert called_cmd[0] == "python", called_cmd
+        assert called_cmd[1:] == ["tests/run_regression.py", "--maxfail=1"], called_cmd
+        row = (bundle.get("result") or {}).get("cases", [{}])[0]
+        assert row.get("command") == override, row
+
+
+def test_run_tool3_regression_eval_execution_failure_contract():
+    from app import tool3_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool3-fail-suite",
+            "target_name": "fake",
+            "cases": [{"name": "reg-case", "lane": "regression", "assertions": {}}],
+        }
+        suite_path = root / "suite_tool3_fail.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        log_path = tool3_run_log.tool3_run_log_path(root)
+
+        fake_proc = Mock(returncode=1, stdout="failed output", stderr="traceback")
+        with patch("app.tool3_operator.subprocess.run", return_value=fake_proc):
+            bundle = run_tool3_regression_eval(
+                str(suite_path),
+                str(root / "out"),
+                "tool3_fail",
+                project_root=root,
+            )
+
+        assert bundle["ok"] is False, bundle
+        assert "exit code 1" in str(bundle.get("error") or ""), bundle
+        assert bundle.get("artifact_paths") == {}, bundle
+        assert "failed output" in str(bundle.get("json_preview") or ""), bundle
+        assert "traceback" in str(bundle.get("markdown_preview") or ""), bundle
+        assert "tool3_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        assert bundle.get("run_log_error") in (None, ""), bundle
+        assert log_path.is_file(), "tool3 failed run should still write tool3 run log record"
+        result = bundle.get("result") or {}
+        assert result.get("ok") is False, result
+        row = (result.get("cases") or [{}])[0]
+        assert any("regression_command_failed: exit_code=1" in f for f in row.get("failures", [])), row
+
+
+def test_run_tool3_regression_eval_artifact_failure_is_reported_and_logged():
+    from app import tool3_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool3-artifact-fail-suite",
+            "target_name": "fake",
+            "cases": [{"name": "reg-case", "lane": "regression", "assertions": {}}],
+        }
+        suite_path = root / "suite_tool3_artifact_fail.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        log_path = tool3_run_log.tool3_run_log_path(root)
+
+        fake_proc = Mock(returncode=0, stdout="ok output", stderr="")
+        with patch("app.tool3_operator.subprocess.run", return_value=fake_proc):
+            with patch("app.tool3_operator.system_eval.write_result_artifacts", side_effect=OSError("disk full")):
+                bundle = run_tool3_regression_eval(
+                    str(suite_path),
+                    str(root / "out"),
+                    "tool3_artifact_fail",
+                    project_root=root,
+                )
+
+        assert bundle["ok"] is False, bundle
+        assert "Artifact write/read failed" in str(bundle.get("error") or ""), bundle
+        assert "tool3_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        assert bundle.get("run_log_error") in (None, ""), bundle
+        assert log_path.is_file(), "artifact failure should still write tool3 run log record"
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec.get("run_type") == "tool3_suite_run", rec
+        assert rec.get("error"), rec
+
+
+def test_run_tool3_regression_eval_command_invocation_failure_is_reported_and_logged():
+    from app import tool3_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool3-invoke-fail-suite",
+            "target_name": "fake",
+            "cases": [{"name": "reg-case", "lane": "regression", "assertions": {}}],
+        }
+        suite_path = root / "suite_tool3_invoke_fail.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        log_path = tool3_run_log.tool3_run_log_path(root)
+
+        with patch("app.tool3_operator.subprocess.run", side_effect=OSError("cannot spawn process")):
+            bundle = run_tool3_regression_eval(
+                str(suite_path),
+                str(root / "out"),
+                "tool3_invoke_fail",
+                project_root=root,
+            )
+
+        assert bundle["ok"] is False, bundle
+        assert "Regression command invocation failed" in str(bundle.get("error") or ""), bundle
+        assert "tool3_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        assert bundle.get("run_log_error") in (None, ""), bundle
+        assert log_path.is_file(), "invocation failure should still write tool3 run log record"
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec.get("run_type") == "tool3_suite_run", rec
+        assert rec.get("error"), rec
+
+
+def test_run_tool3_regression_eval_command_timeout_is_reported_and_logged():
+    from app import tool3_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        suite_data = {
+            "suite_name": "tool3-timeout-suite",
+            "target_name": "fake",
+            "cases": [{"name": "reg-case", "lane": "regression", "assertions": {}}],
+        }
+        suite_path = root / "suite_tool3_timeout.json"
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+        log_path = tool3_run_log.tool3_run_log_path(root)
+
+        timeout_exc = subprocess.TimeoutExpired(cmd=["python", "tests/run_regression.py"], timeout=1)
+        with patch("app.tool3_operator.subprocess.run", side_effect=timeout_exc):
+            bundle = run_tool3_regression_eval(
+                str(suite_path),
+                str(root / "out"),
+                "tool3_timeout",
+                project_root=root,
+            )
+
+        assert bundle["ok"] is False, bundle
+        assert "timed out" in str(bundle.get("error") or "").lower(), bundle
+        assert "tool3_runs.jsonl" in str(bundle.get("run_log_path") or ""), bundle
+        assert bundle.get("run_log_error") in (None, ""), bundle
+        assert log_path.is_file(), "timeout should still write tool3 run log record"
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec.get("run_type") == "tool3_suite_run", rec
+        assert rec.get("error"), rec
+
+
+def test_run_tool3_regression_eval_failure_bundle_contract():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+
+        # Case 1: missing suite file
+        b_missing = run_tool3_regression_eval(
+            str(root / "missing_tool3.json"),
+            str(root / "out"),
+            "x",
+            project_root=root,
+        )
+        for b in (b_missing,):
+            assert b["ok"] is False, b
+            assert isinstance(b.get("artifact_paths"), dict), b
+            assert b.get("artifact_paths") == {}, b
+            assert b.get("json_preview") == "", b
+            assert b.get("markdown_preview") == "", b
+            assert isinstance(b.get("error"), str) and b.get("error"), b
+            assert "run_log_error" in b, b
+            assert "tool3_runs.jsonl" in str(b.get("run_log_path") or ""), b
+
+        # Case 2: invalid suite JSON
+        bad_suite = root / "bad_tool3.json"
+        bad_suite.write_text("{ bad json", encoding="utf-8")
+        b_bad = run_tool3_regression_eval(
+            str(bad_suite),
+            str(root / "out"),
+            "x",
+            project_root=root,
+        )
+        assert b_bad["ok"] is False, b_bad
+        assert isinstance(b_bad.get("artifact_paths"), dict), b_bad
+        assert b_bad.get("artifact_paths") == {}, b_bad
+        assert b_bad.get("json_preview") == "", b_bad
+        assert b_bad.get("markdown_preview") == "", b_bad
+        assert isinstance(b_bad.get("error"), str) and b_bad.get("error"), b_bad
+        assert "run_log_error" in b_bad, b_bad
+        assert "tool3_runs.jsonl" in str(b_bad.get("run_log_path") or ""), b_bad
+
+        # Case 3: lane rejection
+        lane_bad = root / "lane_bad_tool3.json"
+        lane_bad.write_text(
+            json.dumps(
+                {
+                    "suite_name": "lane-shape",
+                    "target_name": "fake",
+                    "cases": [
+                        {
+                            "name": "prompt-case",
+                            "lane": "prompt_response",
+                            "assertions": {},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        b_lane = run_tool3_regression_eval(
+            str(lane_bad),
+            str(root / "out"),
+            "x",
+            project_root=root,
+        )
+        assert b_lane["ok"] is False, b_lane
+        assert isinstance(b_lane.get("artifact_paths"), dict), b_lane
+        assert b_lane.get("artifact_paths") == {}, b_lane
+        assert b_lane.get("json_preview") == "", b_lane
+        assert b_lane.get("markdown_preview") == "", b_lane
+        assert isinstance(b_lane.get("error"), str) and b_lane.get("error"), b_lane
+        assert "run_log_error" in b_lane, b_lane
+        assert "tool3_runs.jsonl" in str(b_lane.get("run_log_path") or ""), b_lane
+
+        # Case 4: command invocation failure
+        ok_suite = root / "suite_tool3_ok.json"
+        ok_suite.write_text(
+            json.dumps(
+                {
+                    "suite_name": "invoke-shape",
+                    "target_name": "fake",
+                    "cases": [
+                        {
+                            "name": "reg-case",
+                            "lane": "regression",
+                            "assertions": {},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with patch("app.tool3_operator.subprocess.run", side_effect=OSError("cannot spawn process")):
+            b_invoke = run_tool3_regression_eval(
+                str(ok_suite),
+                str(root / "out"),
+                "x",
+                project_root=root,
+            )
+        assert b_invoke["ok"] is False, b_invoke
+        assert isinstance(b_invoke.get("artifact_paths"), dict), b_invoke
+        assert b_invoke.get("artifact_paths") == {}, b_invoke
+        assert b_invoke.get("json_preview") == "", b_invoke
+        assert b_invoke.get("markdown_preview") == "", b_invoke
+        assert isinstance(b_invoke.get("error"), str) and b_invoke.get("error"), b_invoke
+        assert "run_log_error" in b_invoke, b_invoke
+        assert "tool3_runs.jsonl" in str(b_invoke.get("run_log_path") or ""), b_invoke
+
+        # Case 5: command timeout
+        with patch(
+            "app.tool3_operator.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["python", "tests/run_regression.py"], timeout=1),
+        ):
+            b_timeout = run_tool3_regression_eval(
+                str(ok_suite),
+                str(root / "out"),
+                "x",
+                project_root=root,
+            )
+        assert b_timeout["ok"] is False, b_timeout
+        assert isinstance(b_timeout.get("artifact_paths"), dict), b_timeout
+        assert b_timeout.get("artifact_paths") == {}, b_timeout
+        assert b_timeout.get("json_preview") == "", b_timeout
+        assert b_timeout.get("markdown_preview") == "", b_timeout
+        assert isinstance(b_timeout.get("error"), str) and b_timeout.get("error"), b_timeout
+        assert "run_log_error" in b_timeout, b_timeout
+        assert "tool3_runs.jsonl" in str(b_timeout.get("run_log_path") or ""), b_timeout
+
+
 def test_tool1_run_log_jsonl_written_for_suite_success_and_failure():
     from app import tool1_run_log
 
@@ -6542,6 +8892,298 @@ def test_tool1_run_log_jsonl_written_for_suite_success_and_failure():
         assert rec_ok["artifact_paths"].get("json_path")
         assert len(rec_ok.get("requests") or []) == 1
         assert len(rec_ok.get("cases_outcome") or []) == 1
+
+
+def test_run_tool1_system_eval_operator_invalid_json_logs_failure_record():
+    from app import tool1_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        log_path = tool1_run_log.tool1_run_log_path(root)
+        bad_suite = root / "bad.json"
+        bad_suite.write_text("{ not valid json", encoding="utf-8")
+
+        bundle = run_tool1_system_eval_http(
+            str(bad_suite),
+            str(root / "out"),
+            "bad_json",
+            project_root=root,
+            adapter=None,
+        )
+        assert bundle.get("ok") is False, bundle
+        assert bundle.get("error"), bundle
+        assert log_path.is_file(), "invalid suite json should still write suite_run log"
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec.get("run_type") == "suite_run", rec
+        assert rec.get("error"), rec
+        assert "run_log_error" in bundle, bundle
+        assert bundle.get("run_log_error") in (None, ""), bundle
+
+
+def test_tool1_run_log_single_request_redacts_sensitive_fields():
+    from app import tool1_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        log_path = tool1_run_log.tool1_run_log_path(root)
+        prep = {
+            "suite_dict": {
+                "suite_name": "single-request",
+                "target_name": "operator",
+                "cases": [
+                    {
+                        "name": "single_request_case",
+                        "method": "GET",
+                        "url": "https://example.test?token=abc&q=ok",
+                        "headers": {
+                            "Authorization": "Bearer sk-secret",
+                            "X-Api-Key": "key-123",
+                            "Content-Type": "application/json",
+                        },
+                        "payload": {},
+                        "assertions": {},
+                    }
+                ],
+            }
+        }
+        snap = {
+            "url": "https://example.test?token=abc&q=ok",
+            "headers_json_raw": '{"Authorization":"Bearer sk-secret","X-Api-Key":"key-123"}',
+            "query_params_json_raw": '{"q":"ok","token":"abc"}',
+            "bearer_token": "sk-secret",
+            "basic_password": "pw",
+            "api_key_value": "key-123",
+        }
+        le = tool1_run_log.try_log_single_request_run(
+            prep=prep,
+            result=None,
+            artifact_paths={},
+            error="prepare failed",
+            timeout_seconds=20,
+            output_dir_rel="logs/system_eval",
+            auth_mode_internal="bearer",
+            query_params_text='{"token":"abc","q":"ok"}',
+            input_snapshot=snap,
+            project_root=root,
+        )
+        assert le is None, le
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        req0 = rec["requests"][0]
+        assert req0["headers"]["Authorization"] == "[REDACTED]", req0
+        assert req0["headers"]["X-Api-Key"] == "[REDACTED]", req0
+        assert "token=%5BREDACTED%5D" in req0["url"], req0
+        assert rec["request_input_snapshot"]["bearer_token"] == "[REDACTED]", rec
+        assert rec["request_input_snapshot"]["basic_password"] == "[REDACTED]", rec
+        assert rec["request_input_snapshot"]["api_key_value"] == "[REDACTED]", rec
+        assert "token=%5BREDACTED%5D" in rec["request_input_snapshot"]["url"], rec
+        assert '"token": "[REDACTED]"' in (rec.get("query_params_raw_json") or ""), rec
+
+
+def test_tool1_run_log_single_request_redacts_sensitive_fields_in_malformed_raw_text():
+    from app import tool1_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        log_path = tool1_run_log.tool1_run_log_path(root)
+        snap = {
+            "url": "https://example.test",
+            "headers_json_raw": 'Authorization: Bearer sk-secret malformed',
+            "query_params_json_raw": "token=abc123&x=1",
+            "bearer_token": "sk-secret",
+        }
+        le = tool1_run_log.try_log_single_request_run(
+            prep=None,
+            result=None,
+            artifact_paths={},
+            error="prepare failed token=abc123",
+            timeout_seconds=20,
+            output_dir_rel="logs/system_eval",
+            auth_mode_internal="bearer",
+            query_params_text="token=abc123&x=1",
+            input_snapshot=snap,
+            project_root=root,
+        )
+        assert le is None, le
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        hs = rec["request_input_snapshot"]["headers_json_raw"]
+        qp = rec["request_input_snapshot"]["query_params_json_raw"]
+        assert "sk-secret" not in hs and "[REDACTED]" in hs, rec
+        assert "abc123" not in qp and "[REDACTED]" in qp, rec
+        qpr = str(rec.get("query_params_raw_json") or "")
+        assert "abc123" not in qpr and "[REDACTED]" in qpr, rec
+
+
+def test_tool1_run_log_suite_redacts_sensitive_request_fields():
+    from app import tool1_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        log_path = tool1_run_log.tool1_run_log_path(root)
+        suite = {
+            "suite_name": "suite-redaction-test",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "https://example.test/path?token=abc&q=ok",
+                    "headers": {
+                        "Authorization": "Bearer sk-secret",
+                        "X-Api-Key": "key-123",
+                        "Accept": "application/json",
+                    },
+                    "payload": {},
+                    "assertions": {},
+                }
+            ],
+        }
+        le = tool1_run_log.try_log_suite_run(
+            suite_path="system_tests/suites/fake.json",
+            output_dir="logs/system_eval",
+            file_stem="x",
+            fail_fast=False,
+            default_timeout_seconds=20,
+            suite=suite,
+            result=None,
+            artifact_paths={},
+            error="mock error",
+            project_root=root,
+        )
+        assert le is None, le
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        req0 = rec["requests"][0]
+        assert req0["headers"]["Authorization"] == "[REDACTED]", req0
+        assert req0["headers"]["X-Api-Key"] == "[REDACTED]", req0
+        assert req0["headers"]["Accept"] == "application/json", req0
+        assert "token=%5BREDACTED%5D" in req0["url"], req0
+
+
+def test_tool1_run_log_redacts_sensitive_tokens_in_error_and_summary_text():
+    from app import tool1_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        log_path = tool1_run_log.tool1_run_log_path(root)
+        suite = {
+            "suite_name": "suite-text-redaction-test",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "https://example.test/path?token=abc",
+                    "headers": {},
+                    "payload": {},
+                    "assertions": {},
+                }
+            ],
+        }
+        err = "Request failed: Authorization: Bearer sk_live_secret token=abc123"
+        le = tool1_run_log.try_log_suite_run(
+            suite_path="system_tests/suites/fake.json",
+            output_dir="logs/system_eval",
+            file_stem="x",
+            fail_fast=False,
+            default_timeout_seconds=20,
+            suite=suite,
+            result=None,
+            artifact_paths={},
+            error=err,
+            project_root=root,
+        )
+        assert le is None, le
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        rec_err = str(rec.get("error") or "")
+        rec_summary = str(rec.get("summary") or "")
+        assert "sk_live_secret" not in rec_err, rec
+        assert "abc123" not in rec_err, rec
+        assert "[REDACTED]" in rec_err, rec
+        assert "sk_live_secret" not in rec_summary, rec
+        assert "abc123" not in rec_summary, rec
+
+
+def test_tool1_run_log_redacts_sensitive_tokens_in_failure_lines():
+    from app import tool1_run_log
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        log_path = tool1_run_log.tool1_run_log_path(root)
+        suite = {
+            "suite_name": "suite-failure-redaction-test",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "c1",
+                    "method": "GET",
+                    "url": "https://example.test/path",
+                    "headers": {},
+                    "payload": {},
+                    "assertions": {},
+                }
+            ],
+        }
+        result = {
+            "ok": False,
+            "executed_cases": 1,
+            "passed_cases": 0,
+            "failed_cases": 1,
+            "elapsed_seconds": 0.2,
+            "ran_at_utc": "2026-01-01T00:00:00Z",
+            "cases": [
+                {
+                    "name": "c1",
+                    "ok": False,
+                    "status_code": 500,
+                    "latency_ms": 10,
+                    "failures": [
+                        "Request failed token=abc123 and Authorization: Bearer sk_live_secret"
+                    ],
+                    "response_headers": {},
+                    "output_preview": "",
+                    "output_full": "",
+                }
+            ],
+        }
+        le = tool1_run_log.try_log_suite_run(
+            suite_path="system_tests/suites/fake.json",
+            output_dir="logs/system_eval",
+            file_stem="x",
+            fail_fast=False,
+            default_timeout_seconds=20,
+            suite=suite,
+            result=result,
+            artifact_paths={},
+            error=None,
+            project_root=root,
+        )
+        assert le is None, le
+        rec = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+        fail0 = str(rec["cases_outcome"][0]["failures"][0])
+        assert "abc123" not in fail0, rec
+        assert "sk_live_secret" not in fail0, rec
+        assert "[REDACTED]" in fail0, rec
+
+
+def test_tool1_run_log_redaction_does_not_mutate_input_record():
+    from app import tool1_run_log
+
+    rec = {
+        "run_type": "single_request",
+        "requests": [
+            {
+                "url": "https://example.test?token=abc",
+                "headers": {"Authorization": "Bearer sk-secret", "X-Api-Key": "key-123"},
+            }
+        ],
+        "request_input_snapshot": {"bearer_token": "sk-secret", "url": "https://example.test?token=abc"},
+        "query_params_raw_json": '{"token":"abc"}',
+        "error": "Authorization: Bearer sk-secret token=abc",
+        "summary": "Authorization: Bearer sk-secret token=abc",
+        "cases_outcome": [],
+    }
+    rec_before = json.loads(json.dumps(rec))
+    _ = tool1_run_log._redact_tool1_record(rec)
+    assert rec == rec_before, rec
 
 
 def test_http_target_adapter_get_omits_json_keyword():
@@ -7147,6 +9789,1198 @@ def test_system_eval_expected_status_fails():
     assert any("expected_status=404" in f for f in result["cases"][0]["failures"]), result["cases"][0]
 
 
+def test_system_eval_default_status_check_200_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "default-status-200-pass",
+            "target_name": "fake",
+            "cases": [
+                {"name": "default_status_200", "method": "GET", "url": "https://example.com", "payload": {}, "assertions": {}}
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_default_status_check_201_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "default-status-201-pass",
+            "target_name": "fake",
+            "cases": [
+                {"name": "default_status_201", "method": "GET", "url": "https://example.com", "payload": {}, "assertions": {}}
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=201, output_text="created", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_default_status_check_401_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "default-status-401-fail",
+            "target_name": "fake",
+            "cases": [
+                {"name": "default_status_401", "method": "GET", "url": "https://example.com", "payload": {}, "assertions": {}}
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=401, output_text="unauthorized", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("default status check failed: expected 2xx, got 401" in f for f in result["cases"][0]["failures"]), (
+        result["cases"][0]
+    )
+
+
+def test_system_eval_default_status_check_500_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "default-status-500-fail",
+            "target_name": "fake",
+            "cases": [
+                {"name": "default_status_500", "method": "GET", "url": "https://example.com", "payload": {}, "assertions": {}}
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=500, output_text="server-error", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("default status check failed: expected 2xx, got 500" in f for f in result["cases"][0]["failures"]), (
+        result["cases"][0]
+    )
+
+
+def test_system_eval_case_expected_status_exact_match_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-status-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_status_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_status": 200,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_status_exact_mismatch_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-status-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_status_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_status": 200,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=500, output_text="err", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_status mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_status_in_membership_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-status-in-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_status_in_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_status_in": [200, 201, 202],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=201, output_text="created", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_status_in_membership_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-status-in-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_status_in_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_status_in": [200, 201, 202],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=404, output_text="nf", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_status_in mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_status_not_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-status-not-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_status_not_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_status_not": [400, 401, 500],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_status_not_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-status-not-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_status_not_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_status_not": [400, 401, 500],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=500, output_text="err", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_status_not mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_status_fields_absent_behavior_unchanged():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-status-absent",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_status_absent",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_contains": "ok"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=503, output_text="ok", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert all("expected_status mismatch" not in f for f in row["failures"]), row
+    assert all("expected_status_in mismatch" not in f for f in row["failures"]), row
+
+
+def test_system_eval_case_expected_status_and_expected_status_in_both_present_rejected():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "case-expected-status-both",
+                "target_name": "fake",
+                "cases": [
+                    {
+                        "name": "case_expected_status_both",
+                        "method": "GET",
+                        "url": "https://example.com",
+                        "payload": {},
+                        "expected_status": 200,
+                        "expected_status_in": [200, 201],
+                        "assertions": {},
+                    }
+                ],
+            }
+        )
+        assert False, "expected ValueError for both expected_status and expected_status_in"
+    except ValueError as exc:
+        assert "cannot set both 'expected_status' and 'expected_status_in'" in str(exc), str(exc)
+
+
+def test_system_eval_case_expected_headers_exact_match_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-headers-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_headers_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_headers": {"content-type": "application/json"},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"Content-Type": "application/json"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_headers_missing_required_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-headers-missing",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_headers_missing",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_headers": {"x-request-id": "abc123"},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"Content-Type": "application/json"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_headers missing header" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_headers_mismatch_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-headers-mismatch",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_headers_mismatch",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_headers": {"content-type": "application/json"},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"content-type": "text/plain"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_headers mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_headers_name_case_insensitive_match():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-headers-case-insensitive",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_headers_case_insensitive",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_headers": {"X-REQUEST-ID": "abc123"},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"x-request-id": " abc123 "},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_headers_absent_behavior_unchanged():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-headers-absent",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_headers_absent",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_contains": "ok"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert all("expected_headers" not in f for f in row["failures"]), row
+
+
+def test_system_eval_case_expected_headers_contains_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-headers-contains-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_headers_contains_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_headers_contains": {"content-type": "application/json"},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"Content-Type": "application/json; charset=utf-8"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_headers_contains_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-headers-contains-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_headers_contains_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_headers_contains": {"content-type": "application/json"},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"Content-Type": "text/plain"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_headers_contains mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_header_exists_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-header-exists-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_header_exists_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_header_exists": ["Content-Type", "X-Request-Id"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"content-type": "application/json", "x-request-id": "abc123"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_header_exists_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-header-exists-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_header_exists_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_header_exists": ["Content-Type", "X-Request-Id"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={"content-type": "application/json"},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_header_exists missing header" in f for f in result["cases"][0]["failures"]), (
+        result["cases"][0]
+    )
+
+
+def test_system_eval_case_expected_json_exact_path_value_match_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_json": {"status": "ok", "data.id": 123},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"status":"ok","data":{"id":123}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_json_missing_path_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-missing-path",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_missing_path",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_json": {"data.id": 123},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"status":"ok","data":{}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_json missing path" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_json_mismatched_value_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-mismatch",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_mismatch",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_json": {"status": "ok", "data.id": 123},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"status":"ok","data":{"id":999}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_json mismatch" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_json_non_json_response_fails_clearly():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-non-json",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_non_json",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_json": {"status": "ok"},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="not-json",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_json invalid json" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_json_absent_behavior_unchanged():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-absent",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_absent",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_contains": "ok"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert all("expected_json" not in f for f in row["failures"]), row
+
+
+def test_system_eval_case_expected_json_exists_existing_path_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-exists-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_exists_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_json_exists": ["data.id", "user.profile", "meta.timestamp"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"data":{"id":123},"user":{"profile":{"name":"x"}},"meta":{"timestamp":"2026-01-01T00:00:00Z"}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_json_exists_missing_path_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-exists-missing",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_exists_missing",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_json_exists": ["data.id", "meta.timestamp"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"data":{"id":123},"meta":{}}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_json_exists missing path" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_json_exists_non_json_response_fails_clearly():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-exists-non-json",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_exists_non_json",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_json_exists": ["data.id"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="plain-text",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_json_exists invalid json" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_json_exists_absent_behavior_unchanged():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-exists-absent",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_exists_absent",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"body_contains": "ok"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text="ok",
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert all("expected_json_exists" not in f for f in row["failures"]), row
+
+
+def test_system_eval_case_expected_json_values_pass_correct_value():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-values-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_values_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_json_values": {"status": "ok", "count": 3},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"status":"ok","count":3,"extra":"x"}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_json_values_fail_wrong_value():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-values-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_values_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_json_values": {"status": "ok", "count": 3},
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"status":"ok","count":999}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("json_value_mismatch: count" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+
+
+def test_system_eval_case_expected_json_absent_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-absent-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_absent_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_json_absent": ["secret", "internal_debug"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"status":"ok","count":3}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_json_absent_fails_when_present():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-json-absent-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_json_absent_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_json_absent": ["secret"],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=200,
+                output_text='{"status":"ok","secret":"token"}',
+                latency_ms=1,
+                response_headers={},
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any(
+        "json_key_present_but_expected_absent: secret" in f for f in result["cases"][0]["failures"]
+    ), result["cases"][0]
+
+
+def test_system_eval_case_expected_body_not_empty_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-body-not-empty-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_body_not_empty_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_body_not_empty": True,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_body_not_empty_fails_on_empty():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-body-not-empty-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_body_not_empty_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_body_not_empty": True,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_body_not_empty failed" in f for f in result["cases"][0]["failures"]), (
+        result["cases"][0]
+    )
+
+
+def test_system_eval_case_expected_body_size_bytes_max_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-body-size-bytes-max-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_body_size_bytes_max_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_body_size_bytes_max": 5,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="hello", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_case_expected_body_size_bytes_max_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "case-expected-body-size-bytes-max-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "case_expected_body_size_bytes_max_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_body_size_bytes_max": 4,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="hello", latency_ms=1, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_body_size_bytes_max exceeded" in f for f in result["cases"][0]["failures"]), (
+        result["cases"][0]
+    )
+
+
 def test_system_eval_expected_response_time_ms_pass():
     suite = system_eval_core.validate_suite(
         {
@@ -7234,6 +11068,444 @@ def test_system_eval_expected_response_time_ms_equal():
 
     result = system_eval_core.execute_suite(suite, adapter=A())
     assert result["ok"] is True, result
+
+
+def test_system_eval_max_duration_ms_pass_under_threshold():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "max-duration-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "max_duration_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "max_duration_ms": 800,
+                    "assertions": {"expected_status": 200},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=120, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert row["latency_ms"] == 120, row
+    assert row["max_duration_ms"] == 800, row
+
+
+def test_system_eval_max_duration_ms_fail_over_threshold():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "max-duration-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "max_duration_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "max_duration_ms": 800,
+                    "assertions": {"expected_status": 200},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=1001, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    row = result["cases"][0]
+    assert row["max_duration_ms"] == 800, row
+    joined = " ".join(row["failures"])
+    assert "max_duration_ms exceeded" in joined, row
+    assert "800" in joined and "1001" in joined, row
+
+
+def test_system_eval_no_max_duration_ms_keeps_behavior():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "max-duration-absent",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "no_max_duration",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"expected_status": 200},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=9999, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+    row = result["cases"][0]
+    assert "max_duration_ms" not in row, row
+
+
+def test_system_eval_expected_latency_ms_max_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "expected-latency-ms-max-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "expected_latency_ms_max_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_latency_ms_max": 150,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=150, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_expected_latency_ms_max_fail():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "expected-latency-ms-max-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "expected_latency_ms_max_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_latency_ms_max": 150,
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=151, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_latency_ms_max exceeded" in f for f in result["cases"][0]["failures"]), (
+        result["cases"][0]
+    )
+
+
+def test_system_eval_expected_response_time_ms_range_pass():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "expected-response-time-ms-range-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "expected_response_time_ms_range_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_response_time_ms_range": [100, 200],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=150, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+
+
+def test_system_eval_expected_response_time_ms_range_fail():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "expected-response-time-ms-range-fail",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "expected_response_time_ms_range_fail",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "expected_response_time_ms_range": [100, 200],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def run_case(self, case):
+            _ = case
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=250, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    assert any("expected_response_time_ms_range mismatch" in f for f in result["cases"][0]["failures"]), (
+        result["cases"][0]
+    )
+
+
+def test_system_eval_retries_absent_behavior_unchanged():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "retry-absent",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "retry_absent",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "assertions": {"expected_status": 200},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.calls = 0
+
+        def run_case(self, case):
+            _ = case
+            self.calls += 1
+            return system_eval_core.AdapterResult(
+                ok=False,
+                status_code=None,
+                output_text="",
+                latency_ms=5,
+                error="RequestException: timeout",
+                response_headers={},
+            )
+
+    adapter = A()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert result["ok"] is False, result
+    assert adapter.calls == 1, adapter.calls
+    row = result["cases"][0]
+    assert "retry_attempts_total" not in row, row
+    assert any("RequestException" in f for f in row["failures"]), row
+
+
+def test_system_eval_retries_transient_then_success_passes():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "retry-then-pass",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "retry_then_pass",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "retries": 2,
+                    "retry_delay_ms": 0,
+                    "assertions": {"expected_status": 200},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.calls = 0
+
+        def run_case(self, case):
+            _ = case
+            self.calls += 1
+            if self.calls == 1:
+                return system_eval_core.AdapterResult(
+                    ok=False,
+                    status_code=None,
+                    output_text="",
+                    latency_ms=7,
+                    error="RequestException: temporary network",
+                    response_headers={},
+                )
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok", latency_ms=9, response_headers={}
+            )
+
+    adapter = A()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert result["ok"] is True, result
+    assert adapter.calls == 2, adapter.calls
+    row = result["cases"][0]
+    assert row["retry_attempts_total"] == 2, row
+    assert len(row["retry_attempts"]) == 2, row
+    assert row["retry_attempts"][0]["transient_failure"] is True, row
+    assert row["retry_attempts"][1]["transient_failure"] is False, row
+
+
+def test_system_eval_retries_exhausted_transient_fails():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "retry-exhausted",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "retry_exhausted",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "retries": 2,
+                    "retry_delay_ms": 0,
+                    "assertions": {"expected_status": 200},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.calls = 0
+
+        def run_case(self, case):
+            _ = case
+            self.calls += 1
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=503,
+                output_text="service unavailable",
+                latency_ms=11,
+                response_headers={},
+            )
+
+    adapter = A()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert result["ok"] is False, result
+    assert adapter.calls == 3, adapter.calls
+    row = result["cases"][0]
+    assert row["retry_attempts_total"] == 3, row
+    assert all(a["transient_failure"] is True for a in row["retry_attempts"]), row
+    assert any("retries exhausted after transient failures" in f for f in row["failures"]), row
+
+
+def test_system_eval_retries_does_not_retry_4xx():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "retry-no-4xx",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "retry_no_4xx",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "retries": 3,
+                    "retry_delay_ms": 0,
+                    "assertions": {"expected_status": 200},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.calls = 0
+
+        def run_case(self, case):
+            _ = case
+            self.calls += 1
+            return system_eval_core.AdapterResult(
+                ok=True,
+                status_code=404,
+                output_text="not found",
+                latency_ms=3,
+                response_headers={},
+            )
+
+    adapter = A()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert result["ok"] is False, result
+    assert adapter.calls == 1, adapter.calls
+    row = result["cases"][0]
+    assert row["retry_attempts_total"] == 1, row
+    assert row["retry_attempts"][0]["transient_failure"] is False, row
+    assert any("expected_status=200" in f for f in row["failures"]), row
+
+
+def test_system_eval_retries_does_not_retry_assertion_failure():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "retry-no-assertion-retry",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "retry_no_assertion_retry",
+                    "method": "GET",
+                    "url": "https://example.com",
+                    "payload": {},
+                    "retries": 2,
+                    "retry_delay_ms": 0,
+                    "assertions": {"body_contains": "must-have-token"},
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.calls = 0
+
+        def run_case(self, case):
+            _ = case
+            self.calls += 1
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text="ok-but-missing", latency_ms=4, response_headers={}
+            )
+
+    adapter = A()
+    result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert result["ok"] is False, result
+    assert adapter.calls == 1, adapter.calls
+    row = result["cases"][0]
+    assert row["retry_attempts_total"] == 1, row
+    assert row["retry_attempts"][0]["transient_failure"] is False, row
+    assert any("body did not contain substring" in f for f in row["failures"]), row
 
 
 def test_system_eval_extract_simple():
@@ -9778,6 +14050,273 @@ def test_system_eval_runner_script_returns_nonzero_on_failure():
             server.server_close()
 
 
+def test_system_eval_runner_script_requires_suite_argument():
+    cmd = [
+        sys.executable,
+        str(PROJECT_ROOT / "tools" / "system_eval_runner.py"),
+    ]
+    completed = subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+    assert completed.returncode != 0, "runner should fail when required --suite is missing"
+    joined = (completed.stdout or "") + "\n" + (completed.stderr or "")
+    assert "--suite" in joined, joined
+
+
+def test_system_eval_runner_script_missing_suite_file_nonzero():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        missing_suite = temp_root / "missing_suite.json"
+        out_dir = temp_root / "out"
+        cmd = [
+            sys.executable,
+            str(PROJECT_ROOT / "tools" / "system_eval_runner.py"),
+            "--suite",
+            str(missing_suite),
+            "--output-dir",
+            str(out_dir),
+        ]
+        completed = subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+        assert completed.returncode != 0, "runner should fail when suite file path does not exist"
+        joined = (completed.stdout or "") + "\n" + (completed.stderr or "")
+        assert "No such file" in joined or "not found" in joined.lower() or "missing_suite.json" in joined, joined
+
+
+def test_tool1_ui_helpers_parse_and_merge_auth_headers():
+    from app import ui as app_ui
+
+    hdrs, err = app_ui._tool1_parse_custom_headers_json('{"Accept":"application/json","X-N":1}')
+    assert err is None, err
+    assert hdrs == {"Accept": "application/json", "X-N": "1"}, hdrs
+
+    merged, aerr = app_ui._tool1_merge_custom_headers_with_auth(
+        {"Authorization": "Bearer old", "Accept": "application/json"},
+        auth_mode="bearer",
+        bearer_token="new-token",
+        basic_username="",
+        basic_password="",
+        api_key_header_name="",
+        api_key_value="",
+    )
+    assert aerr is None, aerr
+    assert merged["Authorization"] == "Bearer new-token", merged
+    assert merged["Accept"] == "application/json", merged
+
+
+def test_tool1_ui_prepare_single_request_merges_query_and_headers():
+    from app import ui as app_ui
+
+    prep, err = app_ui._tool1_prepare_single_request(
+        url="https://example.com/x?a=1",
+        method="POST",
+        body_text='{"ok":true}',
+        headers_text='{"Authorization":"Bearer old","X-A":"1"}',
+        query_params_text='{"a":"2","b":"3"}',
+        auth_mode="api_key",
+        bearer_token="",
+        basic_username="",
+        basic_password="",
+        api_key_header_name="X-API-Key",
+        api_key_value="secret-123",
+    )
+    assert err is None, err
+    assert prep is not None
+    assert prep["final_url"] in ("https://example.com/x?a=2&b=3", "https://example.com/x?b=3&a=2"), prep
+    assert prep["headers"]["Authorization"] == "Bearer old", prep
+    assert prep["headers"]["X-API-Key"] == "secret-123", prep
+    assert prep["payload"] == {"ok": True}, prep
+
+
+def test_tool1_ui_parse_headers_invalid_json_errors():
+    from app import ui as app_ui
+
+    hdrs, err = app_ui._tool1_parse_custom_headers_json('{"Accept":')
+    assert hdrs == {}, hdrs
+    assert err and "Invalid JSON in headers" in err, err
+
+
+def test_tool1_ui_prepare_single_request_rejects_non_object_json_body():
+    from app import ui as app_ui
+
+    prep, err = app_ui._tool1_prepare_single_request(
+        url="https://example.com/x",
+        method="POST",
+        body_text='["not-object"]',
+        headers_text="{}",
+        query_params_text="{}",
+        auth_mode="none",
+        bearer_token="",
+        basic_username="",
+        basic_password="",
+        api_key_header_name="",
+        api_key_value="",
+    )
+    assert prep is None, prep
+    assert err == 'JSON body must be a JSON object (e.g. {"id": 1}).', err
+
+
+def test_tool1_ui_prepare_single_request_basic_auth_requires_username():
+    from app import ui as app_ui
+
+    prep, err = app_ui._tool1_prepare_single_request(
+        url="https://example.com/x",
+        method="GET",
+        body_text="",
+        headers_text="{}",
+        query_params_text="{}",
+        auth_mode="basic",
+        bearer_token="",
+        basic_username="",
+        basic_password="secret",
+        api_key_header_name="",
+        api_key_value="",
+    )
+    assert prep is None, prep
+    assert err == "Basic auth requires a username.", err
+
+
+def test_tool1_ui_single_request_display_redacts_sensitive_headers_and_query():
+    from app import ui as app_ui
+
+    prep = {
+        "method_u": "GET",
+        "final_url": "https://example.com/x?token=abc123&q=ok",
+        "headers": {
+            "Authorization": "Bearer sk-secret",
+            "X-Api-Key": "key-123",
+            "Accept": "application/json",
+        },
+        "payload": {},
+    }
+    plain = app_ui._tool1_format_single_request_plain(prep)
+    curl = app_ui._tool1_format_single_request_curl(prep)
+    assert "abc123" not in plain and "sk-secret" not in plain and "key-123" not in plain, plain
+    assert "abc123" not in curl and "sk-secret" not in curl and "key-123" not in curl, curl
+    assert "[REDACTED]" in plain and "[REDACTED]" in curl, (plain, curl)
+
+
+def test_tool1_ui_case_outcome_note_prompt_response_lane():
+    from app import ui as app_ui
+
+    outcome = app_ui._tool1_case_outcome_table_note(
+        {"ok": False, "lane": "prompt_response", "status_code": None}
+    )
+    assert "prompt checks" in outcome.lower(), outcome
+
+
+def test_tool3_ui_readability_summary_pass_and_fail_list():
+    from app import ui as app_ui
+
+    result = {
+        "executed_cases": 4,
+        "passed_cases": 2,
+        "failed_cases": 2,
+        "cases": [
+            {"name": "c1", "ok": True},
+            {"name": "c2", "ok": False},
+            {"name": "c3", "ok": False},
+            {"name": "c4", "ok": True},
+        ],
+    }
+    out = app_ui._tool3_readability_summary(result, False)
+    assert out["status"] == "FAIL", out
+    assert out["total"] == 4 and out["passed"] == 2 and out["failed"] == 2, out
+    assert out["failed_names"] == ["c2", "c3"], out
+    assert "FAIL:" in out["human_summary"], out
+
+
+def test_tool3_ui_readability_summary_limits_failing_names_to_five():
+    from app import ui as app_ui
+
+    result = {
+        "executed_cases": 7,
+        "passed_cases": 0,
+        "failed_cases": 7,
+        "cases": [{"name": f"f{i}", "ok": False} for i in range(1, 8)],
+    }
+    out = app_ui._tool3_readability_summary(result, False)
+    assert len(out["failed_names"]) == 5, out
+    assert out["failed_names"] == ["f1", "f2", "f3", "f4", "f5"], out
+
+def test_tool1_assertion_surface_groups_are_disjoint_and_non_empty():
+    from app import tool1_assertion_surface as surface
+
+    groups = surface.grouped_assertions()
+    core = groups.get("core") or []
+    advanced = groups.get("advanced") or []
+    assert isinstance(core, list) and core, groups
+    assert isinstance(advanced, list) and advanced, groups
+    assert set(core).isdisjoint(set(advanced)), groups
+
+
+def test_tool1_assertion_surface_contains_expected_core_markers():
+    from app import tool1_assertion_surface as surface
+
+    groups = surface.grouped_assertions()
+    core = set(groups.get("core") or [])
+    advanced = set(groups.get("advanced") or [])
+    assert "expected_status" in core, groups
+    assert "expected_json_exists" in core, groups
+    assert "expected_status_not" in advanced, groups
+    assert "expected_json_absent" in advanced, groups
+
+
+def test_system_eval_runner_script_success_prints_status_markers():
+    suite_payload = {
+        "suite_name": "runner-marker-suite",
+        "target_name": "fake-http-target",
+        "cases": [
+            {
+                "name": "status-and-token",
+                "method": "POST",
+                "url": "https://fake.local/endpoint",
+                "payload": {"prompt": "hello"},
+                "assertions": {"status_code": 200, "contains_all": ["pass-token"]},
+            }
+        ],
+    }
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        suite_path = temp_root / "suite.json"
+        suite_path.write_text(json.dumps(suite_payload, ensure_ascii=False), encoding="utf-8")
+        output_dir = temp_root / "artifacts"
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = b'{"result":"pass-token detected"}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                _ = (format, args)
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            suite_payload["cases"][0]["url"] = f"http://127.0.0.1:{server.server_port}/evaluate"
+            suite_path.write_text(json.dumps(suite_payload, ensure_ascii=False), encoding="utf-8")
+            cmd = [
+                sys.executable,
+                str(PROJECT_ROOT / "tools" / "system_eval_runner.py"),
+                "--suite",
+                str(suite_path),
+                "--output-dir",
+                str(output_dir),
+                "--file-stem",
+                "runner_markers",
+            ]
+            completed = subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+            assert completed.returncode == 0, completed
+            assert "SYSTEM_EVAL_STATUS: PASS" in completed.stdout, completed.stdout
+            assert "SYSTEM_EVAL_JSON:" in completed.stdout, completed.stdout
+            assert "SYSTEM_EVAL_MARKDOWN:" in completed.stdout, completed.stdout
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
 def test_memory_display_normalization_separators():
     raw = "  I prefer step---by___step learning  "
     normalized = playground.normalize_memory_display_value(raw)
@@ -10349,7 +14888,7 @@ def test_build_messages_confidence_filter_when_user_purpose_present():
         assert "without needing further clarification" in prompt
         assert "Look into possible ways to make money online" in prompt
         assert "Message 5 potential clients today" in prompt
-        assert prompt.count("Use exactly these three sections in this order:") == 1
+        assert "DIRECT ANSWER MODE:" in prompt
 
 
 def test_build_messages_reality_constrained_action_selection_when_user_purpose_present():
@@ -10383,7 +14922,7 @@ def test_build_messages_reality_constrained_action_selection_when_user_purpose_p
         assert "fast feedback" in prompt
         assert "Create an AI testing service and post it online." in prompt
         assert "offer it to 3 people" in prompt
-        assert prompt.count("Use exactly these three sections in this order:") == 1
+        assert "DIRECT ANSWER MODE:" in prompt
 
 
 def test_build_messages_first_money_bias_appears_for_money_query_with_user_purpose():
@@ -10416,7 +14955,6 @@ def test_build_messages_first_money_bias_appears_for_money_query_with_user_purpo
         assert "same day" in prompt
         assert "Practice testing on GitHub projects first." in prompt
         assert "simple manual test for a small fee" in prompt
-        assert prompt.count("Use exactly these three sections in this order:") == 1
 
 
 def test_build_messages_first_money_bias_not_added_for_non_money_query():
@@ -10694,8 +15232,8 @@ def test_build_messages_vague_research_override_forces_structured_answer_path_in
 def test_build_messages_normal_open_conversation_still_unchanged_without_override_trigger():
     reset_agent_state()
     prompt, _ = playground.build_messages("What is 2 plus 2?")
-    assert "OPEN CONVERSATION MODE" in prompt
     assert "The exact answer line to use is:" not in prompt
+    assert "Current focus:" in prompt
 
 
 def test_build_messages_proactive_initiative_when_user_purpose_present():
@@ -10755,7 +15293,7 @@ def test_build_messages_proactive_no_extra_titan_output_sections():
         temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
 
         prompt, _ = playground.build_messages("What matters to me in life?")
-        assert prompt.count("Use exactly these three sections in this order:") == 1
+        assert "Use exactly these three sections in this order:" not in prompt
 
 
 def test_build_messages_current_context_grounding_when_user_purpose_present():
@@ -10852,7 +15390,7 @@ def test_build_messages_next_step_alignment_preserves_prior_sections():
         assert "Proactive initiative:" in prompt
         assert "Confidence filter:" in prompt
         assert "Reality-constrained action selection:" in prompt
-        assert "OUTPUT FORMAT RULES:" in prompt
+        # May route via conversation (wh-question) without OPEN CONVERSATION OUTPUT FORMAT RULES.
         pos_self = prompt.find("Self-alignment check:")
         pos_next = prompt.find("Next-step alignment:")
         assert pos_self != -1 and pos_next != -1
@@ -11768,7 +16306,139 @@ def main():
         ("run_soak_script_smoke", test_run_soak_script_smoke),
         ("run_tool1_system_eval_operator_helper_with_fake_adapter", test_run_tool1_system_eval_operator_helper_with_fake_adapter),
         ("run_tool1_system_eval_operator_missing_suite_file", test_run_tool1_system_eval_operator_missing_suite_file),
+        (
+            "run_tool1_system_eval_operator_default_adapter_prompt_lane_fails_cleanly",
+            test_run_tool1_system_eval_operator_default_adapter_prompt_lane_fails_cleanly,
+        ),
+        (
+            "run_tool1_system_eval_operator_default_adapter_keeps_http_path",
+            test_run_tool1_system_eval_operator_default_adapter_keeps_http_path,
+        ),
+        (
+            "run_tool2_prompt_response_eval_rejects_non_prompt_lane",
+            test_run_tool2_prompt_response_eval_rejects_non_prompt_lane,
+        ),
+        (
+            "run_tool2_prompt_response_eval_missing_suite_logs_failure_record",
+            test_run_tool2_prompt_response_eval_missing_suite_logs_failure_record,
+        ),
+        (
+            "run_tool2_prompt_response_eval_invalid_json_logs_failure_record",
+            test_run_tool2_prompt_response_eval_invalid_json_logs_failure_record,
+        ),
+        (
+            "run_tool2_prompt_response_eval_invalid_timeout_rejected_and_logged",
+            test_run_tool2_prompt_response_eval_invalid_timeout_rejected_and_logged,
+        ),
+        (
+            "run_tool2_prompt_response_eval_timeout_bool_rejected",
+            test_run_tool2_prompt_response_eval_timeout_bool_rejected,
+        ),
+        (
+            "run_tool2_prompt_response_eval_default_adapter_passes",
+            test_run_tool2_prompt_response_eval_default_adapter_passes,
+        ),
+        (
+            "run_tool2_prompt_response_eval_artifact_failure_is_reported_and_logged",
+            test_run_tool2_prompt_response_eval_artifact_failure_is_reported_and_logged,
+        ),
+        (
+            "run_tool2_prompt_response_eval_execution_exception_is_reported_and_logged",
+            test_run_tool2_prompt_response_eval_execution_exception_is_reported_and_logged,
+        ),
+        (
+            "tool2_prompt_response_logging_includes_prompt_fields",
+            test_tool2_prompt_response_logging_includes_prompt_fields,
+        ),
+        (
+            "tool2_logging_does_not_depend_on_tool1_build_helpers",
+            test_tool2_logging_does_not_depend_on_tool1_build_helpers,
+        ),
+        (
+            "tool2_prompt_response_sample_suite_shape_validates",
+            test_tool2_prompt_response_sample_suite_shape_validates,
+        ),
+        (
+            "run_tool1_system_eval_operator_artifact_failure_is_reported_and_logged",
+            test_run_tool1_system_eval_operator_artifact_failure_is_reported_and_logged,
+        ),
+        (
+            "run_tool1_system_eval_operator_execution_exception_is_reported_and_logged",
+            test_run_tool1_system_eval_operator_execution_exception_is_reported_and_logged,
+        ),
+        (
+            "run_tool1_system_eval_operator_failure_bundle_contract",
+            test_run_tool1_system_eval_operator_failure_bundle_contract,
+        ),
+        (
+            "run_tool2_prompt_response_eval_failure_bundle_contract",
+            test_run_tool2_prompt_response_eval_failure_bundle_contract,
+        ),
+        (
+            "run_tool3_regression_eval_rejects_non_regression_lane",
+            test_run_tool3_regression_eval_rejects_non_regression_lane,
+        ),
+        (
+            "run_tool3_regression_eval_scaffold_contract_on_regression_lane",
+            test_run_tool3_regression_eval_scaffold_contract_on_regression_lane,
+        ),
+        (
+            "run_tool3_regression_eval_does_not_depend_on_tool1_operator",
+            test_run_tool3_regression_eval_does_not_depend_on_tool1_operator,
+        ),
+        (
+            "run_tool3_regression_eval_does_not_depend_on_tool2_operator",
+            test_run_tool3_regression_eval_does_not_depend_on_tool2_operator,
+        ),
+        (
+            "run_tool3_regression_eval_execution_failure_contract",
+            test_run_tool3_regression_eval_execution_failure_contract,
+        ),
+        (
+            "run_tool3_regression_eval_artifact_failure_is_reported_and_logged",
+            test_run_tool3_regression_eval_artifact_failure_is_reported_and_logged,
+        ),
+        (
+            "run_tool3_regression_eval_command_invocation_failure_is_reported_and_logged",
+            test_run_tool3_regression_eval_command_invocation_failure_is_reported_and_logged,
+        ),
+        (
+            "run_tool3_regression_eval_command_timeout_is_reported_and_logged",
+            test_run_tool3_regression_eval_command_timeout_is_reported_and_logged,
+        ),
+        (
+            "run_tool3_regression_eval_failure_bundle_contract",
+            test_run_tool3_regression_eval_failure_bundle_contract,
+        ),
         ("tool1_run_log_jsonl_written_for_suite_success_and_failure", test_tool1_run_log_jsonl_written_for_suite_success_and_failure),
+        (
+            "run_tool1_system_eval_operator_invalid_json_logs_failure_record",
+            test_run_tool1_system_eval_operator_invalid_json_logs_failure_record,
+        ),
+        (
+            "tool1_run_log_single_request_redacts_sensitive_fields",
+            test_tool1_run_log_single_request_redacts_sensitive_fields,
+        ),
+        (
+            "tool1_run_log_single_request_redacts_sensitive_fields_in_malformed_raw_text",
+            test_tool1_run_log_single_request_redacts_sensitive_fields_in_malformed_raw_text,
+        ),
+        (
+            "tool1_run_log_suite_redacts_sensitive_request_fields",
+            test_tool1_run_log_suite_redacts_sensitive_request_fields,
+        ),
+        (
+            "tool1_run_log_redacts_sensitive_tokens_in_error_and_summary_text",
+            test_tool1_run_log_redacts_sensitive_tokens_in_error_and_summary_text,
+        ),
+        (
+            "tool1_run_log_redacts_sensitive_tokens_in_failure_lines",
+            test_tool1_run_log_redacts_sensitive_tokens_in_failure_lines,
+        ),
+        (
+            "tool1_run_log_redaction_does_not_mutate_input_record",
+            test_tool1_run_log_redaction_does_not_mutate_input_record,
+        ),
         ("http_target_adapter_get_omits_json_keyword", test_http_target_adapter_get_omits_json_keyword),
         ("http_target_adapter_head_omits_json_keyword", test_http_target_adapter_head_omits_json_keyword),
         ("http_target_adapter_post_passes_json_payload", test_http_target_adapter_post_passes_json_payload),
@@ -11784,6 +16454,126 @@ def main():
         ("system_eval_validate_suite_rejects_body_non_null", test_system_eval_validate_suite_rejects_body_non_null),
         ("system_eval_validate_suite_requires_non_empty_cases", test_system_eval_validate_suite_requires_non_empty_cases),
         ("system_eval_validate_suite_rejects_invalid_lane", test_system_eval_validate_suite_rejects_invalid_lane),
+        (
+            "system_eval_prompt_response_lane_requires_prompt_fields",
+            test_system_eval_prompt_response_lane_requires_prompt_fields,
+        ),
+        (
+            "system_eval_prompt_response_lane_normalizes_prompt_fields",
+            test_system_eval_prompt_response_lane_normalizes_prompt_fields,
+        ),
+        (
+            "system_eval_prompt_response_lane_normalizes_not_contains_field",
+            test_system_eval_prompt_response_lane_normalizes_not_contains_field,
+        ),
+        (
+            "system_eval_prompt_response_lane_executes_with_prompt_adapter_pass",
+            test_system_eval_prompt_response_lane_executes_with_prompt_adapter_pass,
+        ),
+        (
+            "system_eval_prompt_response_lane_fails_on_forbidden_substring",
+            test_system_eval_prompt_response_lane_fails_on_forbidden_substring,
+        ),
+        (
+            "system_eval_prompt_response_lane_regex_passes",
+            test_system_eval_prompt_response_lane_regex_passes,
+        ),
+        (
+            "system_eval_prompt_response_lane_regex_fails",
+            test_system_eval_prompt_response_lane_regex_fails,
+        ),
+        (
+            "system_eval_prompt_response_lane_starts_with_passes",
+            test_system_eval_prompt_response_lane_starts_with_passes,
+        ),
+        (
+            "system_eval_prompt_response_lane_starts_with_fails",
+            test_system_eval_prompt_response_lane_starts_with_fails,
+        ),
+        (
+            "system_eval_prompt_response_lane_ends_with_passes",
+            test_system_eval_prompt_response_lane_ends_with_passes,
+        ),
+        (
+            "system_eval_prompt_response_lane_ends_with_fails",
+            test_system_eval_prompt_response_lane_ends_with_fails,
+        ),
+        (
+            "system_eval_prompt_response_lane_equals_passes",
+            test_system_eval_prompt_response_lane_equals_passes,
+        ),
+        (
+            "system_eval_prompt_response_lane_equals_fails",
+            test_system_eval_prompt_response_lane_equals_fails,
+        ),
+        (
+            "system_eval_prompt_response_lane_length_min_passes",
+            test_system_eval_prompt_response_lane_length_min_passes,
+        ),
+        (
+            "system_eval_prompt_response_lane_length_min_fails",
+            test_system_eval_prompt_response_lane_length_min_fails,
+        ),
+        (
+            "system_eval_prompt_response_lane_length_max_passes",
+            test_system_eval_prompt_response_lane_length_max_passes,
+        ),
+        (
+            "system_eval_prompt_response_lane_length_max_fails",
+            test_system_eval_prompt_response_lane_length_max_fails,
+        ),
+        (
+            "system_eval_prompt_response_lane_length_bounds_validate_when_ordered",
+            test_system_eval_prompt_response_lane_length_bounds_validate_when_ordered,
+        ),
+        (
+            "system_eval_prompt_response_lane_length_bounds_reject_inverted_range",
+            test_system_eval_prompt_response_lane_length_bounds_reject_inverted_range,
+        ),
+        (
+            "system_eval_prompt_response_lane_length_min_rejects_bool",
+            test_system_eval_prompt_response_lane_length_min_rejects_bool,
+        ),
+        (
+            "system_eval_prompt_response_lane_length_max_rejects_bool",
+            test_system_eval_prompt_response_lane_length_max_rejects_bool,
+        ),
+        (
+            "system_eval_prompt_response_fields_rejected_outside_prompt_lane",
+            test_system_eval_prompt_response_fields_rejected_outside_prompt_lane,
+        ),
+        (
+            "system_eval_prompt_input_rejected_when_lane_omitted",
+            test_system_eval_prompt_input_rejected_when_lane_omitted,
+        ),
+        (
+            "system_eval_prompt_response_lane_fails_on_missing_substring",
+            test_system_eval_prompt_response_lane_fails_on_missing_substring,
+        ),
+        (
+            "system_eval_prompt_response_lane_fails_when_prompt_adapter_missing",
+            test_system_eval_prompt_response_lane_fails_when_prompt_adapter_missing,
+        ),
+        (
+            "system_eval_prompt_response_lane_coerces_non_string_output_text",
+            test_system_eval_prompt_response_lane_coerces_non_string_output_text,
+        ),
+        (
+            "system_eval_prompt_response_lane_non_string_output_fails_cleanly",
+            test_system_eval_prompt_response_lane_non_string_output_fails_cleanly,
+        ),
+        (
+            "system_eval_prompt_response_lane_adapter_exception_fails_cleanly",
+            test_system_eval_prompt_response_lane_adapter_exception_fails_cleanly,
+        ),
+        (
+            "system_eval_prompt_response_lane_fail_fast_stops_after_first_failure",
+            test_system_eval_prompt_response_lane_fail_fast_stops_after_first_failure,
+        ),
+        (
+            "system_eval_prompt_response_lane_fail_fast_false_runs_all_cases",
+            test_system_eval_prompt_response_lane_fail_fast_false_runs_all_cases,
+        ),
         ("system_eval_lane_preserved_in_results_and_artifacts", test_system_eval_lane_preserved_in_results_and_artifacts),
         ("system_eval_repeat_count_rejected_when_lane_not_consistency", test_system_eval_repeat_count_rejected_when_lane_not_consistency),
         ("system_eval_invalid_repeat_count_rejected", test_system_eval_invalid_repeat_count_rejected),
@@ -11798,6 +16588,8 @@ def main():
         ("system_eval_execute_suite_records_assertion_failures", test_system_eval_execute_suite_records_assertion_failures),
         ("system_eval_expected_status_passes", test_system_eval_expected_status_passes),
         ("system_eval_expected_status_fails", test_system_eval_expected_status_fails),
+        ("system_eval_case_expected_status_not_passes", test_system_eval_case_expected_status_not_passes),
+        ("system_eval_case_expected_status_not_fails", test_system_eval_case_expected_status_not_fails),
         ("system_eval_expected_response_time_ms_pass", test_system_eval_expected_response_time_ms_pass),
         ("system_eval_expected_response_time_ms_fail", test_system_eval_expected_response_time_ms_fail),
         ("system_eval_expected_response_time_ms_equal", test_system_eval_expected_response_time_ms_equal),
@@ -11911,11 +16703,61 @@ def main():
         ),
         ("system_eval_header_contains_passes", test_system_eval_header_contains_passes),
         ("system_eval_header_contains_fails", test_system_eval_header_contains_fails),
+        ("system_eval_case_expected_headers_contains_passes", test_system_eval_case_expected_headers_contains_passes),
+        ("system_eval_case_expected_headers_contains_fails", test_system_eval_case_expected_headers_contains_fails),
+        ("system_eval_case_expected_header_exists_passes", test_system_eval_case_expected_header_exists_passes),
+        ("system_eval_case_expected_header_exists_fails", test_system_eval_case_expected_header_exists_fails),
+        ("system_eval_case_expected_json_absent_passes", test_system_eval_case_expected_json_absent_passes),
+        ("system_eval_case_expected_json_absent_fails_when_present", test_system_eval_case_expected_json_absent_fails_when_present),
+        ("system_eval_case_expected_body_not_empty_passes", test_system_eval_case_expected_body_not_empty_passes),
+        ("system_eval_case_expected_body_not_empty_fails_on_empty", test_system_eval_case_expected_body_not_empty_fails_on_empty),
+        ("system_eval_case_expected_body_size_bytes_max_passes", test_system_eval_case_expected_body_size_bytes_max_passes),
+        ("system_eval_case_expected_body_size_bytes_max_fails", test_system_eval_case_expected_body_size_bytes_max_fails),
+        ("system_eval_expected_latency_ms_max_pass", test_system_eval_expected_latency_ms_max_pass),
+        ("system_eval_expected_latency_ms_max_fail", test_system_eval_expected_latency_ms_max_fail),
+        ("system_eval_expected_response_time_ms_range_pass", test_system_eval_expected_response_time_ms_range_pass),
+        ("system_eval_expected_response_time_ms_range_fail", test_system_eval_expected_response_time_ms_range_fail),
         ("system_eval_minimal_assertion_invalid_types_rejected", test_system_eval_minimal_assertion_invalid_types_rejected),
         ("system_eval_runner_script_smoke_with_fake_http", test_system_eval_runner_script_smoke_with_fake_http),
         ("system_eval_execute_suite_multiple_cases_mixed_results", test_system_eval_execute_suite_multiple_cases_mixed_results),
         ("system_eval_execute_suite_fail_fast_stops_after_first_failure", test_system_eval_execute_suite_fail_fast_stops_after_first_failure),
         ("system_eval_runner_script_returns_nonzero_on_failure", test_system_eval_runner_script_returns_nonzero_on_failure),
+        ("system_eval_runner_script_requires_suite_argument", test_system_eval_runner_script_requires_suite_argument),
+        (
+            "system_eval_runner_script_missing_suite_file_nonzero",
+            test_system_eval_runner_script_missing_suite_file_nonzero,
+        ),
+        ("system_eval_runner_script_success_prints_status_markers", test_system_eval_runner_script_success_prints_status_markers),
+        ("tool1_ui_helpers_parse_and_merge_auth_headers", test_tool1_ui_helpers_parse_and_merge_auth_headers),
+        (
+            "tool1_ui_prepare_single_request_merges_query_and_headers",
+            test_tool1_ui_prepare_single_request_merges_query_and_headers,
+        ),
+        ("tool1_ui_parse_headers_invalid_json_errors", test_tool1_ui_parse_headers_invalid_json_errors),
+        (
+            "tool1_ui_prepare_single_request_rejects_non_object_json_body",
+            test_tool1_ui_prepare_single_request_rejects_non_object_json_body,
+        ),
+        (
+            "tool1_ui_prepare_single_request_basic_auth_requires_username",
+            test_tool1_ui_prepare_single_request_basic_auth_requires_username,
+        ),
+        (
+            "tool1_ui_single_request_display_redacts_sensitive_headers_and_query",
+            test_tool1_ui_single_request_display_redacts_sensitive_headers_and_query,
+        ),
+        (
+            "tool1_ui_case_outcome_note_prompt_response_lane",
+            test_tool1_ui_case_outcome_note_prompt_response_lane,
+        ),
+        (
+            "tool1_assertion_surface_groups_are_disjoint_and_non_empty",
+            test_tool1_assertion_surface_groups_are_disjoint_and_non_empty,
+        ),
+        (
+            "tool1_assertion_surface_contains_expected_core_markers",
+            test_tool1_assertion_surface_contains_expected_core_markers,
+        ),
         ("project_journal_records_events", test_project_journal_records_events),
         ("project_journal_auto_compaction", test_project_journal_auto_compaction),
         ("project_journal_manual_flush_command", test_project_journal_manual_flush_command),

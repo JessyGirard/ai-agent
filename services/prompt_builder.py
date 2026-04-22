@@ -475,12 +475,8 @@ def user_input_is_simple_clarification(user_input: str) -> bool:
     return True
 
 
-def user_input_needs_conversation_mode(user_input: str) -> bool:
-    """INTERACTION-01 + INTERACTION-01.1: relational prompts and conditional conversational tool/help asks."""
-    if user_input_is_simple_clarification(user_input):
-        return True
-    if user_input_needs_reasoning_structure_mode(user_input):
-        return False
+def user_input_needs_plain_answer_override(user_input: str) -> bool:
+    """Narrow meta-request: user wants plain/normal replies, not structured or analysis framing."""
     raw = (user_input or "").strip().lower()
     raw = raw.replace("\u2019", "'").replace("\u2018", "'")
     ul = re.sub(r"\s+", " ", raw)
@@ -500,6 +496,185 @@ def user_input_needs_conversation_mode(user_input: str) -> bool:
     )
     if any(m in ul for m in direct_action_markers):
         return False
+    task_intent_markers = (
+        "what should i do next",
+        "next step",
+        "implement ",
+        "create ",
+        "write ",
+        "build ",
+        "fix ",
+        "test ",
+        "review ",
+        "analyze ",
+        "analyse ",
+        "diagnose ",
+        "explain ",
+        "compare ",
+    )
+    if any(m in ul for m in task_intent_markers):
+        return False
+    plain_markers = (
+        "answer normally",
+        "answer that normally",
+        "talk normally",
+        "stop using that format",
+    )
+    return any(m in ul for m in plain_markers)
+
+
+def user_input_needs_light_task_mode(
+    user_input: str,
+    ul_norm: str,
+    *,
+    task_oriented_input: bool,
+    force_structured_override: bool,
+    action_type: str,
+) -> bool:
+    """Short generic next-step asks → natural guidance without Answer/Current state/Next step blocks."""
+    if (
+        not task_oriented_input
+        or force_structured_override
+        or action_type in {"test", "fix", "review"}
+    ):
+        return False
+    if action_type == "research" and any(
+        m in ul_norm for m in ("url", "website", "webpage", "fetch", "research")
+    ):
+        return False
+    if "joshua" in ul_norm:
+        return False
+    light_phrases = (
+        "what should i do next",
+        "what's the next step",
+        "what is the next step",
+        "what should i try",
+        "what do i do next",
+    )
+    if not any(p in ul_norm for p in light_phrases):
+        return False
+    heavy_hints = (
+        "implement ",
+        "create ",
+        "write ",
+        "build ",
+        "fix ",
+        "test ",
+        "review ",
+        "analyze ",
+        "analyse ",
+        "diagnose ",
+        "debug",
+        "stack trace",
+        "traceback",
+        "pytest",
+        "refactor",
+        "class ",
+        "function ",
+        "file:",
+        ".py",
+        "error",
+        "exception",
+    )
+    if any(h in ul_norm for h in heavy_hints):
+        return False
+    if len(ul_norm.split()) > 18:
+        return False
+    return True
+
+
+# Clarify-first: placeholder x/y/z only; (?![a-z0-9_-]) avoids "implement xml", "z-index", etc.
+_CLARIFY_FIRST_IMPL_PH = re.compile(r"\bimplement\s+(x|y|z)(?![a-z0-9_-])")
+_CLARIFY_FIRST_BUILD_PH = re.compile(r"\bbuild\s+(x|y|z)(?![a-z0-9_-])")
+_CLARIFY_FIRST_HOW_BUILD_PH = re.compile(
+    r"\bhow\s+should\s+i\s+build\s+(x|y|z)(?![a-z0-9_-])"
+)
+
+
+def user_input_needs_clarify_first_undefined_implement_build(ul_norm: str) -> bool:
+    """Narrow next-step / how-build + placeholder target only; real targets stay on heavy path."""
+    if not ul_norm or "joshua" in ul_norm:
+        return False
+    if ".py" in ul_norm or "file:" in ul_norm:
+        return False
+    if len(ul_norm.split()) > 22:
+        return False
+    how_ph = _CLARIFY_FIRST_HOW_BUILD_PH.search(ul_norm)
+    impl_ph = _CLARIFY_FIRST_IMPL_PH.search(ul_norm)
+    build_ph = _CLARIFY_FIRST_BUILD_PH.search(ul_norm)
+    if not (how_ph or impl_ph or build_ph):
+        return False
+    next_stepish = any(
+        p in ul_norm
+        for p in (
+            "what should i do next",
+            "what's the next step",
+            "what is the next step",
+            "what should i try",
+            "what do i do next",
+            "next step",
+        )
+    )
+    if how_ph:
+        return True
+    if impl_ph or build_ph:
+        return bool(next_stepish or "how should i" in ul_norm)
+    return False
+
+
+def user_input_needs_conversation_mode(user_input: str) -> bool:
+    """INTERACTION-01 + INTERACTION-01.1: relational prompts and conditional conversational tool/help asks."""
+    if user_input_is_simple_clarification(user_input):
+        return True
+    raw = (user_input or "").strip().lower()
+    raw = raw.replace("\u2019", "'").replace("\u2018", "'")
+    ul = re.sub(r"\s+", " ", raw)
+    if not ul:
+        return False
+    direct_action_markers = (
+        "implement ",
+        "create a file",
+        "add a function",
+        "write a unit test",
+        "write tests for",
+        "refactor ",
+        "apply this patch",
+        "set focus:",
+        "set stage:",
+        "show state",
+    )
+    if any(m in ul for m in direct_action_markers):
+        return False
+    # Greeting-only routing: allow short salutation + Joshua forms, but do not
+    # treat task-bearing follow-ups as casual conversation mode.
+    task_intent_markers = (
+        "what should i do next",
+        "what should i try",
+        "what do i do next",
+        "what's the next step",
+        "what is the next step",
+        "next step",
+        "implement ",
+        "create ",
+        "write ",
+        "build ",
+        "fix ",
+        "test ",
+        "review ",
+        "analyze ",
+        "analyse ",
+        "diagnose ",
+        "compare ",
+    )
+    if any(m in ul for m in task_intent_markers):
+        return False
+    if user_input_needs_plain_answer_override(user_input):
+        return True
+    if re.fullmatch(
+        r"(?:hello|hi|hey|bonjour)\s+joshua[.!?]?",
+        ul,
+    ):
+        return True
     if ul in ("joshua?", "hey joshua?", "hi joshua?"):
         return True
     conversational_markers = (
@@ -519,6 +694,29 @@ def user_input_needs_conversation_mode(user_input: str) -> bool:
         return True
     if "help me use this tool" in ul:
         return True
+    # Narrow acknowledgment-only follow-ups (non-task) for conversational replies.
+    ack_norm = ul.rstrip(".!?").strip()
+    if ack_norm in (
+        "that's much better",
+        "thats much better",
+        "nice",
+        "yeah that makes sense now",
+        "that makes sense now",
+    ):
+        return True
+    salute_only = ul.rstrip(".!?").strip()
+    if salute_only in (
+        "hello",
+        "hi",
+        "hey",
+        "bonjour",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    ):
+        return True
+    if user_input_needs_reasoning_structure_mode(user_input):
+        return False
     return False
 
 
@@ -558,6 +756,24 @@ def _latency_trim_block(text, max_chars):
 
 def _latency_cap_system_prompt(text):
     return _latency_trim_block(text, LATENCY_SYSTEM_PROMPT_MAX_CHARS)
+
+
+# CONTEXT SURFACING (INTERACTION): injected after IMPORTANT RULES so later text
+# overrides generic "anchor to focus/stage" for the current routing. Revert by
+# passing context_surfacing_block="" from build_messages or deleting these blocks.
+CONTEXT_SURFACING_LIGHT_CONVERSATION = """
+CONTEXT SURFACING (LIGHT OR CONVERSATION — applies this reply):
+- The Current focus / Current stage / Current action type lines above are internal grounding only.
+- Do NOT mention focus, stage, action type, phase names, or project labels from those lines in your reply unless the user explicitly asks about project state or clearly uses those terms themselves.
+- Do NOT open with framing like "since you are working on...", "given your current stage...", or "within your testing framework" unless the user brought that topic up.
+- Infer next steps from that context silently; keep the reply natural and user-centered without narrating harness labels.
+""".strip()
+
+CONTEXT_SURFACING_TASK_ORIENTED = """
+CONTEXT SURFACING (TASK-ORIENTED — applies this reply):
+- Current focus/stage/action type above are internal grounding. Do not repeat them every turn.
+- In free prose (outside any required template lines such as labeled Current state), do not lead the Answer with phase/stage/focus labels; mention them only when clearly relevant, at most briefly once, and avoid boilerplate repetition.
+""".strip()
 
 
 def build_static_prompt():
@@ -609,12 +825,16 @@ def build_dynamic_prompt(
     meta_rules,
     action_guidance,
     answer_and_step_rules,
+    *,
+    context_surfacing_block: str = "",
 ):
     """Per-request system text: focus/stage/action, conditional rule injections, guidance, format rules."""
     static_important, static_tool_action = get_static_prompt()
+    surfacing = f"\n\n{context_surfacing_block}\n\n" if context_surfacing_block else ""
     return (
         f"You are a focused AI agent.\n\nCurrent focus: {focus}\nCurrent stage: {stage}\nCurrent action type: {action_type}\n\n"
         + static_important
+        + surfacing
         + f"{user_purpose_priority_rules}{safety_rules}{anti_repeat_rules}{meta_rules}\n\n"
         + static_tool_action
         + f"- {action_guidance}\n"
@@ -1049,16 +1269,85 @@ def build_messages(
     subtarget = detect_subtarget(user_input, focus, stage)
     reasoning_mode_candidate = user_input_needs_reasoning_structure_mode(user_input)
     clarification_override_mode = user_input_is_simple_clarification(user_input)
-    reasoning_structure_mode = (
-        reasoning_mode_candidate and not clarification_override_mode and subtarget != "system risk"
-    )
-    conversation_mode = (
+    plain_answer_override_mode = user_input_needs_plain_answer_override(user_input)
+    conversation_signals = (
         (user_input_needs_conversation_mode(user_input) or clarification_override_mode)
         and subtarget != "system risk"
     )
+    reasoning_structure_mode = (
+        reasoning_mode_candidate
+        and not clarification_override_mode
+        and not plain_answer_override_mode
+        and subtarget != "system risk"
+        and not conversation_signals
+    )
+    conversation_mode = conversation_signals
     strict_reply = uses_strict_forced_reply(user_input, subtarget)
     force_structured_override = is_meta_system_override_question(user_input, focus, stage) or (
         action_type == "research" and is_vague_research_request(user_input)
+    )
+    task_oriented_input = (
+        strict_reply
+        or force_structured_override
+        or action_type in {"test", "fix", "review"}
+        or (
+            action_type == "research"
+            and (
+                "url" in ul_norm
+                or "website" in ul_norm
+                or "webpage" in ul_norm
+                or "fetch" in ul_norm
+                or "research" in ul_norm
+            )
+        )
+        or any(
+            marker in ul_norm
+            for marker in (
+                "what should i do next",
+                "what's the next step",
+                "what is the next step",
+                "what should i try",
+                "what do i do next",
+                "next step",
+                "add a function",
+                "classify ",
+                "classification",
+                "output only",
+                "implement ",
+                "create ",
+                "write ",
+                "build ",
+                "fix ",
+                "test ",
+                "review ",
+                "analyze ",
+                "analyse ",
+                "diagnose ",
+                "set focus:",
+                "set stage:",
+                "show state",
+            )
+        )
+    )
+    light_task_mode = user_input_needs_light_task_mode(
+        user_input,
+        ul_norm,
+        task_oriented_input=task_oriented_input,
+        force_structured_override=force_structured_override,
+        action_type=action_type,
+    )
+    clarify_first_undefined_implement_build = user_input_needs_clarify_first_undefined_implement_build(
+        ul_norm
+    )
+    simple_question_mode = (
+        not task_oriented_input
+        and not reasoning_structure_mode
+        and bool(re.match(r"^(what|who|where|when|why|how)\b", ul_norm))
+        and ("?" in user_input)
+    )
+    conversation_mode = (
+        (conversation_mode or simple_question_mode)
+        and subtarget != "system risk"
     )
     is_context_lock_relevant = (
         is_agent_meta_question(ul_norm)
@@ -1145,13 +1434,58 @@ Conclusion:
 - Current focus is {focus}; current stage is {stage}; action type is {action_type} — cite them only as short facts inside Known when relevant.
 """.strip()
     elif conversation_mode:
-        answer_and_step_rules = """
+        _interaction01_plain_override = """
+PLAIN ANSWER OVERRIDE (narrow):
+- The user asked for a normal/plain reply instead of structured or analysis-style formatting.
+- The reply MUST be plain prose (default: one or two short sentences unless the user asks for more).
+- The reply MUST NOT use Known:, Missing:, Conclusion:, Answer:, Current state:, Next step:, Progress:, Risks:, Decisions:, Next Steps:, or any similar section headers.
+- The reply MUST NOT introduce analysis framing (for example Known/Missing style labeling); answer like ordinary chat.
+- Keep the reply simple and direct; no template or workflow scaffolding.
+- Briefly mirror what they asked for (plain, normal, direct, natural tone, or dropping that format) in your own words—reflect their intent, not a fixed script or role-play quote.
+- Do not let the entire reply be only a generic open-ended question (for example replying solely with "What would you like to know?" or the same idea in different words); answer their meta-request in plain prose first.
+""".strip()
+        _interaction01_base = """
 CONVERSATION MODE (INTERACTION-01):
 - Respond naturally, as in ordinary human chat; stay warm and direct.
+- DEFAULT: If intent is ambiguous, stay unstructured for this reply — plain chat, not analysis templates.
 - Do not use structured templates, workflow sections, or fixed headers for this reply.
-- Do not use Progress:, Risks:, Decisions:, Next Steps:, Answer:, Current state:, Next step:, or Known:/Missing:/Conclusion unless the user explicitly asks for that structure.
+- Questions about answer format, style, or why a format was used MUST still be answered in plain prose.
+- Do not use Progress:, Risks:, Decisions:, Next Steps:, Answer:, Current state:, Next step:, or Known:/Missing:/Conclusion unless the user explicitly requests those exact headers.
 - Do not use generic action-plan formatting; answer the question in plain prose only.
+- For short acknowledgment follow-ups (about 1-8 tokens, no task intent), the reply MUST be exactly one short sentence.
+- For those short acknowledgment follow-ups, the reply MUST NOT contain a question.
+- For those short acknowledgment follow-ups, the reply MUST NOT contain a question mark ("?").
+- For those short acknowledgment follow-ups, the reply MUST NOT include task redirection.
+- For those short acknowledgment follow-ups, the reply MUST NOT include phrases like "what would you like", "what's next", "what should", or "focus on next".
+- For those short acknowledgment follow-ups, the reply MUST end as a statement.
+- For generic help asks (for example "Can you help me with this?"), a single short clarifying question is allowed.
 - LATENCY-05: Default to a short reply unless the user asks for detail.
+""".strip()
+        if plain_answer_override_mode:
+            answer_and_step_rules = f"{_interaction01_base}\n\n{_interaction01_plain_override}".strip()
+        else:
+            answer_and_step_rules = _interaction01_base
+    elif clarify_first_undefined_implement_build:
+        answer_and_step_rules = """
+CLARIFY-FIRST (UNDEFINED IMPLEMENT/BUILD TARGET):
+- The user asked for a next step or how to build, but only named a placeholder target (x/y/z style) with no concrete spec in the message—insufficient to recommend real work.
+- Reply in plain prose only: exactly one precise clarifying question. No guessed plan, no files or commands unless they appear verbatim in the user message or supplied context blocks above.
+- FIRST SENTENCE: Start with that question immediately—no preamble (no "Focus on", "Consider", "Try to", "It helps to", or similar coaching before the question).
+- Do NOT use section headers or labeled system blocks: no Answer:, Current state:, Next step:, Focus:, Stage:, Action type:, Progress:, Risks:, Decisions:, Next Steps:, or Known:/Missing:/Conclusion.
+- LATENCY-05: at most two short sentences total; prefer a single sentence that is only the question.
+""".strip()
+    elif light_task_mode:
+        answer_and_step_rules = """
+LIGHT TASK MODE:
+- The user asked for simple next-step or guidance in generic terms (not a deep technical or multi-step analysis request).
+- DECISIVENESS: Give exactly one of: (1) one concrete immediate next action they can start now, in plain direct prose, OR (2) one precise clarifying question when supplied context (user message, Supporting memory, Recent project journal, recent assistant outputs in this prompt) is too thin to name a safe step. Never both; never multiple options; never vague-only coaching ("refine a component", "optimize performance", "improve functionality", or similar filler without a specific move).
+- FIRST SENTENCE: The first sentence must be that single action or that single question itself—no generic lead-in before it (no "Focus on", "Consider", "Try to", "It helps to", or similar coaching filler).
+- For (1): the step must be actionable without extra interpretation (run a check, inspect an outcome, try one small experiment). Name files, modules, or commands only when they appear in supplied context above; do NOT invent repo paths or project-specific details.
+- For (2): one question only, aimed at the smallest missing fact; no menus of questions.
+- Reply in natural language only: default one short paragraph or one sentence.
+- Do NOT use section headers or labeled system blocks: no Answer:, Current state:, Next step:, Focus:, Stage:, Action type:, Progress:, Risks:, Decisions:, Next Steps:, or Known:/Missing:/Conclusion.
+- Do NOT paste focus/stage/action-type metadata as a block; follow CONTEXT SURFACING (LIGHT OR CONVERSATION) above—keep harness labels internal, but still obey DECISIVENESS here.
+- LATENCY-05: Keep the reply compact unless the user asks for more detail.
 """.strip()
     elif strict_reply or force_structured_override:
         answer_and_step_rules = f"""
@@ -1211,7 +1545,7 @@ Next step:
 
 After answering, follow the exact output format above unless the TOOL RULE applies.
 """
-    else:
+    elif task_oriented_input:
         answer_and_step_rules = f"""
 OPEN CONVERSATION MODE:
 - The user did not match a narrow workflow template (subtarget: {subtarget}). Treat this as a normal question to answer well.
@@ -1238,6 +1572,22 @@ Next step:
 - Do not add extra sections unless the user asked for lists or structure.
 - Do not paste boilerplate about "one small refinement inside the current focus" unless they were clearly asking what to build next in this focus.
 """
+    else:
+        answer_and_step_rules = f"""
+DIRECT ANSWER MODE:
+- Respond in natural prose with no fixed section headers for this reply.
+- Do not output Answer:, Current state:, Next step:, Progress:, Risks:, Decisions:, Next Steps:, or Known:/Missing:/Conclusion unless the user explicitly asks for that structure.
+- DEFAULT: If the user's intent is ambiguous, prefer natural prose only — do not use Known:/Missing:/Conclusion or Answer:/Current state:/Next step scaffolding.
+- Keep the reply short and direct by default.
+- Current focus is {focus}; current stage is {stage}; action type is {action_type}. Use these only when relevant.
+"""
+
+    if subtarget == "system risk":
+        context_surfacing_block = ""
+    elif conversation_mode or light_task_mode or clarify_first_undefined_implement_build:
+        context_surfacing_block = CONTEXT_SURFACING_LIGHT_CONVERSATION
+    else:
+        context_surfacing_block = CONTEXT_SURFACING_TASK_ORIENTED
 
     system_prompt = build_dynamic_prompt(
         focus,
@@ -1249,6 +1599,7 @@ Next step:
         meta_rules,
         action_guidance,
         answer_and_step_rules,
+        context_surfacing_block=context_surfacing_block,
     )
 
     memory_block = _latency_trim_block(
@@ -1463,7 +1814,9 @@ Next step:
     system_prompt += "\n\n" + build_runtime_01_execution_enforcement_block(
         user_input,
         reasoning_structure_mode=reasoning_structure_mode,
-        conversation_mode=conversation_mode,
+        conversation_mode=conversation_mode
+        or light_task_mode
+        or clarify_first_undefined_implement_build,
     )
 
     messages = [{"role": "user", "content": user_input}]

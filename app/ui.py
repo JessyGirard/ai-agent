@@ -17,7 +17,10 @@ if str(PROJECT_ROOT) not in sys.path:
 import playground
 
 from app import system_eval_operator as tool1_operator
+from app import tool1_assertion_surface
 from app import tool1_run_log
+from app import tool2_operator
+from app import tool3_operator
 from core import system_eval
 
 
@@ -411,6 +414,8 @@ def _tool1_case_outcome_table_note(case: dict) -> str:
     """Short table cell: PASS / FAIL + coarse cause (uses only bundle fields)."""
     if case.get("ok"):
         return "PASS"
+    if str(case.get("lane") or "") == "prompt_response":
+        return "FAIL · prompt checks"
     sc = case.get("status_code")
     if sc is None:
         return "FAIL · transport / no HTTP status"
@@ -456,6 +461,28 @@ def _tool1_render_customer_run_summary(result: dict, overall_ok: bool) -> None:
         st.caption("This run is marked failed, but no individual case names were attached in the result bundle.")
 
 
+def _tool3_readability_summary(result: dict, overall_ok: bool) -> dict:
+    """Small customer-readable summary for Tool 3 panel header."""
+    cases = result.get("cases") or []
+    total = int(result.get("executed_cases") if result.get("executed_cases") is not None else len(cases))
+    passed = int(result.get("passed_cases") if result.get("passed_cases") is not None else 0)
+    failed = int(result.get("failed_cases") if result.get("failed_cases") is not None else 0)
+    failed_names = [str(c.get("name") or f"Case {i + 1}") for i, c in enumerate(cases) if not c.get("ok")]
+    status = "PASS" if overall_ok else "FAIL"
+    if overall_ok:
+        human = f"PASS: {passed}/{total} regression checks passed."
+    else:
+        human = f"FAIL: {failed}/{total} regression checks failed."
+    return {
+        "status": status,
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "failed_names": failed_names[:5],
+        "human_summary": human,
+    }
+
+
 def _tool1_render_case_at_a_glance(case: dict, *, index: int) -> None:
     """Scannable one-screen case header (name, method, URL, pass/fail, short reason)."""
     nm = case.get("name") or f"case-{index + 1}"
@@ -474,6 +501,16 @@ def _tool1_render_case_outcome_banner(case: dict) -> None:
     """Per-case PASS/FAIL and whether failure looks like transport vs assertions."""
     if case.get("ok"):
         st.success("Outcome: PASS — assertions satisfied for this case.")
+        return
+    if str(case.get("lane") or "") == "prompt_response":
+        st.warning("Outcome: FAIL — **prompt/response expectations** did not match.")
+        lines = _tool1_case_failure_lines(case)
+        if lines:
+            with st.expander("Failure messages", expanded=True):
+                for line in lines:
+                    st.text(line)
+        else:
+            st.caption("No failure messages were attached to this case in the result bundle.")
         return
     lines = _tool1_case_failure_lines(case)
     sc = case.get("status_code")
@@ -792,15 +829,45 @@ def _tool1_single_input_snapshot_for_log(
     }
 
 
+def _tool1_is_sensitive_header_name(name: str) -> bool:
+    k = str(name or "").strip().lower().replace("-", "_")
+    return any(tok in k for tok in ("authorization", "token", "password", "secret", "api_key", "apikey"))
+
+
+def _tool1_redact_sensitive_url_query(url: str) -> str:
+    try:
+        parts = urlsplit(str(url or "").strip())
+        q = dict(parse_qsl(parts.query, keep_blank_values=True))
+    except Exception:
+        return str(url or "")
+    if not q:
+        return str(url or "")
+    changed = False
+    out_q: dict[str, str] = {}
+    for k, v in q.items():
+        kk = str(k or "").strip().lower().replace("-", "_")
+        if any(tok in kk for tok in ("token", "password", "secret", "api_key", "apikey")):
+            out_q[k] = "[REDACTED]"
+            changed = True
+        else:
+            out_q[k] = v
+    if not changed:
+        return str(url or "")
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(list(out_q.items())), parts.fragment))
+
+
 def _tool1_format_single_request_plain(prep: dict) -> str:
     """Human-readable, copy-friendly description of the prepared single request."""
+    redacted_headers = {}
+    for hk, hv in (prep.get("headers") or {}).items():
+        redacted_headers[str(hk)] = "[REDACTED]" if _tool1_is_sensitive_header_name(str(hk)) else hv
     lines = [
         f"Method: {prep['method_u']}",
-        f"Final URL: {prep['final_url']}",
+        f"Final URL: {_tool1_redact_sensitive_url_query(prep['final_url'])}",
         "",
         "Headers sent (merged, including auth helper):",
     ]
-    hdrs = prep.get("headers") or {}
+    hdrs = redacted_headers
     if not hdrs:
         lines.append("  (none)")
     else:
@@ -820,12 +887,13 @@ def _tool1_format_single_request_plain(prep: dict) -> str:
 def _tool1_format_single_request_curl(prep: dict) -> str:
     """Approximate curl command; not shell-perfect (operator convenience only)."""
     method_u = prep["method_u"]
-    final_url = prep["final_url"]
+    final_url = _tool1_redact_sensitive_url_query(prep["final_url"])
     hdrs = dict(prep.get("headers") or {})
     payload = prep.get("payload") or {}
     parts = ["curl", "-sS", "-X", method_u, shlex.quote(final_url)]
     for name in sorted(hdrs.keys()):
-        hv = f"{name}: {hdrs[name]}"
+        value = "[REDACTED]" if _tool1_is_sensitive_header_name(name) else hdrs[name]
+        hv = f"{name}: {value}"
         parts.append("-H")
         parts.append(shlex.quote(hv))
     if method_u in ("POST", "PUT", "PATCH") and payload:
@@ -969,7 +1037,10 @@ def _tool1_render_results(bundle: dict) -> None:
     log_err = bundle.get("run_log_error")
     if log_err:
         st.warning(f"Run log could not be written (run still shown): {log_err}")
-    st.caption(f"Append-only Tool 1 run log: `{tool1_run_log.tool1_run_log_path()}`")
+    run_log_path = bundle.get("run_log_path")
+    if not run_log_path:
+        run_log_path = str(tool1_run_log.tool1_run_log_path())
+    st.caption(f"Append-only run log: `{run_log_path}`")
 
     result = bundle.get("result") or {}
     overall_ok = bundle.get("ok", False)
@@ -1107,6 +1178,15 @@ def render_tool1_panel():
             "**When to use:** smoke an API, reproduce a suite, or capture evidence without "
             "touching `playground.py`. Configure paths, then **Run system eval**."
         )
+    with st.expander("Assertion surface (Core vs Advanced)", expanded=False):
+        groups = tool1_assertion_surface.grouped_assertions()
+        st.caption("Engine behavior is unchanged; this grouping simplifies the product surface.")
+        st.markdown("**Core**")
+        for name in groups["core"]:
+            st.markdown(f"- `{name}`")
+        st.markdown("**Advanced**")
+        for name in groups["advanced"]:
+            st.markdown(f"- `{name}`")
 
     st.session_state.setdefault("tool1_single_method", "GET")
     st.session_state.setdefault("tool1_single_url", "")
@@ -1125,7 +1205,7 @@ def render_tool1_panel():
         key="tool1_output_dir",
     )
     st.markdown("##### Single request (no suite file)")
-    st.caption("Same `HttpTargetAdapter` + `execute_suite` path as suite runs; writes `single_request` artifacts.")
+    st.caption("Same operator/eval path as suite runs; writes `single_request` artifacts.")
     st.number_input("HTTP timeout (seconds)", min_value=1, max_value=300, key="tool1_timeout")
     st.selectbox("Method", ["GET", "POST", "PUT", "PATCH", "DELETE"], key="tool1_single_method")
     st.text_input("URL", key="tool1_single_url", placeholder="https://api.example.com/v1/resource")
@@ -1216,6 +1296,7 @@ def render_tool1_panel():
     st.text_input("Optional file stem (blank = derive from suite_name)", key="tool1_file_stem")
     st.checkbox("Fail fast (stop at first failing case)", key="tool1_fail_fast")
 
+    st.caption("Supports HTTP lanes and prompt/response lane (`lane: prompt_response`) via the shared operator path.")
     if st.button("Run system eval", type="primary", key="tool1_run_button"):
         with st.spinner("Running suite…"):
             bundle = tool1_operator.run_tool1_system_eval_http(
@@ -1235,6 +1316,99 @@ def render_tool1_panel():
         st.info("Use **Send Request** for a quick call without a suite file, or configure a suite path and click **Run system eval**.")
         return
 
+    _tool1_render_results(bundle)
+
+
+def render_tool2_panel():
+    st.subheader("Prompt/Response — System eval lane")
+    st.caption("Runs suites where every case uses `lane: \"prompt_response\"`.")
+    st.info("This is Tool 2 explicit lane execution. Tool 1 HTTP behavior is unchanged.")
+
+    st.session_state.setdefault("tool2_output_dir", st.session_state.get("tool1_output_dir", "logs/system_eval"))
+    st.session_state.setdefault("tool2_suite_path", "")
+    st.session_state.setdefault("tool2_file_stem", "")
+    st.session_state.setdefault("tool2_fail_fast", False)
+
+    st.text_input("Output directory for Tool 2 artifacts", key="tool2_output_dir")
+    st.text_input("Tool 2 suite JSON path (repo-relative or absolute)", key="tool2_suite_path")
+    st.text_input("Optional file stem (blank = derive from suite_name)", key="tool2_file_stem")
+    st.checkbox("Fail fast (stop at first failing case)", key="tool2_fail_fast")
+
+    if st.button("Run prompt/response eval", type="primary", key="tool2_run_button"):
+        with st.spinner("Running Tool 2 suite…"):
+            bundle = tool2_operator.run_tool2_prompt_response_eval(
+                st.session_state.tool2_suite_path,
+                st.session_state.tool2_output_dir,
+                st.session_state.tool2_file_stem,
+                fail_fast=bool(st.session_state.tool2_fail_fast),
+                default_timeout_seconds=int(st.session_state.tool1_timeout),
+            )
+        st.session_state.tool2_last_bundle = bundle
+        le = bundle.get("run_log_error") if isinstance(bundle, dict) else None
+        if le:
+            st.warning(f"Run log could not be written (suite result still shown): {le}")
+
+    bundle = st.session_state.get("tool2_last_bundle")
+    if not bundle:
+        st.info("Configure a Tool 2 suite path and click **Run prompt/response eval**.")
+        return
+    _tool1_render_results(bundle)
+
+
+def render_tool3_panel():
+    st.subheader("Regression — Tool 3")
+    st.caption("Runs suites where every case uses `lane: \"regression\"`.")
+    st.info("This is Tool 3 explicit regression-lane execution.")
+
+    st.session_state.setdefault("tool3_output_dir", st.session_state.get("tool1_output_dir", "logs/system_eval"))
+    st.session_state.setdefault("tool3_suite_path", "")
+    st.session_state.setdefault("tool3_file_stem", "")
+    st.session_state.setdefault("tool3_command_override", "")
+
+    st.text_input("Output directory for Tool 3 artifacts", key="tool3_output_dir")
+    st.text_input("Tool 3 suite JSON path (repo-relative or absolute)", key="tool3_suite_path")
+    st.text_input("Optional file stem (blank = derive from suite_name)", key="tool3_file_stem")
+    st.text_input(
+        "Optional command override (blank = default)",
+        key="tool3_command_override",
+        placeholder=f"{sys.executable} tests/run_regression.py",
+    )
+
+    if st.button("Run regression", type="primary", key="tool3_run_button"):
+        with st.spinner("Running Tool 3 suite…"):
+            bundle = tool3_operator.run_tool3_regression_eval(
+                st.session_state.tool3_suite_path,
+                st.session_state.tool3_output_dir,
+                st.session_state.tool3_file_stem,
+                st.session_state.tool3_command_override,
+            )
+        st.session_state.tool3_last_bundle = bundle
+        le = bundle.get("run_log_error") if isinstance(bundle, dict) else None
+        if le:
+            st.warning(f"Run log could not be written (suite result still shown): {le}")
+
+    bundle = st.session_state.get("tool3_last_bundle")
+    if not bundle:
+        st.info("Configure a Tool 3 suite path and click **Run regression**.")
+        return
+
+    run_ok = bool(bundle.get("ok"))
+    result = bundle.get("result") or {}
+    read = _tool3_readability_summary(result, run_ok)
+    if run_ok:
+        st.success("Run status: PASS")
+    else:
+        st.error("Run status: FAIL")
+    st.markdown(
+        f"- **Total tests:** {read['total']}\n"
+        f"- **Passed:** {read['passed']}\n"
+        f"- **Failed:** {read['failed']}"
+    )
+    if read["failed_names"]:
+        st.markdown("**Failing tests (short list):**")
+        for name in read["failed_names"]:
+            st.markdown(f"- {html.escape(name)}")
+    st.caption(read["human_summary"])
     _tool1_render_results(bundle)
 
 
@@ -1475,9 +1649,9 @@ def render_main_surface():
     if surface == "Tool 1":
         render_tool1_panel()
     elif surface == "Tool 2":
-        render_tool_placeholder(2)
+        render_tool2_panel()
     elif surface == "Tool 3":
-        render_tool_placeholder(3)
+        render_tool3_panel()
     elif surface == "Terminal":
         render_terminal_panel()
     else:

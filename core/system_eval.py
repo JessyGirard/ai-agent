@@ -7,7 +7,9 @@ from pathlib import Path
 
 import requests
 
-SYSTEM_EVAL_LANES = frozenset({"stability", "correctness", "consistency"})
+from core import system_eval_status_coercion
+
+SYSTEM_EVAL_LANES = frozenset({"stability", "correctness", "consistency", "prompt_response"})
 CONSISTENCY_REPEAT_DEFAULT = 3
 CONSISTENCY_REPEAT_MAX = 50
 STABILITY_ATTEMPTS_DEFAULT = 3
@@ -563,6 +565,363 @@ def _coerce_stability_attempts(raw, case_name):
     return _coerce_bounded_attempt_field(raw, case_name, "stability_attempts", STABILITY_ATTEMPTS_MAX)
 
 
+def _coerce_retries(raw, case_name):
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'retries'; expected a non-negative integer (JSON number), not boolean."
+        )
+    if raw < 0:
+        raise ValueError(f"Case '{case_name}' has invalid 'retries' {raw}; must be >= 0.")
+    return int(raw)
+
+
+def _coerce_retry_delay_ms(raw, case_name):
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'retry_delay_ms'; expected a non-negative integer (JSON number), not boolean."
+        )
+    if raw < 0:
+        raise ValueError(f"Case '{case_name}' has invalid 'retry_delay_ms' {raw}; must be >= 0.")
+    return int(raw)
+
+
+def _coerce_expected_headers(raw, case_name):
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_headers'; expected object mapping header names to string values."
+        )
+    out = {}
+    for hk, hv in raw.items():
+        if not isinstance(hk, str):
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_headers' key {hk!r}; header names must be strings."
+            )
+        if not isinstance(hv, str):
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_headers' value for header {hk!r}; expected string."
+            )
+        if not hk.strip():
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_headers' key; header names must be non-empty strings after strip()."
+            )
+        out[hk.strip()] = hv
+    return out
+
+
+def _coerce_expected_headers_contains(raw, case_name):
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_headers_contains'; expected object mapping header names to substring values."
+        )
+    out = {}
+    for hk, hv in raw.items():
+        if not isinstance(hk, str):
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_headers_contains' key {hk!r}; header names must be strings."
+            )
+        if not isinstance(hv, str):
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_headers_contains' value for header {hk!r}; expected string."
+            )
+        if not hk.strip():
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_headers_contains' key; header names must be non-empty strings after strip()."
+            )
+        out[hk.strip()] = hv
+    return out
+
+
+def _coerce_expected_header_exists(raw, case_name):
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_header_exists'; expected a JSON array of header-name strings."
+        )
+    out = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_header_exists' item at index {i}; expected string header name."
+            )
+        header_name = item.strip()
+        if not header_name:
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_header_exists' header at index {i}; expected non-empty string after strip()."
+            )
+        out.append(header_name)
+    return out
+
+
+def _coerce_expected_json(raw, case_name):
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_json'; expected object mapping dot-path keys to JSON values."
+        )
+    out = {}
+    for k, v in raw.items():
+        if not isinstance(k, str):
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_json' key {k!r}; keys must be strings."
+            )
+        if not k.strip():
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_json' path; path keys must be non-empty strings after strip()."
+            )
+        out[k.strip()] = v
+    return out
+
+
+def _coerce_expected_json_exists(raw, case_name):
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_json_exists'; expected a JSON array of dot-path strings."
+        )
+    out = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_json_exists' item at index {i}; expected string path."
+            )
+        path = item.strip()
+        if not path:
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_json_exists' path at index {i}; expected non-empty string after strip()."
+            )
+        out.append(path)
+    return out
+
+
+def _coerce_expected_json_values(raw, case_name):
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_json_values'; expected object mapping top-level JSON keys to expected values."
+        )
+    out = {}
+    for k, v in raw.items():
+        if not isinstance(k, str):
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_json_values' key {k!r}; keys must be strings."
+            )
+        key = k.strip()
+        if not key:
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_json_values' key; keys must be non-empty strings after strip()."
+            )
+        out[key] = v
+    return out
+
+
+def _coerce_expected_json_absent(raw, case_name):
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_json_absent'; expected a JSON array of top-level key strings."
+        )
+    out = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_json_absent' item at index {i}; expected string key."
+            )
+        key = item.strip()
+        if not key:
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_json_absent' key at index {i}; expected non-empty string after strip()."
+            )
+        out.append(key)
+    return out
+
+
+def _coerce_max_duration_ms(raw, case_name):
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'max_duration_ms'; expected a non-negative integer (JSON number), not boolean."
+        )
+    if raw < 0:
+        raise ValueError(f"Case '{case_name}' has invalid 'max_duration_ms' {raw}; must be >= 0.")
+    return int(raw)
+
+
+def _coerce_expected_latency_ms_max(raw, case_name):
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_latency_ms_max'; expected a non-negative integer (JSON number), not boolean."
+        )
+    if raw < 0:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_latency_ms_max' {raw}; must be >= 0."
+        )
+    return int(raw)
+
+
+def _coerce_expected_body_not_empty(raw, case_name):
+    if not isinstance(raw, bool):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_body_not_empty'; expected boolean."
+        )
+    return bool(raw)
+
+
+def _coerce_expected_body_size_bytes_max(raw, case_name):
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_body_size_bytes_max'; expected a non-negative integer (JSON number), not boolean."
+        )
+    if raw < 0:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_body_size_bytes_max' {raw}; must be >= 0."
+        )
+    return int(raw)
+
+
+def _coerce_expected_response_time_ms_range(raw, case_name):
+    if not isinstance(raw, list) or len(raw) != 2:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_time_ms_range'; expected [min, max] with exactly two integer values."
+        )
+    min_v, max_v = raw[0], raw[1]
+    if isinstance(min_v, bool) or not isinstance(min_v, int):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_time_ms_range' min; expected integer (JSON number), not boolean."
+        )
+    if isinstance(max_v, bool) or not isinstance(max_v, int):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_time_ms_range' max; expected integer (JSON number), not boolean."
+        )
+    if int(min_v) > int(max_v):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_time_ms_range'; min must be <= max."
+        )
+    return [int(min_v), int(max_v)]
+
+
+def _coerce_prompt_input(raw, case_name):
+    v = str(raw or "").strip()
+    if not v:
+        raise ValueError(f"Case '{case_name}' has invalid 'prompt_input'; expected a non-empty string.")
+    return v
+
+
+def _coerce_expected_response_contains(raw, case_name):
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_contains'; expected a non-empty array of strings."
+        )
+    out = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_response_contains' item at index {i}; expected string."
+            )
+        needle = item.strip()
+        if not needle:
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_response_contains' item at index {i}; expected non-empty string."
+            )
+        out.append(needle)
+    return out
+
+
+def _coerce_expected_response_not_contains(raw, case_name):
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_not_contains'; expected a non-empty array of strings."
+        )
+    out = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_response_not_contains' item at index {i}; expected string."
+            )
+        needle = item.strip()
+        if not needle:
+            raise ValueError(
+                f"Case '{case_name}' has invalid 'expected_response_not_contains' item at index {i}; expected non-empty string."
+            )
+        out.append(needle)
+    return out
+
+
+def _coerce_expected_response_regex(raw, case_name):
+    if not isinstance(raw, str):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_regex'; expected non-empty string pattern."
+        )
+    pat = raw.strip()
+    if not pat:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_regex'; expected non-empty string pattern."
+        )
+    try:
+        re.compile(pat)
+    except re.error as exc:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_regex' pattern {pat!r}: {exc}"
+        ) from None
+    return pat
+
+
+def _coerce_expected_response_starts_with(raw, case_name):
+    if not isinstance(raw, str):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_starts_with'; expected non-empty string."
+        )
+    prefix = raw.strip()
+    if not prefix:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_starts_with'; expected non-empty string."
+        )
+    return prefix
+
+
+def _coerce_expected_response_ends_with(raw, case_name):
+    if not isinstance(raw, str):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_ends_with'; expected non-empty string."
+        )
+    suffix = raw.strip()
+    if not suffix:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_ends_with'; expected non-empty string."
+        )
+    return suffix
+
+
+def _coerce_expected_response_equals(raw, case_name):
+    if not isinstance(raw, str):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_equals'; expected non-empty string."
+        )
+    exact = raw.strip()
+    if not exact:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_equals'; expected non-empty string."
+        )
+    return exact
+
+
+def _coerce_expected_response_length_min(raw, case_name):
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_length_min'; expected non-negative integer."
+        )
+    if raw < 0:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_length_min'; expected non-negative integer."
+        )
+    return int(raw)
+
+
+def _coerce_expected_response_length_max(raw, case_name):
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_length_max'; expected non-negative integer."
+        )
+    if raw < 0:
+        raise ValueError(
+            f"Case '{case_name}' has invalid 'expected_response_length_max'; expected non-negative integer."
+        )
+    return int(raw)
+
+
 def load_suite_file(suite_path):
     path = Path(suite_path)
     with open(path, "r", encoding="utf-8") as f:
@@ -588,8 +947,6 @@ def validate_suite(suite):
             if not isinstance(case["steps"], list) or len(case["steps"]) == 0:
                 raise ValueError(f"Case '{name}' must have a non-empty 'steps' array.")
         url = str(case.get("url", "")).strip()
-        if not has_steps and not url:
-            raise ValueError(f"Case '{name}' is missing a non-empty 'url'.")
         assertions = case.get("assertions", {})
         if not isinstance(assertions, dict):
             raise ValueError(f"Case '{name}' has invalid 'assertions'; expected object.")
@@ -605,6 +962,86 @@ def validate_suite(suite):
                         f"allowed: {allowed}, or omit the field."
                     )
                 lane = lane_raw
+
+        is_prompt_response_lane = lane == "prompt_response"
+        prompt_response_only_fields = (
+            "prompt_input",
+            "expected_response_contains",
+            "expected_response_not_contains",
+            "expected_response_regex",
+            "expected_response_starts_with",
+            "expected_response_ends_with",
+            "expected_response_equals",
+            "expected_response_length_min",
+            "expected_response_length_max",
+        )
+        if not is_prompt_response_lane:
+            invalid_prompt_fields = [
+                field for field in prompt_response_only_fields if case.get(field) is not None
+            ]
+            if invalid_prompt_fields:
+                field_list = ", ".join(invalid_prompt_fields)
+                raise ValueError(
+                    f"Case '{name}' has prompt-response-only field(s) outside lane "
+                    f"'prompt_response': {field_list}"
+                )
+        if not has_steps and not is_prompt_response_lane and not url:
+            raise ValueError(f"Case '{name}' is missing a non-empty 'url'.")
+        if has_steps and is_prompt_response_lane:
+            raise ValueError(
+                f"Case '{name}': 'steps' is not supported for lane 'prompt_response'."
+            )
+        prompt_input = None
+        expected_response_contains = None
+        expected_response_not_contains = None
+        expected_response_regex = None
+        expected_response_starts_with = None
+        expected_response_ends_with = None
+        expected_response_equals = None
+        expected_response_length_min = None
+        expected_response_length_max = None
+        if is_prompt_response_lane:
+            prompt_input = _coerce_prompt_input(case.get("prompt_input"), name)
+            expected_response_contains = _coerce_expected_response_contains(
+                case.get("expected_response_contains"), name
+            )
+            if case.get("expected_response_not_contains") is not None:
+                expected_response_not_contains = _coerce_expected_response_not_contains(
+                    case.get("expected_response_not_contains"), name
+                )
+            if case.get("expected_response_regex") is not None:
+                expected_response_regex = _coerce_expected_response_regex(
+                    case.get("expected_response_regex"), name
+                )
+            if case.get("expected_response_starts_with") is not None:
+                expected_response_starts_with = _coerce_expected_response_starts_with(
+                    case.get("expected_response_starts_with"), name
+                )
+            if case.get("expected_response_ends_with") is not None:
+                expected_response_ends_with = _coerce_expected_response_ends_with(
+                    case.get("expected_response_ends_with"), name
+                )
+            if case.get("expected_response_equals") is not None:
+                expected_response_equals = _coerce_expected_response_equals(
+                    case.get("expected_response_equals"), name
+                )
+            if case.get("expected_response_length_min") is not None:
+                expected_response_length_min = _coerce_expected_response_length_min(
+                    case.get("expected_response_length_min"), name
+                )
+            if case.get("expected_response_length_max") is not None:
+                expected_response_length_max = _coerce_expected_response_length_max(
+                    case.get("expected_response_length_max"), name
+                )
+            if (
+                expected_response_length_min is not None
+                and expected_response_length_max is not None
+                and int(expected_response_length_min) > int(expected_response_length_max)
+            ):
+                raise ValueError(
+                    f"Case '{name}' has invalid response length bounds; "
+                    f"'expected_response_length_min' must be <= 'expected_response_length_max'."
+                )
 
         repeat_count = None
         if "repeat_count" in case and case["repeat_count"] is not None:
@@ -639,6 +1076,58 @@ def validate_suite(suite):
             stability_attempts = _coerce_stability_attempts(case["stability_attempts"], name)
         elif lane == "stability":
             stability_attempts = STABILITY_ATTEMPTS_DEFAULT
+
+        max_duration_ms = None
+        if "max_duration_ms" in case and case["max_duration_ms"] is not None:
+            max_duration_ms = _coerce_max_duration_ms(case["max_duration_ms"], name)
+        expected_latency_ms_max = None
+        if "expected_latency_ms_max" in case and case["expected_latency_ms_max"] is not None:
+            expected_latency_ms_max = _coerce_expected_latency_ms_max(
+                case["expected_latency_ms_max"], name
+            )
+        expected_body_not_empty = None
+        if "expected_body_not_empty" in case and case["expected_body_not_empty"] is not None:
+            expected_body_not_empty = _coerce_expected_body_not_empty(
+                case["expected_body_not_empty"], name
+            )
+        expected_body_size_bytes_max = None
+        if "expected_body_size_bytes_max" in case and case["expected_body_size_bytes_max"] is not None:
+            expected_body_size_bytes_max = _coerce_expected_body_size_bytes_max(
+                case["expected_body_size_bytes_max"], name
+            )
+        expected_response_time_ms_range = None
+        if (
+            "expected_response_time_ms_range" in case
+            and case["expected_response_time_ms_range"] is not None
+        ):
+            expected_response_time_ms_range = _coerce_expected_response_time_ms_range(
+                case["expected_response_time_ms_range"], name
+            )
+        retries = None
+        if "retries" in case and case["retries"] is not None:
+            retries = _coerce_retries(case["retries"], name)
+        retry_delay_ms = None
+        if "retry_delay_ms" in case and case["retry_delay_ms"] is not None:
+            retry_delay_ms = _coerce_retry_delay_ms(case["retry_delay_ms"], name)
+        expected_status_case = None
+        if "expected_status" in case and case["expected_status"] is not None:
+            expected_status_case = system_eval_status_coercion.coerce_expected_status(
+                case["expected_status"], name
+            )
+        expected_status_in_case = None
+        if "expected_status_in" in case and case["expected_status_in"] is not None:
+            expected_status_in_case = system_eval_status_coercion.coerce_expected_status_in(
+                case["expected_status_in"], name
+            )
+        expected_status_not_case = None
+        if "expected_status_not" in case and case["expected_status_not"] is not None:
+            expected_status_not_case = system_eval_status_coercion.coerce_expected_status_not(
+                case["expected_status_not"], name
+            )
+        if expected_status_case is not None and expected_status_in_case is not None:
+            raise ValueError(
+                f"Case '{name}' cannot set both 'expected_status' and 'expected_status_in'; choose one."
+            )
 
         if has_steps and lane in ("stability", "consistency"):
             raise ValueError(
@@ -689,7 +1178,7 @@ def validate_suite(suite):
                 "name": name,
                 "lane": lane,
                 "method": str(case.get("method", "POST")).upper(),
-                "url": url,
+                "url": url if url else "prompt://local",
                 "headers": case.get("headers", {}),
                 "payload": case.get("payload", {}),
                 "timeout_seconds": default_timeout,
@@ -703,6 +1192,62 @@ def validate_suite(suite):
             norm["repeat_count"] = repeat_count
         if lane == "stability":
             norm["stability_attempts"] = stability_attempts
+        if max_duration_ms is not None:
+            norm["max_duration_ms"] = max_duration_ms
+        if expected_latency_ms_max is not None:
+            norm["expected_latency_ms_max"] = expected_latency_ms_max
+        if expected_body_not_empty is not None:
+            norm["expected_body_not_empty"] = expected_body_not_empty
+        if expected_body_size_bytes_max is not None:
+            norm["expected_body_size_bytes_max"] = expected_body_size_bytes_max
+        if expected_response_time_ms_range is not None:
+            norm["expected_response_time_ms_range"] = expected_response_time_ms_range
+        if retries is not None:
+            norm["retries"] = retries
+        if retry_delay_ms is not None:
+            norm["retry_delay_ms"] = retry_delay_ms
+        if expected_status_case is not None:
+            norm["expected_status"] = expected_status_case
+        if expected_status_in_case is not None:
+            norm["expected_status_in"] = expected_status_in_case
+        if expected_status_not_case is not None:
+            norm["expected_status_not"] = expected_status_not_case
+        if "expected_headers" in case and case["expected_headers"] is not None:
+            norm["expected_headers"] = _coerce_expected_headers(case["expected_headers"], name)
+        if "expected_headers_contains" in case and case["expected_headers_contains"] is not None:
+            norm["expected_headers_contains"] = _coerce_expected_headers_contains(
+                case["expected_headers_contains"], name
+            )
+        if "expected_header_exists" in case and case["expected_header_exists"] is not None:
+            norm["expected_header_exists"] = _coerce_expected_header_exists(
+                case["expected_header_exists"], name
+            )
+        if "expected_json" in case and case["expected_json"] is not None:
+            norm["expected_json"] = _coerce_expected_json(case["expected_json"], name)
+        if "expected_json_exists" in case and case["expected_json_exists"] is not None:
+            norm["expected_json_exists"] = _coerce_expected_json_exists(case["expected_json_exists"], name)
+        if "expected_json_values" in case and case["expected_json_values"] is not None:
+            norm["expected_json_values"] = _coerce_expected_json_values(case["expected_json_values"], name)
+        if "expected_json_absent" in case and case["expected_json_absent"] is not None:
+            norm["expected_json_absent"] = _coerce_expected_json_absent(case["expected_json_absent"], name)
+        if prompt_input is not None:
+            norm["prompt_input"] = prompt_input
+        if expected_response_contains is not None:
+            norm["expected_response_contains"] = expected_response_contains
+        if expected_response_not_contains is not None:
+            norm["expected_response_not_contains"] = expected_response_not_contains
+        if expected_response_regex is not None:
+            norm["expected_response_regex"] = expected_response_regex
+        if expected_response_starts_with is not None:
+            norm["expected_response_starts_with"] = expected_response_starts_with
+        if expected_response_ends_with is not None:
+            norm["expected_response_ends_with"] = expected_response_ends_with
+        if expected_response_equals is not None:
+            norm["expected_response_equals"] = expected_response_equals
+        if expected_response_length_min is not None:
+            norm["expected_response_length_min"] = expected_response_length_min
+        if expected_response_length_max is not None:
+            norm["expected_response_length_max"] = expected_response_length_max
 
         if not has_steps:
             if "request_url_initial" in case and case["request_url_initial"] is not None:
@@ -1328,8 +1873,306 @@ def _evaluate_single_attempt(case, adapter_result):
     if not adapter_result.ok:
         failures.append(adapter_result.error or "transport failure")
     else:
+        output_text = adapter_result.output_text or ""
+        if case.get("expected_status") is not None:
+            exp_status = int(case["expected_status"])
+            if adapter_result.status_code != exp_status:
+                failures.append(
+                    f"expected_status mismatch: expected {exp_status}, got {adapter_result.status_code}"
+                )
+        if case.get("expected_status_in") is not None:
+            exp_statuses = [int(x) for x in case["expected_status_in"]]
+            if adapter_result.status_code not in exp_statuses:
+                failures.append(
+                    "expected_status_in mismatch: "
+                    + json.dumps(
+                        {
+                            "expected_any_of": exp_statuses,
+                            "actual": adapter_result.status_code,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+        if case.get("expected_status_not") is not None:
+            exp_statuses_not = [int(x) for x in case["expected_status_not"]]
+            if adapter_result.status_code in exp_statuses_not:
+                failures.append(
+                    "expected_status_not mismatch: "
+                    + json.dumps(
+                        {
+                            "expected_not_any_of": exp_statuses_not,
+                            "actual": adapter_result.status_code,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+        if (
+            case.get("expected_status") is None
+            and case.get("expected_status_in") is None
+            and case.get("expected_status_not") is None
+        ):
+            sc = adapter_result.status_code
+            if not isinstance(sc, int) or sc < 200 or sc > 299:
+                failures.append(f"default status check failed: expected 2xx, got {sc}")
+        if case.get("expected_headers") is not None:
+            expected_headers = case["expected_headers"]
+            hdrs = adapter_result.response_headers or {}
+            if isinstance(expected_headers, dict):
+                for hname, expected_value in expected_headers.items():
+                    actual_value = _response_header_value(hdrs, hname)
+                    if actual_value is None:
+                        failures.append(
+                            f"expected_headers missing header: {hname!r} (expected {str(expected_value).strip()!r}, got missing)"
+                        )
+                    elif actual_value.strip() != str(expected_value).strip():
+                        failures.append(
+                            f"expected_headers mismatch: header {hname!r} expected {str(expected_value).strip()!r}, got {actual_value.strip()!r}"
+                        )
+        if case.get("expected_headers_contains") is not None:
+            expected_headers_contains = case["expected_headers_contains"]
+            hdrs = adapter_result.response_headers or {}
+            if isinstance(expected_headers_contains, dict):
+                for hname, expected_substring in expected_headers_contains.items():
+                    actual_value = _response_header_value(hdrs, hname)
+                    if actual_value is None:
+                        failures.append(
+                            f"expected_headers_contains missing header: {hname!r} (expected substring {str(expected_substring)!r}, got missing)"
+                        )
+                    elif str(expected_substring) not in actual_value:
+                        failures.append(
+                            f"expected_headers_contains mismatch: header {hname!r} expected to contain {str(expected_substring)!r}, got {actual_value!r}"
+                        )
+        if case.get("expected_header_exists") is not None:
+            expected_header_exists = case["expected_header_exists"]
+            hdrs = adapter_result.response_headers or {}
+            if isinstance(expected_header_exists, list):
+                for hname in expected_header_exists:
+                    actual_value = _response_header_value(hdrs, str(hname))
+                    if actual_value is None:
+                        failures.append(f"expected_header_exists missing header: {str(hname)!r}")
+        if case.get("expected_json") is not None:
+            expected_json = case["expected_json"]
+            try:
+                parsed = json.loads(output_text)
+            except json.JSONDecodeError:
+                failures.append("expected_json invalid json: response body is not valid JSON")
+            else:
+                if not isinstance(parsed, dict):
+                    failures.append("expected_json invalid json: response body JSON must be an object at the root")
+                else:
+                    for path_key, expected_value in expected_json.items():
+                        path_resolved = str(path_key).strip()
+                        actual_value = _resolve_simple_json_dot_path(parsed, path_resolved)
+                        if actual_value is _SIMPLE_JSON_PATH_MISSING:
+                            failures.append(
+                                "expected_json missing path: "
+                                + json.dumps({"path": path_resolved}, ensure_ascii=False)
+                            )
+                        elif actual_value != expected_value:
+                            failures.append(
+                                "expected_json mismatch: "
+                                + json.dumps(
+                                    {
+                                        "path": path_resolved,
+                                        "expected": expected_value,
+                                        "actual": actual_value,
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            )
+        if case.get("expected_json_exists") is not None:
+            expected_json_exists = case["expected_json_exists"]
+            try:
+                parsed = json.loads(output_text)
+            except json.JSONDecodeError:
+                failures.append("expected_json_exists invalid json: response body is not valid JSON")
+            else:
+                if not isinstance(parsed, dict):
+                    failures.append(
+                        "expected_json_exists invalid json: response body JSON must be an object at the root"
+                    )
+                else:
+                    for path_key in expected_json_exists:
+                        path_resolved = str(path_key).strip()
+                        actual_value = _resolve_simple_json_dot_path(parsed, path_resolved)
+                        if actual_value is _SIMPLE_JSON_PATH_MISSING:
+                            failures.append(
+                                "expected_json_exists missing path: "
+                                + json.dumps({"path": path_resolved}, ensure_ascii=False)
+                            )
+        if case.get("expected_json_values") is not None:
+            expected_json_values = case["expected_json_values"]
+            try:
+                parsed = json.loads(output_text)
+            except json.JSONDecodeError:
+                failures.append("expected_json_values invalid json: response body is not valid JSON")
+            else:
+                if not isinstance(parsed, dict):
+                    failures.append(
+                        "expected_json_values invalid json: response body JSON must be an object at the root"
+                    )
+                else:
+                    for key, expected_value in expected_json_values.items():
+                        if key not in parsed:
+                            failures.append(f"missing_json_key: {key}")
+                        else:
+                            actual_value = parsed.get(key)
+                            if actual_value != expected_value:
+                                failures.append(
+                                    "json_value_mismatch: "
+                                    f"{key}, expected={json.dumps(expected_value, ensure_ascii=False)}, "
+                                    f"got={json.dumps(actual_value, ensure_ascii=False)}"
+                                )
+        if case.get("expected_json_absent") is not None:
+            expected_json_absent = case["expected_json_absent"]
+            try:
+                parsed = json.loads(output_text)
+            except json.JSONDecodeError:
+                failures.append("expected_json_absent invalid json: response body is not valid JSON")
+            else:
+                if not isinstance(parsed, dict):
+                    failures.append(
+                        "expected_json_absent invalid json: response body JSON must be an object at the root"
+                    )
+                else:
+                    for key in expected_json_absent:
+                        if key in parsed:
+                            failures.append(f"json_key_present_but_expected_absent: {key}")
+        if case.get("max_duration_ms") is not None:
+            max_duration_ms = int(case["max_duration_ms"])
+            actual_duration_ms = int(adapter_result.latency_ms)
+            if actual_duration_ms > max_duration_ms:
+                failures.append(
+                    "max_duration_ms exceeded: "
+                    + json.dumps(
+                        {"max_duration_ms": max_duration_ms, "actual_duration_ms": actual_duration_ms},
+                        ensure_ascii=False,
+                    )
+                )
+        if case.get("expected_latency_ms_max") is not None:
+            expected_latency_ms_max = int(case["expected_latency_ms_max"])
+            actual_latency_ms = int(adapter_result.latency_ms)
+            if actual_latency_ms > expected_latency_ms_max:
+                failures.append(
+                    "expected_latency_ms_max exceeded: "
+                    + json.dumps(
+                        {
+                            "expected_latency_ms_max": expected_latency_ms_max,
+                            "actual_latency_ms": actual_latency_ms,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+        if case.get("expected_body_not_empty") is True:
+            body_val = adapter_result.output_text
+            if body_val is None or body_val == "":
+                failures.append("expected_body_not_empty failed: response body is empty or null")
+        if case.get("expected_body_size_bytes_max") is not None:
+            expected_body_size_bytes_max = int(case["expected_body_size_bytes_max"])
+            body_text = adapter_result.output_text or ""
+            actual_body_size_bytes = len(body_text.encode("utf-8"))
+            if actual_body_size_bytes > expected_body_size_bytes_max:
+                failures.append(
+                    "expected_body_size_bytes_max exceeded: "
+                    + json.dumps(
+                        {
+                            "expected_body_size_bytes_max": expected_body_size_bytes_max,
+                            "actual_body_size_bytes": actual_body_size_bytes,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+        if case.get("expected_response_time_ms_range") is not None:
+            min_ms = int(case["expected_response_time_ms_range"][0])
+            max_ms = int(case["expected_response_time_ms_range"][1])
+            actual_latency_ms = int(adapter_result.latency_ms)
+            if actual_latency_ms < min_ms or actual_latency_ms > max_ms:
+                failures.append(
+                    "expected_response_time_ms_range mismatch: "
+                    + json.dumps(
+                        {
+                            "expected_min": min_ms,
+                            "expected_max": max_ms,
+                            "actual": actual_latency_ms,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
         failures.extend(_assert_output_matches(case["assertions"], adapter_result))
     return failures
+
+
+class _SimpleJsonPathMissing:
+    __slots__ = ()
+
+
+_SIMPLE_JSON_PATH_MISSING = _SimpleJsonPathMissing()
+
+
+def _resolve_simple_json_dot_path(root: object, path: str):
+    """
+    Resolve simple dot-path keys only (no array indexing) for expected_json.
+    Returns _SIMPLE_JSON_PATH_MISSING when not found / invalid traversal.
+    """
+    current = root
+    for part in path.split("."):
+        key = part.strip()
+        if not key or not isinstance(current, dict) or key not in current:
+            return _SIMPLE_JSON_PATH_MISSING
+        current = current[key]
+    return current
+
+
+def _is_transient_retry_candidate(adapter_result: AdapterResult) -> bool:
+    if not adapter_result.ok:
+        return True
+    sc = adapter_result.status_code
+    return isinstance(sc, int) and 500 <= sc <= 599
+
+
+def _run_case_with_optional_retries(
+    request_case: dict, adapter, *, retries: int | None = None, retry_delay_ms: int | None = None
+) -> tuple[AdapterResult, list[dict], str | None]:
+    """Run one request with optional transient-only retries; returns final result, attempt summaries, optional exhausted reason."""
+    retry_n = int(retries) if retries is not None else 0
+    delay_ms = int(retry_delay_ms) if retry_delay_ms is not None else 0
+    max_attempts = 1 + max(0, retry_n)
+    attempts: list[dict] = []
+    last: AdapterResult | None = None
+    for i in range(max_attempts):
+        result = adapter.run_case(request_case)
+        last = result
+        transient = _is_transient_retry_candidate(result)
+        summary = ""
+        if not result.ok:
+            summary = result.error or "transport failure"
+        elif transient and result.status_code is not None:
+            summary = f"http {int(result.status_code)}"
+        attempts.append(
+            {
+                "attempt": i + 1,
+                "status_code": result.status_code,
+                "latency_ms": int(result.latency_ms),
+                "transient_failure": bool(transient),
+                "failure_summary": summary,
+            }
+        )
+        if not transient:
+            return result, attempts, None
+        if retry_n <= 0:
+            return result, attempts, None
+        if i < max_attempts - 1 and delay_ms > 0:
+            time.sleep(delay_ms / 1000.0)
+    assert last is not None
+    exhausted_reason = "retries exhausted after transient failures: " + json.dumps(
+        {
+            "attempts": max_attempts,
+            "last_status_code": last.status_code,
+            "last_error": last.error,
+        },
+        ensure_ascii=False,
+    )
+    return last, attempts, exhausted_reason
 
 
 def _run_n_attempts(case, adapter, n):
@@ -1354,6 +2197,8 @@ def _run_n_attempts(case, adapter, n):
                 "response_headers": dict(adapter_result.response_headers),
             }
         )
+        if case.get("max_duration_ms") is not None:
+            attempts_out[-1]["max_duration_ms"] = int(case["max_duration_ms"])
     case_failures = []
     if not all_ok:
         for a in attempts_out:
@@ -1364,36 +2209,48 @@ def _run_n_attempts(case, adapter, n):
     return attempts_out, all_ok, last_adapter_result, case_failures, attempts_passed
 
 
-def _execute_correctness_case(case, adapter) -> tuple[list[str], AdapterResult | None, dict[str, object]]:
+def _execute_correctness_case(
+    case, adapter
+) -> tuple[list[str], AdapterResult | None, dict[str, object], list[dict]]:
     """Default lane: optional second HTTP hop after successful extract when templates use {{var}}."""
     variables: dict[str, object] = {}
     needs_second = _case_request_templates_have_placeholders(case)
 
     run1, err1 = _build_substituted_adapter_case(case, {}, first_hop=True)
     if err1:
-        return [err1], None, {}
-    r1 = adapter.run_case(run1)
+        return [err1], None, {}, []
+    r1, attempts1, exhausted1 = _run_case_with_optional_retries(
+        run1, adapter, retries=case.get("retries"), retry_delay_ms=case.get("retry_delay_ms")
+    )
+    if exhausted1:
+        return [exhausted1], r1, {}, attempts1
     failures = _evaluate_single_attempt(case, r1)
     if failures:
-        return failures, r1, {}
+        return failures, r1, {}, attempts1
     exf, variables = _maybe_extract(case, r1)
     failures.extend(exf)
     if failures:
-        return failures, r1, variables
+        return failures, r1, variables, attempts1
 
     adapter_result = r1
+    attempts_out = list(attempts1)
     if needs_second:
         run2, err2 = _build_substituted_adapter_case(case, variables, first_hop=False)
         if err2:
-            return [err2], r1, variables
-        r2 = adapter.run_case(run2)
+            return [err2], r1, variables, attempts_out
+        r2, attempts2, exhausted2 = _run_case_with_optional_retries(
+            run2, adapter, retries=case.get("retries"), retry_delay_ms=case.get("retry_delay_ms")
+        )
+        attempts_out.extend(attempts2)
+        if exhausted2:
+            return [exhausted2], r2, variables, attempts_out
         failures = _evaluate_single_attempt(case, r2)
         adapter_result = r2
         if failures:
-            return failures, adapter_result, variables
+            return failures, adapter_result, variables, attempts_out
         # Variables for {{...}} substitution are taken from the first hop only (Increment 42).
 
-    return failures, adapter_result, variables
+    return failures, adapter_result, variables, attempts_out
 
 
 def _step_result_reason(failures: list[str]) -> str:
@@ -1439,22 +2296,46 @@ def _execute_steps_case(
                 last_url,
                 step_results,
             )
-        last_result = adapter.run_case(run_dict)
+        last_result, step_attempts, step_exhausted = _run_case_with_optional_retries(
+            run_dict, adapter, retries=case.get("retries"), retry_delay_ms=case.get("retry_delay_ms")
+        )
         last_method = str(run_dict.get("method", last_method)).upper()
         last_url = str(run_dict.get("url", last_url))
+        if step_exhausted:
+            row = {
+                "step": step_name,
+                "status": "FAIL",
+                "url": str(run_dict.get("url", "")),
+                "latency_ms": int(last_result.latency_ms),
+                "reason": step_exhausted,
+            }
+            if case.get("retries") is not None:
+                row["attempts_total"] = len(step_attempts)
+                row["attempts"] = step_attempts
+            step_results.append(row)
+            return (
+                _prefix_failures_for_step(step_name, [step_exhausted]),
+                last_result,
+                variables,
+                last_method,
+                last_url,
+                step_results,
+            )
         ev_case = {"assertions": st["assertions"]}
         failures = _evaluate_single_attempt(ev_case, last_result)
         if failures:
             reason = _step_result_reason(failures)
-            step_results.append(
-                {
-                    "step": step_name,
-                    "status": "FAIL",
-                    "url": str(run_dict.get("url", "")),
-                    "latency_ms": int(last_result.latency_ms),
-                    "reason": reason,
-                }
-            )
+            row = {
+                "step": step_name,
+                "status": "FAIL",
+                "url": str(run_dict.get("url", "")),
+                "latency_ms": int(last_result.latency_ms),
+                "reason": reason,
+            }
+            if case.get("retries") is not None:
+                row["attempts_total"] = len(step_attempts)
+                row["attempts"] = step_attempts
+            step_results.append(row)
             return (
                 _prefix_failures_for_step(step_name, failures),
                 last_result,
@@ -1467,15 +2348,17 @@ def _execute_steps_case(
         variables.update(new_vars)
         if exf:
             reason = _step_result_reason(exf)
-            step_results.append(
-                {
-                    "step": step_name,
-                    "status": "FAIL",
-                    "url": str(run_dict.get("url", "")),
-                    "latency_ms": int(last_result.latency_ms),
-                    "reason": reason,
-                }
-            )
+            row = {
+                "step": step_name,
+                "status": "FAIL",
+                "url": str(run_dict.get("url", "")),
+                "latency_ms": int(last_result.latency_ms),
+                "reason": reason,
+            }
+            if case.get("retries") is not None:
+                row["attempts_total"] = len(step_attempts)
+                row["attempts"] = step_attempts
+            step_results.append(row)
             return (
                 _prefix_failures_for_step(step_name, exf),
                 last_result,
@@ -1484,15 +2367,104 @@ def _execute_steps_case(
                 last_url,
                 step_results,
             )
-        step_results.append(
-            {
-                "step": step_name,
-                "status": "PASS",
-                "url": str(run_dict.get("url", "")),
-                "latency_ms": int(last_result.latency_ms),
-            }
-        )
+        row = {
+            "step": step_name,
+            "status": "PASS",
+            "url": str(run_dict.get("url", "")),
+            "latency_ms": int(last_result.latency_ms),
+        }
+        if case.get("retries") is not None:
+            row["attempts_total"] = len(step_attempts)
+            row["attempts"] = step_attempts
+        step_results.append(row)
     return [], last_result, variables, last_method, last_url, step_results
+
+
+def _execute_prompt_response_case(case: dict, adapter) -> tuple[bool, list[str], AdapterResult]:
+    if not hasattr(adapter, "run_prompt_case"):
+        return (
+            False,
+            ["prompt_response_adapter_missing: adapter must implement run_prompt_case(case)"],
+            AdapterResult(
+                ok=False,
+                status_code=None,
+                output_text="",
+                latency_ms=0,
+                error="prompt_response_adapter_missing",
+                response_headers={},
+            ),
+        )
+    try:
+        adapter_result = adapter.run_prompt_case(case)
+    except Exception as exc:
+        return (
+            False,
+            [f"prompt_response_adapter_exception: {type(exc).__name__}: {exc}"],
+            AdapterResult(
+                ok=False,
+                status_code=None,
+                output_text="",
+                latency_ms=0,
+                error="prompt_response_adapter_exception",
+                response_headers={},
+            ),
+        )
+    if not isinstance(adapter_result, AdapterResult):
+        return (
+            False,
+            ["prompt_response_adapter_invalid_result: run_prompt_case(case) must return AdapterResult"],
+            AdapterResult(
+                ok=False,
+                status_code=None,
+                output_text="",
+                latency_ms=0,
+                error="prompt_response_adapter_invalid_result",
+                response_headers={},
+            ),
+        )
+    failures: list[str] = []
+    if not adapter_result.ok:
+        failures.append(f"adapter_error: {adapter_result.error or 'unknown prompt adapter failure'}")
+    raw_text = adapter_result.output_text
+    text = raw_text if isinstance(raw_text, str) else ("" if raw_text is None else str(raw_text))
+    if text != (adapter_result.output_text or ""):
+        adapter_result = AdapterResult(
+            ok=adapter_result.ok,
+            status_code=adapter_result.status_code,
+            output_text=text,
+            latency_ms=adapter_result.latency_ms,
+            error=adapter_result.error,
+            response_headers=dict(adapter_result.response_headers or {}),
+        )
+    for needle in case.get("expected_response_contains", []):
+        if needle not in text:
+            failures.append(f"expected_response_missing_substring: {needle}")
+    for needle in case.get("expected_response_not_contains", []):
+        if needle in text:
+            failures.append(f"expected_response_forbidden_substring_present: {needle}")
+    pattern = case.get("expected_response_regex")
+    if pattern is not None:
+        try:
+            if re.search(str(pattern), text, flags=re.MULTILINE) is None:
+                failures.append(f"expected_response_regex_mismatch: {pattern}")
+        except re.error as exc:
+            failures.append(f"expected_response_regex_invalid: {pattern}: {exc}")
+    starts_with = case.get("expected_response_starts_with")
+    if starts_with is not None and not text.startswith(str(starts_with)):
+        failures.append(f"expected_response_prefix_mismatch: expected_prefix={starts_with!r}")
+    ends_with = case.get("expected_response_ends_with")
+    if ends_with is not None and not text.endswith(str(ends_with)):
+        failures.append(f"expected_response_suffix_mismatch: expected_suffix={ends_with!r}")
+    equals = case.get("expected_response_equals")
+    if equals is not None and text != str(equals):
+        failures.append("expected_response_exact_mismatch")
+    length_min = case.get("expected_response_length_min")
+    if length_min is not None and len(text) < int(length_min):
+        failures.append(f"expected_response_length_too_short: min={int(length_min)}, got={len(text)}")
+    length_max = case.get("expected_response_length_max")
+    if length_max is not None and len(text) > int(length_max):
+        failures.append(f"expected_response_length_too_long: max={int(length_max)}, got={len(text)}")
+    return len(failures) == 0, failures, adapter_result
 
 
 def execute_suite(suite, adapter, fail_fast=False):
@@ -1501,7 +2473,37 @@ def execute_suite(suite, adapter, fail_fast=False):
     passed = 0
     failed = 0
     for case in suite["cases"]:
-        if case.get("lane") == "stability":
+        if case.get("lane") == "prompt_response":
+            case_ok, case_failures, adapter_result = _execute_prompt_response_case(case, adapter)
+            if case_ok:
+                passed += 1
+            else:
+                failed += 1
+            case_results.append(
+                {
+                    "name": case["name"],
+                    "lane": case.get("lane"),
+                    "ok": case_ok,
+                    "failures": case_failures,
+                    "status_code": adapter_result.status_code,
+                    "latency_ms": adapter_result.latency_ms,
+                    "output_preview": (adapter_result.output_text or "")[:600],
+                    "output_full": _cap_output_full(adapter_result.output_text or ""),
+                    "response_headers": dict(adapter_result.response_headers or {}),
+                    "method": "PROMPT",
+                    "url": "prompt://local",
+                    "prompt_input": case.get("prompt_input", ""),
+                    "expected_response_contains": list(case.get("expected_response_contains") or []),
+                    "expected_response_not_contains": list(case.get("expected_response_not_contains") or []),
+                    "expected_response_regex": case.get("expected_response_regex"),
+                    "expected_response_starts_with": case.get("expected_response_starts_with"),
+                    "expected_response_ends_with": case.get("expected_response_ends_with"),
+                    "expected_response_equals": case.get("expected_response_equals"),
+                    "expected_response_length_min": case.get("expected_response_length_min"),
+                    "expected_response_length_max": case.get("expected_response_length_max"),
+                }
+            )
+        elif case.get("lane") == "stability":
             n = int(case["stability_attempts"])
             attempts_out, case_ok, last_adapter_result, case_failures, attempts_passed = _run_n_attempts(
                 case, adapter, n
@@ -1541,6 +2543,8 @@ def execute_suite(suite, adapter, fail_fast=False):
             }
             if isinstance(case.get("assertions"), dict) and case["assertions"].get("extract") is not None:
                 row["variables"] = variables
+            if case.get("max_duration_ms") is not None:
+                row["max_duration_ms"] = int(case["max_duration_ms"])
             case_results.append(row)
         elif case.get("lane") == "consistency":
             n = int(case["repeat_count"])
@@ -1582,14 +2586,17 @@ def execute_suite(suite, adapter, fail_fast=False):
             }
             if isinstance(case.get("assertions"), dict) and case["assertions"].get("extract") is not None:
                 row["variables"] = variables
+            if case.get("max_duration_ms") is not None:
+                row["max_duration_ms"] = int(case["max_duration_ms"])
             case_results.append(row)
         else:
             if case.get("steps"):
                 failures, adapter_result, variables, row_method, row_url, step_results = _execute_steps_case(
                     case, adapter
                 )
+                retry_attempts = []
             else:
-                failures, adapter_result, variables = _execute_correctness_case(case, adapter)
+                failures, adapter_result, variables, retry_attempts = _execute_correctness_case(case, adapter)
                 row_method = case["method"]
                 row_url = case["url"]
                 step_results = []
@@ -1625,6 +2632,11 @@ def execute_suite(suite, adapter, fail_fast=False):
                 row["step_results"] = step_results
             elif isinstance(case.get("assertions"), dict) and case["assertions"].get("extract") is not None:
                 row["variables"] = variables
+            if case.get("max_duration_ms") is not None:
+                row["max_duration_ms"] = int(case["max_duration_ms"])
+            if case.get("retries") is not None:
+                row["retry_attempts_total"] = len(retry_attempts)
+                row["retry_attempts"] = retry_attempts
             case_results.append(row)
         if fail_fast and not case_results[-1].get("ok"):
             break

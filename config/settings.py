@@ -42,3 +42,16 @@ def get_openai_max_tokens():
         return int(raw)
     except ValueError:
         return 700
+
+
+def get_use_brain() -> bool:
+    raw = os.getenv("USE_BRAIN", "").strip().lower()
+    return raw in ("true", "1", "yes", "on")
+
+
+def get_openai_api_key_brain() -> str:
+    return os.getenv("OPENAI_API_KEY_BRAIN", "").strip()
+
+
+def get_openai_brain_model_name() -> str:
+    return os.getenv("OPENAI_BRAIN_MODEL", "").strip()

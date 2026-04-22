@@ -1,0 +1,73 @@
+{
+  "suite_name": "tool1-stripe-testmode-proof",
+  "target_name": "stripe-api-test-mode",
+  "cases": [
+    {
+      "name": "account_info_smoke",
+      "method": "GET",
+      "url": "https://api.stripe.com/v1/account",
+      "headers": {
+        "Authorization": "Bearer REPLACE_WITH_STRIPE_SK_TEST"
+      },
+      "payload": {},
+      "expected_status": 200,
+      "expected_status_not": [
+        500,
+        502,
+        503
+      ],
+      "expected_headers": {
+        "Content-Type": "application/json"
+      },
+      "expected_json": {
+        "object": "account"
+      },
+      "expected_json_exists": [
+        "id",
+        "object",
+        "charges_enabled"
+      ],
+      "max_duration_ms": 1500,
+      "assertions": {}
+    },
+    {
+      "name": "balance_smoke",
+      "method": "GET",
+      "url": "https://api.stripe.com/v1/balance",
+      "headers": {
+        "Authorization": "Bearer REPLACE_WITH_STRIPE_SK_TEST"
+      },
+      "payload": {},
+      "expected_status": 200,
+      "expected_headers": {
+        "Content-Type": "application/json"
+      },
+      "expected_headers_contains": {
+        "Content-Type": "application/json"
+      },
+      "expected_json": {
+        "object": "balance"
+      },
+      "expected_json_values": {
+        "object": "balance"
+      },
+      "expected_json_exists": [
+        "available",
+        "pending",
+        "livemode"
+      ],
+      "expected_json_absent": [
+        "error"
+      ],
+      "expected_body_not_empty": true,
+      "expected_body_size_bytes_max": 50000,
+      "expected_latency_ms_max": 5000,
+      "expected_response_time_ms_range": [
+        0,
+        5000
+      ],
+      "max_duration_ms": 1500,
+      "assertions": {}
+    }
+  ]
+}
