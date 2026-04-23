@@ -1,3 +1,4 @@
+import hashlib
 import re
 from concurrent.futures import ThreadPoolExecutor
 from os import getenv
@@ -83,8 +84,44 @@ def _latency_limit_message_list(
         content = m.get("content", "")
         if isinstance(content, str) and len(content) > cap:
             content = _latency_truncate_text(content, cap, "Message")
+        elif isinstance(content, list):
+            new_parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    txt = part.get("text", "")
+                    if isinstance(txt, str) and len(txt) > cap:
+                        txt = _latency_truncate_text(txt, cap, "Message")
+                    new_parts.append({**part, "text": txt})
+                else:
+                    new_parts.append(part)
+            content = new_parts
         out.append({"role": role, "content": content})
     return out
+
+
+def _merge_vision_into_messages(messages: list, user_text: str, vision_images: list) -> None:
+    """Mutates ``messages``: last user turn becomes multimodal content (text + image_url parts)."""
+    if not vision_images:
+        return
+    parts: list = [{"type": "text", "text": user_text}]
+    for img in vision_images:
+        if not isinstance(img, dict):
+            continue
+        mime = str(img.get("mime") or "image/png").strip()
+        if "/" not in mime:
+            mime = f"image/{mime}"
+        b64 = str(img.get("b64") or "").strip()
+        if not b64:
+            continue
+        data_url = f"data:{mime};base64,{b64}"
+        parts.append(
+            {"type": "image_url", "image_url": {"url": data_url, "detail": "auto"}}
+        )
+    for i in range(len(messages) - 1, -1, -1):
+        row = messages[i]
+        if isinstance(row, dict) and row.get("role") == "user":
+            messages[i] = {**row, "content": parts}
+            return
 
 
 def drain_persistence_health_signals():
@@ -1696,6 +1733,256 @@ def parse_tool_command(response_text):
     }
 
 
+_URL_IN_USER_RE = re.compile(r"https?://[^\s<>\"'\)]+", re.IGNORECASE)
+_POST_FETCH_QUOTED_SPAN_RE = re.compile(r'(["“])([^"\n“”]{3,280}?)(["”])')
+_RUNTIME_PRIORITY_DIRECT_MARKERS = (
+    "revenue",
+    "income",
+    "earn",
+    "earned",
+    "paid",
+    "client",
+    "customer",
+    "sale",
+    "sales",
+    "outreach",
+    "prospect",
+    "lead",
+)
+
+
+def _extract_first_fetchable_url(text: str) -> str | None:
+    """First http(s) URL in user text, validated with urlparse (minimal detector)."""
+    if not text or not isinstance(text, str):
+        return None
+    for m in _URL_IN_USER_RE.finditer(text):
+        raw = m.group(0).rstrip(").,;]")
+        parsed = urlparse(raw)
+        if parsed.scheme in ("http", "https") and parsed.netloc:
+            return raw
+    return None
+
+
+def _extract_fetchable_urls(text: str, *, max_urls: int = 2) -> list[str]:
+    """Ordered unique http(s) URLs in user text, capped for deterministic forced-fetch behavior."""
+    if not text or not isinstance(text, str):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _URL_IN_USER_RE.finditer(text):
+        raw = m.group(0).rstrip(").,;]")
+        parsed = urlparse(raw)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            continue
+        if raw in seen:
+            continue
+        seen.add(raw)
+        out.append(raw)
+        if len(out) >= max_urls:
+            break
+    return out
+
+
+def _merge_fetched_sources_for_prompt(sources: list[tuple[str, str]]) -> str:
+    """Label and merge multiple fetched sources for a single post-fetch prompt."""
+    blocks: list[str] = []
+    for idx, (url, body) in enumerate(sources, start=1):
+        blocks.append(f"=== SOURCE {idx}: {url} ===\n{body}")
+    return "\n\n".join(blocks).strip()
+
+
+def _strip_unsupported_quoted_spans(response_text: str, fetched_for_llm: str) -> tuple[str, bool]:
+    """Remove quote delimiters for spans that are not literal substrings of fetched content."""
+    if not response_text or not fetched_for_llm:
+        return response_text, False
+    changed = False
+
+    def _replace(match: re.Match) -> str:
+        nonlocal changed
+        span = (match.group(2) or "").strip()
+        if len(span) < 3:
+            return match.group(0)
+        if span in fetched_for_llm:
+            return match.group(0)
+        changed = True
+        # Keep wording for continuity, but remove verbatim-quote claim.
+        return span
+
+    sanitized = _POST_FETCH_QUOTED_SPAN_RE.sub(_replace, response_text)
+    return sanitized, changed
+
+
+def _forced_fetch_preview_and_digest(body: str) -> tuple[str, str]:
+    raw = "" if body is None else str(body)
+    preview = raw[:400].replace("\n", " ").strip()
+    digest = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()
+    return preview, digest
+
+
+def _runtime_decision_or_planning_query(user_input: str) -> bool:
+    return prompt_builder.user_input_is_decision_or_planning_question(user_input)
+
+
+def _runtime_primary_user_priority(user_input: str) -> str:
+    """Top high-priority active memory value for runtime decision enforcement."""
+    purpose_pool = list(retrieve_user_purpose_memory(user_input, limit=2))
+    if not purpose_pool:
+        purpose_pool = list(retrieve_memory_for_purpose(user_input, k=6))
+    selected = prompt_builder.select_high_priority_active_memories(purpose_pool, top_n=1)
+    if not selected:
+        return ""
+    return str(selected[0].get("value", "")).strip()
+
+
+def _next_step_supports_user_priority(next_step: str, priority_value: str) -> bool:
+    if not next_step or not priority_value:
+        return False
+    step_low = next_step.lower()
+    priority_low = priority_value.lower()
+    if any(m in priority_low for m in _RUNTIME_PRIORITY_DIRECT_MARKERS):
+        return any(m in step_low for m in _RUNTIME_PRIORITY_DIRECT_MARKERS)
+    step_tokens = set(re.findall(r"[a-z0-9$]+", step_low))
+    priority_tokens = {
+        t
+        for t in re.findall(r"[a-z0-9$]+", priority_low)
+        if len(t) >= 4 or "$" in t
+    }
+    if not priority_tokens:
+        return False
+    return len(step_tokens.intersection(priority_tokens)) >= 2
+
+
+def _enforce_user_priority_next_step(next_step: str, priority_value: str) -> str:
+    """Runtime guard for structured decision/planning outputs."""
+    if not priority_value:
+        return next_step
+    if _next_step_supports_user_priority(next_step, priority_value):
+        return next_step
+    priority_low = priority_value.lower()
+    if any(m in priority_low for m in _RUNTIME_PRIORITY_DIRECT_MARKERS):
+        return (
+            f"Take one revenue/client-acquisition action today that directly advances USER PRIORITY: "
+            f"{priority_value}."
+        )
+    return f"Take one concrete action today that directly advances USER PRIORITY: {priority_value}."
+
+
+def _journal_forced_fetch_audit(
+    journal_display_user: str,
+    *,
+    event: str,
+    url: str,
+    fetch_ok: bool | None,
+    failure_tag: str | None,
+    preview: str,
+    digest: str,
+) -> None:
+    append_project_journal(
+        entry_type="tool_flow",
+        user_input=journal_display_user,
+        response_text=f"forced_url_fetch_{event}",
+        action_type="research",
+        extra_fields={
+            "forced_fetch_url": url,
+            "forced_fetch_event": event,
+            "forced_fetch_ok": fetch_ok,
+            "forced_fetch_failure_tag": failure_tag,
+            "forced_fetch_sha256": digest,
+            "forced_fetch_preview": preview,
+        },
+    )
+
+
+def _complete_fetch_after_load(
+    user_input: str,
+    journal_display_user: str,
+    focus: str,
+    stage: str,
+    fetch_url: str,
+    fetched_content,
+) -> str:
+    """Shared tail: normalize fetch payload → deterministic shortcut or post-fetch LLM → journal."""
+    fetch_raw_norm = (
+        (fetched_content if isinstance(fetched_content, str) else str(fetched_content)).strip()
+    )
+    fetch_raw_is_empty = not fetch_raw_norm
+    fetched_for_llm = _latency_truncate_text(
+        fetch_raw_norm,
+        _LATENCY_POST_FETCH_BODY_MAX_CHARS,
+        "Fetched content",
+    )
+    fetched_stripped = (fetched_for_llm or "").strip()
+    fetched_stripped_is_empty = not fetched_stripped
+    fetched_stripped_len = len(fetched_stripped)
+    if fetched_stripped_len <= _LATENCY10_TRIVIAL_MAX_CHARS:
+        fetched_stripped_word_count = len(fetched_stripped.split())
+    else:
+        fetched_stripped_word_count = 0
+    failure_tag_raw = fetch_failure_tag(fetch_raw_norm)
+    failure_tag_stripped = fetch_failure_tag(fetched_stripped)
+    fetch_raw_has_failure_tag = failure_tag_raw is not None
+    fetch_stripped_has_failure_tag = failure_tag_stripped is not None
+    fetch_raw_has_alnum = any(ch.isalnum() for ch in fetch_raw_norm)
+    fetch_raw_no_alnum = not fetch_raw_has_alnum
+    if _latency08_should_skip_second_llm(
+        fetch_raw_norm,
+        fetched_stripped,
+        fetch_raw_has_failure_tag=fetch_raw_has_failure_tag,
+        fetch_stripped_has_failure_tag=fetch_stripped_has_failure_tag,
+        fetch_raw_no_alnum=fetch_raw_no_alnum,
+        fetched_stripped_is_empty=fetched_stripped_is_empty,
+        fetch_raw_is_empty=fetch_raw_is_empty,
+    ) or _latency10_is_trivially_small(
+        fetch_raw_norm,
+        fetched_stripped,
+        fetch_raw_has_failure_tag=fetch_raw_has_failure_tag,
+        fetch_stripped_has_failure_tag=fetch_stripped_has_failure_tag,
+        fetched_stripped_is_empty=fetched_stripped_is_empty,
+        fetched_stripped_len=fetched_stripped_len,
+        fetched_stripped_word_count=fetched_stripped_word_count,
+    ):
+        final_response = _latency07_deterministic_fetch_reply(
+            fetched_for_llm=fetched_for_llm,
+            focus=focus,
+            stage=stage,
+        )
+        append_project_journal(
+            entry_type="tool_flow",
+            user_input=journal_display_user,
+            response_text=final_response,
+            action_type="research",
+        )
+        append_recent_answer_history(final_response)
+        return final_response
+    post_fetch_max_turns = 6
+    post_fetch_system_prompt, post_fetch_messages = build_post_fetch_messages(
+        user_input=user_input,
+        fetched_content=fetched_for_llm,
+        focus=focus,
+        stage=stage,
+        fetch_url=fetch_url,
+    )
+    post_fetch_messages = _latency_limit_message_list(
+        post_fetch_messages, max_turns=post_fetch_max_turns
+    )
+    try:
+        final_response = ask_ai(
+            messages=post_fetch_messages,
+            system_prompt=post_fetch_system_prompt,
+        )
+    except RuntimeError as exc:
+        return f"LLM configuration error: {exc}"
+    final_response, _ = _strip_unsupported_quoted_spans(final_response, fetched_for_llm)
+    append_project_journal(
+        entry_type="tool_flow",
+        user_input=journal_display_user,
+        response_text=final_response,
+        action_type="research",
+    )
+    append_recent_answer_history(final_response)
+    return final_response
+
+
 def _latency08_should_skip_second_llm(
     fetch_raw_norm: str,
     fetched_stripped: str,
@@ -1825,8 +2112,10 @@ def choose_post_fetch_next_step(fetched_content):
     return prompt_builder.choose_post_fetch_next_step(fetched_content)
 
 
-def build_post_fetch_messages(user_input, fetched_content, focus, stage):
-    return prompt_builder.build_post_fetch_messages(user_input, fetched_content, focus, stage)
+def build_post_fetch_messages(user_input, fetched_content, focus, stage, fetch_url=None):
+    return prompt_builder.build_post_fetch_messages(
+        user_input, fetched_content, focus, stage, fetch_url=fetch_url
+    )
 
 
 # ---------- BUILD ----------
@@ -1873,17 +2162,23 @@ def build_messages(user_input):
 
 # ---------- CORE AGENT FUNCTION ----------
 
-def handle_user_input(user_input: str) -> str:
+def handle_user_input(user_input: str, vision_images: list | None = None) -> str:
     global current_state
 
     if not current_state:
         current_state.update(load_state())
         drain_persistence_health_signals()
 
-    user_input = user_input.strip()
-
-    if not user_input:
-        return "⚠️ Please type something."
+    vision_images = list(vision_images or [])
+    stripped = (user_input or "").strip()
+    if not stripped and not vision_images:
+        return "⚠️ Please type something or attach at least one screenshot."
+    if not stripped and vision_images:
+        user_input = (
+            "Please describe what you see in the screenshot(s) and answer helpfully."
+        )
+    else:
+        user_input = stripped
 
     if user_input.lower() in {"exit", "quit"}:
         return "Goodbye."
@@ -1896,7 +2191,7 @@ def handle_user_input(user_input: str) -> str:
     if command_result:
         append_project_journal(
             entry_type="state_command",
-            user_input=user_input,
+            user_input=stripped,
             response_text=command_result,
             action_type="state",
         )
@@ -1904,13 +2199,18 @@ def handle_user_input(user_input: str) -> str:
         return command_result
 
     write_runtime_memory(user_input)
+    journal_display_user = (
+        f"{user_input}\n[{len(vision_images)} screenshot(s)]"
+        if vision_images
+        else user_input
+    )
     outcome_signal = None
     if _input_shape_allows_outcome_feedback_heuristic(user_input):
         outcome_signal = detect_outcome_feedback_signal(user_input)
     if outcome_signal:
         append_project_journal(
             entry_type="outcome_feedback",
-            user_input=user_input,
+            user_input=journal_display_user,
             response_text="",
             action_type=infer_action_type(user_input, get_current_stage()),
             extra_fields={"outcome": outcome_signal},
@@ -1919,6 +2219,55 @@ def handle_user_input(user_input: str) -> str:
     focus = get_current_focus()
     stage = get_current_stage()
     action_type = infer_action_type(user_input, stage)
+
+    # URL in user message → fetch before any first-pass LLM (no unprompted page prose).
+    if (
+        not vision_images
+        and not user_message_suppresses_tool_fetch(user_input)
+    ):
+        forced_fetch_urls = _extract_fetchable_urls(user_input, max_urls=2)
+        if forced_fetch_urls:
+            fetched_sources: list[tuple[str, str]] = []
+            for forced_fetch_url in forced_fetch_urls:
+                _journal_forced_fetch_audit(
+                    journal_display_user,
+                    event="started",
+                    url=forced_fetch_url,
+                    fetch_ok=None,
+                    failure_tag=None,
+                    preview="",
+                    digest="",
+                )
+                fetched_content = fetch_page(forced_fetch_url)
+                fetch_raw_norm = (
+                    (fetched_content if isinstance(fetched_content, str) else str(fetched_content)).strip()
+                )
+                failure_tag = fetch_failure_tag(fetch_raw_norm)
+                preview, digest = _forced_fetch_preview_and_digest(fetch_raw_norm)
+                _journal_forced_fetch_audit(
+                    journal_display_user,
+                    event="completed",
+                    url=forced_fetch_url,
+                    fetch_ok=(failure_tag is None),
+                    failure_tag=failure_tag,
+                    preview=preview,
+                    digest=digest,
+                )
+                if failure_tag is not None:
+                    append_recent_answer_history("Fetch failed")
+                    return "Fetch failed"
+                fetched_sources.append((forced_fetch_url, fetch_raw_norm))
+            merged_fetch_url = ", ".join(url for url, _ in fetched_sources)
+            merged_fetched_content = _merge_fetched_sources_for_prompt(fetched_sources)
+            return _complete_fetch_after_load(
+                user_input,
+                journal_display_user,
+                focus,
+                stage,
+                merged_fetch_url,
+                merged_fetched_content,
+            )
+
     force_structured_override = (
         is_meta_system_override_question(user_input, focus, stage)
         or (action_type == "research" and is_vague_research_request(user_input))
@@ -1928,6 +2277,12 @@ def handle_user_input(user_input: str) -> str:
         forced_next_step, _ = apply_recent_negative_outcome_anti_repeat_guard(
             user_input, forced_next_step
         )
+        if _runtime_decision_or_planning_query(user_input):
+            priority_value = _runtime_primary_user_priority(user_input)
+            if priority_value:
+                forced_next_step = _enforce_user_priority_next_step(
+                    forced_next_step, priority_value
+                )
         forced_answer_line = build_answer_line(
             user_input, focus, stage, action_type, forced_next_step, memories=retrieve_relevant_memory(user_input)
         )
@@ -1943,7 +2298,7 @@ def handle_user_input(user_input: str) -> str:
         )
         append_project_journal(
             entry_type="conversation",
-            user_input=user_input,
+            user_input=journal_display_user,
             response_text=response,
             action_type=action_type,
         )
@@ -1951,6 +2306,8 @@ def handle_user_input(user_input: str) -> str:
         return response
 
     system_prompt, messages = build_messages(user_input)
+    if vision_images:
+        _merge_vision_into_messages(messages, user_input, vision_images)
     messages = _latency_limit_message_list(messages, max_turns=10)
     try:
         response = ask_ai(messages=messages, system_prompt=system_prompt)
@@ -1963,101 +2320,22 @@ def handle_user_input(user_input: str) -> str:
         and tool_command["tool"] == "fetch"
         and not user_message_suppresses_tool_fetch(user_input)
     ):
-        # LATENCY-04: run fetch off the main thread.
         fetch_url = tool_command["url"]
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(fetch_page, fetch_url)
             fetched_content = future.result()
-        fetch_raw_norm = (
-            (fetched_content if isinstance(fetched_content, str) else str(fetched_content)).strip()
+        return _complete_fetch_after_load(
+            user_input,
+            journal_display_user,
+            focus,
+            stage,
+            fetch_url,
+            fetched_content,
         )
-        # LATENCY-16: normalized raw-body emptiness once for ``_latency08``.
-        fetch_raw_is_empty = not fetch_raw_norm
-        fetched_for_llm = _latency_truncate_text(
-            fetch_raw_norm,
-            _LATENCY_POST_FETCH_BODY_MAX_CHARS,
-            "Fetched content",
-        )
-        fetched_stripped = (fetched_for_llm or "").strip()
-        # LATENCY-15: stripped-body emptiness once for skip + trivial helpers.
-        fetched_stripped_is_empty = not fetched_stripped
-        # LATENCY-20: stripped length once for ``_latency10``.
-        fetched_stripped_len = len(fetched_stripped)
-        # LATENCY-21: word count once when under char cap (no ``.split()`` when already over cap).
-        if fetched_stripped_len <= _LATENCY10_TRIVIAL_MAX_CHARS:
-            fetched_stripped_word_count = len(fetched_stripped.split())
-        else:
-            fetched_stripped_word_count = 0  # unused; ``_latency10`` returns on char cap first
-        # LATENCY-12: one fetch_failure_tag pass per payload; reuse in skip + trivial checks.
-        failure_tag_raw = fetch_failure_tag(fetch_raw_norm)
-        failure_tag_stripped = fetch_failure_tag(fetched_stripped)
-        # LATENCY-18: raw failure-tag presence once for skip + trivial helpers.
-        fetch_raw_has_failure_tag = failure_tag_raw is not None
-        # LATENCY-19: stripped failure-tag presence once for skip + trivial helpers.
-        fetch_stripped_has_failure_tag = failure_tag_stripped is not None
-        # LATENCY-14: one alnum scan on normalized raw body; LATENCY-17: negated once for ``_latency08``.
-        fetch_raw_has_alnum = any(ch.isalnum() for ch in fetch_raw_norm)
-        fetch_raw_no_alnum = not fetch_raw_has_alnum
-        # LATENCY-07/08/09/10: settle skip before any second-pass-only prep (build_post_fetch, caps).
-        if _latency08_should_skip_second_llm(
-            fetch_raw_norm,
-            fetched_stripped,
-            fetch_raw_has_failure_tag=fetch_raw_has_failure_tag,
-            fetch_stripped_has_failure_tag=fetch_stripped_has_failure_tag,
-            fetch_raw_no_alnum=fetch_raw_no_alnum,
-            fetched_stripped_is_empty=fetched_stripped_is_empty,
-            fetch_raw_is_empty=fetch_raw_is_empty,
-        ) or _latency10_is_trivially_small(
-            fetch_raw_norm,
-            fetched_stripped,
-            fetch_raw_has_failure_tag=fetch_raw_has_failure_tag,
-            fetch_stripped_has_failure_tag=fetch_stripped_has_failure_tag,
-            fetched_stripped_is_empty=fetched_stripped_is_empty,
-            fetched_stripped_len=fetched_stripped_len,
-            fetched_stripped_word_count=fetched_stripped_word_count,
-        ):
-            final_response = _latency07_deterministic_fetch_reply(
-                fetched_for_llm=fetched_for_llm,
-                focus=focus,
-                stage=stage,
-            )
-            append_project_journal(
-                entry_type="tool_flow",
-                user_input=user_input,
-                response_text=final_response,
-                action_type="research",
-            )
-            append_recent_answer_history(final_response)
-            return final_response
-        post_fetch_max_turns = 6
-        post_fetch_system_prompt, post_fetch_messages = build_post_fetch_messages(
-            user_input=user_input,
-            fetched_content=fetched_for_llm,
-            focus=focus,
-            stage=stage,
-        )
-        post_fetch_messages = _latency_limit_message_list(
-            post_fetch_messages, max_turns=post_fetch_max_turns
-        )
-        try:
-            final_response = ask_ai(
-                messages=post_fetch_messages,
-                system_prompt=post_fetch_system_prompt,
-            )
-        except RuntimeError as exc:
-            return f"LLM configuration error: {exc}"
-        append_project_journal(
-            entry_type="tool_flow",
-            user_input=user_input,
-            response_text=final_response,
-            action_type="research",
-        )
-        append_recent_answer_history(final_response)
-        return final_response
 
     append_project_journal(
         entry_type="conversation",
-        user_input=user_input,
+        user_input=journal_display_user,
         response_text=response,
         action_type=infer_action_type(user_input, get_current_stage()),
     )

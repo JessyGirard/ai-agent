@@ -735,18 +735,42 @@ def format_memory_block(memories):
 
 def estimate_runtime_importance(category, value):
     value_low = value.lower()
+    ephemeral_runtime_markers = (
+        "testing",
+        "debugging",
+        "debug",
+        "trying this",
+        "right now",
+        "at the moment",
+        "for now",
+        "currently",
+    )
+    is_ephemeral_runtime = any(m in value_low for m in ephemeral_runtime_markers) or bool(
+        re.search(r"\bui\b|\buser interface\b", value_low)
+    )
     if category == "goal":
         return 0.95
     if category == "project":
         if "ai" in value_low or "agent" in value_low or "memory" in value_low:
-            return 1.00
-        return 0.90
+            base = 1.00
+        else:
+            base = 0.90
+        if is_ephemeral_runtime:
+            return min(base, 0.55)
+        return base
     if category == "identity":
-        return 0.85
+        base = 0.85
+        if is_ephemeral_runtime:
+            return min(base, 0.55)
+        return base
     if category == "preference":
         if "always" in value_low or "never" in value_low:
-            return 0.85
-        return 0.75
+            base = 0.85
+        else:
+            base = 0.75
+        if is_ephemeral_runtime:
+            return min(base, 0.55)
+        return base
     return 0.70
 
 
@@ -875,11 +899,36 @@ def make_runtime_memory_candidate(category, text, low):
     return {"category": category, "value": normalize_runtime_memory_value(text)}
 
 
+def is_ephemeral_runtime_action_statement(low_text):
+    """Session-scoped action statements should not be treated as durable identity."""
+    if not isinstance(low_text, str):
+        return False
+    normalized = re.sub(r"\s+", " ", low_text).strip()
+    if not (normalized.startswith("i am ") or normalized.startswith("i'm ")):
+        return False
+    action_markers = (
+        "testing",
+        "debugging",
+        "debug",
+        "trying this",
+        "trying this right now",
+        "right now",
+        "at the moment",
+        "for now",
+        "currently",
+    )
+    return any(marker in normalized for marker in action_markers) or bool(
+        re.search(r"\bui\b|\buser interface\b", normalized)
+    )
+
+
 def extract_runtime_memory_candidate(user_input):
     text = user_input.strip()
     low = text.lower()
     if not text or "?" in text:
         return None
+    if is_ephemeral_runtime_action_statement(low):
+        return make_runtime_memory_candidate("project", text, low)
     if is_transient_identity_statement(low):
         return None
     if low.startswith("i prefer "):
@@ -894,6 +943,21 @@ def extract_runtime_memory_candidate(user_input):
     return None
 
 
+def runtime_memory_status(category, value, confidence, memory_kind, evidence_count):
+    """Conservative activation gate: low-confidence/tentative and weak identity stay non-active."""
+    value_low = (value or "").lower()
+    if confidence < 0.6:
+        return "tentative"
+    if memory_kind == "tentative":
+        return "tentative"
+    if is_ephemeral_runtime_action_statement(value_low):
+        return "tentative"
+    if category == "identity":
+        if confidence < 0.75 or int(evidence_count or 0) < 3:
+            return "tentative"
+    return "active"
+
+
 def next_runtime_memory_id(memory_items):
     max_id = 0
     for item in memory_items:
@@ -906,14 +970,16 @@ def next_runtime_memory_id(memory_items):
 
 def create_runtime_memory_item(memory_items, category, value):
     evidence_count = 1
+    confidence = estimate_runtime_confidence(evidence_count)
+    memory_kind = classify_memory_kind(evidence_count)
     return {
         "memory_id": next_runtime_memory_id(memory_items),
         "category": category,
         "value": value,
-        "confidence": estimate_runtime_confidence(evidence_count),
+        "confidence": confidence,
         "importance": estimate_runtime_importance(category, value),
-        "status": "active",
-        "memory_kind": classify_memory_kind(evidence_count),
+        "status": runtime_memory_status(category, value, confidence, memory_kind, evidence_count),
+        "memory_kind": memory_kind,
         "evidence_count": evidence_count,
         "first_seen": "runtime",
         "last_seen": "runtime",
@@ -927,6 +993,13 @@ def merge_runtime_memory(existing_item):
     existing_item["last_seen"] = "runtime"
     existing_item["confidence"] = estimate_runtime_confidence(existing_item["evidence_count"])
     existing_item["memory_kind"] = classify_memory_kind(existing_item["evidence_count"])
+    existing_item["status"] = runtime_memory_status(
+        existing_item.get("category", ""),
+        existing_item.get("value", ""),
+        existing_item["confidence"],
+        existing_item["memory_kind"],
+        existing_item["evidence_count"],
+    )
     existing_item["trend"] = "reinforced"
     source_refs = existing_item.get("source_refs", [])
     if "runtime" not in source_refs:

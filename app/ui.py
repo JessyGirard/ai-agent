@@ -1,5 +1,6 @@
 import base64
 import html
+import io
 import json
 import os
 import shlex
@@ -9,6 +10,11 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import streamlit as st
+
+try:
+    from streamlit_paste_button import paste_image_button as _agent_paste_image_button
+except ImportError:
+    _agent_paste_image_button = None
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -100,6 +106,16 @@ def init_session_state():
     st.session_state.setdefault("voice_draft_text", "")
     st.session_state.setdefault("voice_draft_clear_pending", False)
     st.session_state.setdefault("agent_voice_composer_open", False)
+    # When False (default), Agent chat shows only the Answer body from structured replies.
+    st.session_state.setdefault("agent_ui_full_response", False)
+
+
+def _assistant_ui_full_response_enabled() -> bool:
+    """Structured assistant replies include Current state / Next step unless this is on (or env forces it)."""
+    raw = (os.environ.get("AGENT_UI_FULL_RESPONSE") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    return bool(st.session_state.get("agent_ui_full_response"))
 
 
 def _bootstrap_surface_from_query_params() -> None:
@@ -197,10 +213,38 @@ def push_assistant_message(content):
     st.session_state.messages.append({"role": "assistant", "content": content})
 
 
-def run_query(user_input):
+def run_query(user_input="", *, vision_images=None):
     """Defer append to next run (drain queue at top of chat) so user line paints before Thinking… (LATENCY-01)."""
-    st.session_state["_chat_submit_queue"] = user_input
+    if vision_images:
+        st.session_state["_chat_submit_queue"] = {
+            "mode": "vision",
+            "text": (user_input or "").strip(),
+            "images": vision_images,
+        }
+        # Clear file/caption widgets on the *next* run, before those widgets mount (Streamlit
+        # forbids mutating widget-bound session_state after instantiation).
+        st.session_state["_agent_vision_clear_widgets_next_run"] = True
+    else:
+        st.session_state["_chat_submit_queue"] = user_input
     st.rerun()
+
+
+def _agent_try_clipboard_paste_send(paste_result) -> None:
+    """Send clipboard image to Joshua once per distinct paste (avoids duplicate sends on rerun)."""
+    if _agent_paste_image_button is None or paste_result is None:
+        return
+    if paste_result.image_data is None:
+        return
+    buf = io.BytesIO()
+    paste_result.image_data.save(buf, format="PNG")
+    raw = buf.getvalue()
+    sig = hash(raw)
+    if st.session_state.get("_agent_clipboard_last_sig") == sig:
+        return
+    st.session_state["_agent_clipboard_last_sig"] = sig
+    b64 = base64.standard_b64encode(raw).decode("ascii")
+    cap = (st.session_state.get("agent_vision_caption") or "").strip()
+    run_query(cap, vision_images=[{"mime": "image/png", "b64": b64}])
 
 
 def _process_agent_reply_pending_in_chat() -> None:
@@ -212,7 +256,13 @@ def _process_agent_reply_pending_in_chat() -> None:
         ph = st.empty()
         ph.caption("Thinking…")
         try:
-            response = playground.handle_user_input(pending)
+            if isinstance(pending, dict):
+                response = playground.handle_user_input(
+                    pending.get("text", ""),
+                    vision_images=pending.get("images"),
+                )
+            else:
+                response = playground.handle_user_input(pending)
         except Exception as exc:
             st.session_state.status = "Ready"
             st.session_state.pop("_agent_reply_pending", None)
@@ -224,10 +274,12 @@ def _process_agent_reply_pending_in_chat() -> None:
         st.session_state.status = "Ready"
         st.session_state.pop("_agent_reply_pending", None)
         ph.empty()
-        # LATENCY-06: do not render the final answer here — the next rerun redraws it once from
-        # st.session_state.messages (avoids duplicate markdown work discarded by st.rerun()).
-    push_assistant_message(response)
-    st.rerun()
+        push_assistant_message(response)
+        # UI-X3: render the final answer in this same run instead of a second st.rerun(). Full
+        # reruns remount the page and tend to scroll toward st.chat_input at the bottom, which
+        # made reading older messages frustrating (LATENCY-06 avoided duplicate markdown *within*
+        # one discarded run; here we paint once and do not discard).
+        render_formatted_assistant_message(response)
 
 
 def render_formatted_assistant_message(content):
@@ -235,6 +287,23 @@ def render_formatted_assistant_message(content):
     if len(blocks) < 2:
         st.markdown(content)
         return
+
+    if not _assistant_ui_full_response_enabled():
+        kept: list[str] = []
+        has_answer = False
+        for block in blocks:
+            if block.startswith("Current state:") or block.startswith("Next step:"):
+                continue
+            if block.startswith("Answer:"):
+                has_answer = True
+            kept.append(block)
+        if has_answer:
+            for block in kept:
+                if block.startswith("Answer:"):
+                    st.markdown(block.replace("Answer:", "", 1).strip() or "-")
+                else:
+                    st.markdown(block)
+            return
 
     st.markdown('<div class="assistant-card">', unsafe_allow_html=True)
     for block in blocks:
@@ -311,6 +380,21 @@ def _sidebar_advanced_panel_body():
     current_stage = playground.get_current_stage()
     eff = _fetch_mode_effective()
     raw = os.environ.get("FETCH_MODE")
+
+    st.markdown("**Agent chat**")
+    env_full = (os.environ.get("AGENT_UI_FULL_RESPONSE") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if env_full:
+        st.caption("Full format forced by env `AGENT_UI_FULL_RESPONSE`.")
+    st.checkbox(
+        "Show Current state / Next step in chat",
+        key="agent_ui_full_response",
+        disabled=env_full,
+    )
 
     st.markdown("**Adjust state**")
     with st.form("state_form"):
@@ -1486,6 +1570,10 @@ def _render_agent_menu_controls():
         st.session_state.messages = []
         st.session_state.pop("_agent_reply_pending", None)
         st.session_state.pop("_chat_submit_queue", None)
+        st.session_state.pop("agent_vision_uploads", None)
+        st.session_state.pop("agent_vision_caption", None)
+        st.session_state.pop("agent_main_chat_input", None)
+        st.session_state.pop("_agent_clipboard_last_sig", None)
         # No st.rerun: render_main_surface runs later in the same script pass with cleared state.
     st.divider()
     qp_col1, qp_col2, qp_col3 = st.columns(3)
@@ -1493,6 +1581,40 @@ def _render_agent_menu_controls():
         col = [qp_col1, qp_col2, qp_col3][i]
         if col.button(prompt, key=f"quick_prompt_{i}", use_container_width=True):
             run_query(prompt)
+
+
+_AGENT_VISION_MAX_FILES = 5
+_AGENT_VISION_MAX_BYTES_PER_FILE = 5 * 1024 * 1024
+
+
+def _encode_agent_vision_uploads(files) -> tuple[list[dict] | None, str | None]:
+    """Encode uploaded images for ``playground.handle_user_input(..., vision_images=...)``."""
+    if not files:
+        return None, "No files selected."
+    flist = list(files) if isinstance(files, (list, tuple)) else [files]
+    if len(flist) > _AGENT_VISION_MAX_FILES:
+        return None, f"Too many images (max {_AGENT_VISION_MAX_FILES})."
+    out: list[dict] = []
+    for f in flist:
+        raw = f.getvalue() if hasattr(f, "getvalue") else f.read()
+        if len(raw) > _AGENT_VISION_MAX_BYTES_PER_FILE:
+            return None, "Each image must be 5 MB or smaller."
+        mime = (getattr(f, "type", None) or "").strip() or "image/png"
+        if mime not in ("image/png", "image/jpeg", "image/jpg", "image/webp"):
+            name = (getattr(f, "name", "") or "").lower()
+            if name.endswith(".png"):
+                mime = "image/png"
+            elif name.endswith(".jpg") or name.endswith(".jpeg"):
+                mime = "image/jpeg"
+            elif name.endswith(".webp"):
+                mime = "image/webp"
+            else:
+                return None, "Use PNG, JPEG, or WebP only."
+        if mime == "image/jpg":
+            mime = "image/jpeg"
+        b64 = base64.standard_b64encode(raw).decode("ascii")
+        out.append({"mime": mime, "b64": b64})
+    return out, None
 
 
 def _inject_ui_x2_chat_viewport_css() -> None:
@@ -1503,6 +1625,7 @@ def _inject_ui_x2_chat_viewport_css() -> None:
 .chat-wrapper {
     height: 70vh;
     overflow-y: auto;
+    overflow-anchor: none;
     display: flex;
     flex-direction: column;
 }
@@ -1589,13 +1712,40 @@ def render_agent_center_minimal():
 
     UI-X2: chat + composer sit in a fixed-height ``.chat-wrapper`` (scroll inside); input row
     stays outside the wrapper so the page chrome does not grow with thread length or voice UI.
+
+    UI-X3: after the model returns, the assistant reply is rendered in the same script run (no
+    extra ``st.rerun()``) so the viewport is not forced through a second full remount/scroll cycle.
     """
+    if st.session_state.pop("_agent_vision_clear_widgets_next_run", False):
+        st.session_state.pop("agent_vision_uploads", None)
+        st.session_state.pop("agent_vision_caption", None)
+
     _inject_ui_x2_chat_viewport_css()
     queued = st.session_state.pop("_chat_submit_queue", None)
     if queued is not None:
-        st.session_state.messages.append({"role": "user", "content": queued})
-        st.session_state.status = "Thinking"
-        st.session_state["_agent_reply_pending"] = queued
+        if isinstance(queued, dict) and queued.get("mode") == "vision":
+            cap = (queued.get("text") or "").strip()
+            images = queued.get("images") or []
+            llm_text = cap or (
+                "Please describe what you see in the screenshot(s) and answer helpfully."
+            )
+            display_text = cap or "*No message text — screenshots only.*"
+            st.session_state.messages.append(
+                {
+                    "role": "user",
+                    "content": display_text,
+                    "vision_meta": {"count": len(images)},
+                }
+            )
+            st.session_state.status = "Thinking"
+            st.session_state["_agent_reply_pending"] = {
+                "text": llm_text,
+                "images": images,
+            }
+        else:
+            st.session_state.messages.append({"role": "user", "content": queued})
+            st.session_state.status = "Thinking"
+            st.session_state["_agent_reply_pending"] = queued
 
     st.markdown('<div class="chat-wrapper">', unsafe_allow_html=True)
 
@@ -1606,6 +1756,9 @@ def render_agent_center_minimal():
                 if message["role"] == "assistant":
                     render_formatted_assistant_message(message["content"])
                 else:
+                    vm = message.get("vision_meta")
+                    if isinstance(vm, dict) and vm.get("count"):
+                        st.caption(f"Screenshot(s) sent to model: **{int(vm['count'])}**")
                     st.markdown(message["content"])
         _process_agent_reply_pending_in_chat()
 
@@ -1629,6 +1782,51 @@ def render_agent_center_minimal():
             st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
+
+    with st.expander("Screenshots for Joshua (vision)", expanded=False):
+        st.caption(
+            "PNG, JPEG, or WebP · up to 5 images · 5 MB each · uses your configured OpenAI chat model."
+        )
+        vision_files = st.file_uploader(
+            "Attach images",
+            type=["png", "jpg", "jpeg", "webp"],
+            accept_multiple_files=True,
+            key="agent_vision_uploads",
+        )
+        st.text_input(
+            "Message (optional)",
+            key="agent_vision_caption",
+            placeholder="What should Joshua look at or answer?",
+        )
+        if st.button("Send with screenshot(s)", type="secondary", key="agent_vision_send"):
+            if not vision_files:
+                st.warning("Choose at least one image.")
+            else:
+                flist = (
+                    list(vision_files)
+                    if isinstance(vision_files, (list, tuple))
+                    else [vision_files]
+                )
+                imgs, err = _encode_agent_vision_uploads(flist)
+                if err:
+                    st.error(err)
+                elif imgs:
+                    cap = (st.session_state.get("agent_vision_caption") or "").strip()
+                    run_query(cap, vision_images=imgs)
+        if _agent_paste_image_button is not None:
+            st.caption(
+                "Optional: **Win+Shift+S** to snip, then paste below (uses the same optional message as above)."
+            )
+            pr = _agent_paste_image_button(
+                "Paste screenshot from clipboard",
+                key="agent_clipboard_paste_btn",
+                errors="ignore",
+            )
+            _agent_try_clipboard_paste_send(pr)
+        else:
+            st.caption(
+                "Optional clipboard paste: `pip install streamlit-paste-button` then restart Streamlit."
+            )
 
     col_mic, col_chat = st.columns([1, 14], gap="small")
     with col_mic:

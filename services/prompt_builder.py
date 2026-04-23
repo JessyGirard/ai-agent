@@ -9,6 +9,8 @@ LATENCY_JOURNAL_ENTRY_CAP = 3
 LATENCY_MEMORY_BLOCK_MAX_CHARS = 12000
 LATENCY_MISC_APPEND_BLOCK_MAX_CHARS = 16000
 LATENCY_SYSTEM_PROMPT_MAX_CHARS = 58000
+HIGH_PRIORITY_MEMORY_TOP_N = 2
+HIGH_PRIORITY_IMPORTANCE_MIN = 0.85
 
 # RUNTIME-01–06 + REASONING-01/02/03/04/05/06: execution through correctness/invalid framing + missing-information admission + non-completion/explanation-structure + reasoning-dominance + reasoning-structure-mandate + reasoning-structure routing (same enforcement tail by default; REASONING-06 may omit RUNTIME-03–06 for gated prompts; appended after context + size cap).
 RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK = """Execution enforcement (RUNTIME-01):
@@ -758,6 +760,52 @@ def _latency_cap_system_prompt(text):
     return _latency_trim_block(text, LATENCY_SYSTEM_PROMPT_MAX_CHARS)
 
 
+def user_input_is_decision_or_planning_question(user_input: str) -> bool:
+    if not isinstance(user_input, str) or not user_input.strip():
+        return False
+    ul = re.sub(r"\s+", " ", user_input.strip().lower())
+    markers = (
+        "priority",
+        "prioritize",
+        "plan",
+        "planning",
+        "decide",
+        "decision",
+        "what should i do",
+        "what should we do",
+        "next step",
+        "best move",
+        "which should i",
+    )
+    return any(m in ul for m in markers)
+
+
+def select_high_priority_active_memories(memories, *, top_n: int = HIGH_PRIORITY_MEMORY_TOP_N):
+    if not memories:
+        return []
+    kept = []
+    for mem in memories:
+        if not isinstance(mem, dict):
+            continue
+        if str(mem.get("status", "")).lower() != "active":
+            continue
+        importance = float(mem.get("importance", 0) or 0)
+        if importance < HIGH_PRIORITY_IMPORTANCE_MIN:
+            continue
+        kept.append(mem)
+    if not kept:
+        return []
+    kept.sort(
+        key=lambda m: (
+            0 if str(m.get("category", "")).lower() == "goal" else 1,
+            -float(m.get("importance", 0) or 0),
+            -float(m.get("confidence", 0) or 0),
+            -int(m.get("evidence_count", 0) or 0),
+        )
+    )
+    return kept[:top_n]
+
+
 # CONTEXT SURFACING (INTERACTION): injected after IMPORTANT RULES so later text
 # overrides generic "anchor to focus/stage" for the current routing. Revert by
 # passing context_surfacing_block="" from build_messages or deleting these blocks.
@@ -894,8 +942,9 @@ def choose_post_fetch_next_step(fetched_content):
     return "Verify the summary against one concrete detail from the fetched page content."
 
 
-def build_post_fetch_messages(user_input, fetched_content, focus, stage):
+def build_post_fetch_messages(user_input, fetched_content, focus, stage, fetch_url=None):
     forced_next_step = choose_post_fetch_next_step(fetched_content)
+    fetched_url_line = str(fetch_url or "").strip() or "(unknown)"
 
     system_prompt = f"""
 You are a focused AI agent.
@@ -910,17 +959,29 @@ IMPORTANT RULES:
 - Answer the user's request using ONLY the fetched content provided.
 - Do NOT call any tools.
 - Do NOT output TOOL:fetch.
+- You are in a tool-enabled post-fetch context: browsing/fetching already happened, and the fetched page content is the source of truth for this reply.
+- Do NOT claim you cannot access real-time data, cannot browse, or cannot access the web in this reply context.
+- The page has already been fetched from URL: {fetched_url_line}
+- You MUST proceed using the fetched content below and MUST NOT ask the user to provide the URL again.
+- Asking for a URL again in this post-fetch context is invalid behavior.
 - If the fetched content is thin, unclear, or looks like an error, say so plainly.
 - Stay grounded in the fetched content.
 - Do not invent facts that are not in the fetched content.
-- LATENCY-05: Default to a minimal Answer—usually one short sentence; add a second only if strictly needed for accuracy. No preamble or recap of the page unless the user asked for a summary style.
+- Do not blend outside knowledge, guesses, or "typical website" assumptions with the page text. If the user asks for something not present in the excerpt, say it is not in the fetched content.
+- If the excerpt is very short, mostly navigation/login boilerplate, forum metadata, or you cannot tell whether it is authoritative, say that limitation plainly in the Answer before any quotes.
+
+GROUNDING STYLE (post-fetch only):
+- If the user asks for headlines, titles, story lines, or an exact/verbatim list of items or lines from the page: copy those lines verbatim from the fetched content (same wording and order when order matters). Use a simple bullet or numbered list. Do not paraphrase, merge, or summarize them into prose.
+- For other questions about specifics: prefer short verbatim quotes or tight snippets copied from the fetched text (quotation marks or a short blockquote). Paraphrase only when a quote would be unreadably long, and keep it clearly tied to what appears in the excerpt.
+
+LATENCY-05 (Answer length): Default to a minimal Answer—usually one short sentence; add a second only if strictly needed for accuracy—except when the user explicitly wants headlines/lines/items/titles listed exactly from the page; then the Answer may be a multi-line verbatim extraction as above. No preamble or recap unless the user asked for a summary style.
 
 OUTPUT FORMAT RULES:
 - Keep the response tight and easy to scan.
 - Use exactly these three sections in this order:
 
 Answer:
-<1 short sentence preferred; at most two if needed for accuracy>
+<1 short sentence preferred; at most two if needed for accuracy—unless the user asked for exact headlines/lines from the page, then use verbatim multi-line extraction per GROUNDING STYLE>
 
 Current state:
 Focus: <focus>
@@ -942,8 +1003,14 @@ Next step:
 User request:
 {user_input}
 
-Fetched content:
+Fetched source URL:
+{fetched_url_line}
+
+=== FETCHED PAGE CONTENT (SOURCE OF TRUTH) ===
 {fetched_content}
+=== END FETCHED PAGE CONTENT ===
+
+When you answer, use only this fetched excerpt for factual claims; quote it directly when giving headlines or concrete details.
 """.strip()
 
     messages = [{"role": "user", "content": user_message}]
@@ -1253,6 +1320,21 @@ def build_messages(
             seen.add(key)
             merged.append(mem)
         memories = merged[:6]
+    high_priority_memories = []
+    if user_input_is_decision_or_planning_question(user_input):
+        priority_pool = list(memories)
+        purpose_hits = retrieve_memory_for_purpose(user_input, k=6)
+        seen_priority_keys = set()
+        merged_priority_pool = []
+        for mem in purpose_hits + priority_pool:
+            if not isinstance(mem, dict):
+                continue
+            key = build_memory_key(mem.get("category", ""), mem.get("value", ""))
+            if key in seen_priority_keys:
+                continue
+            seen_priority_keys.add(key)
+            merged_priority_pool.append(mem)
+        high_priority_memories = select_high_priority_active_memories(merged_priority_pool)
 
     journal_entries = retrieve_relevant_journal_entries(
         user_input, limit=LATENCY_JOURNAL_ENTRY_CAP
@@ -1718,25 +1800,40 @@ DIRECT ANSWER MODE:
                 "- Prefer strong directive phrasing.\n"
                 '- Example: Bad: "You could try looking for gigs..." Good: "Open Upwork now, search \'manual testing under $50\', and save 3 jobs."\n'
             )
-        if is_context_lock_relevant:
+    if high_priority_memories:
+        priority_lines = "\n".join(
+            f"- USER PRIORITY: {str(mem.get('value', '')).strip()}"
+            for mem in high_priority_memories
+            if str(mem.get("value", "")).strip()
+        )
+        if priority_lines:
+            system_prompt += "\n\nHigh-priority active user memory:\n" + priority_lines
             system_prompt += (
-                "\n"
-                "Context lock:\n"
-                "- NEVER answer meta/system questions with generic AI explanations when a project context exists.\n"
-                "- ALWAYS interpret the question in terms of the user's current system and goals.\n"
-                "- Generic AI explanations are only allowed if explicitly requested.\n"
-                "- When asked about how you are built or how to improve, anchor the answer to the current project (playground.py, memory, testing system, etc.).\n"
-                '- Frame answers in terms of "your system" not "AI in general".\n'
+                "\n\nHigh-priority memory guidance:\n"
+                "- DECISION RULE: For decision/planning questions, evaluate all candidate actions against USER PRIORITY first.\n"
+                "- CORRECTNESS RULE: If the proposed answer/next step does not support USER PRIORITY, the answer is incorrect and must be revised.\n"
+                "- NEXT-STEP RULE: If asked what to do next, always prefer actions that directly move toward USER PRIORITY over internal/system refinement tasks.\n"
+                "- Keep the answer aligned with USER PRIORITY without dumping memory back verbatim unless useful.\n"
             )
-        if is_fallback_relevant:
-            system_prompt += (
-                "\n"
-                "Fallback intelligence:\n"
-                "- If a tool cannot be used or the request is vague, DO NOT wait for clarification.\n"
-                "- Infer a reasonable research direction from context and proceed.\n"
-                "- Suggest one concrete next research action immediately.\n"
-                "- When research is requested without specifics, propose a concrete research action: one topic, one platform or method, one immediate action.\n"
-            )
+    if is_context_lock_relevant:
+        system_prompt += (
+            "\n"
+            "Context lock:\n"
+            "- NEVER answer meta/system questions with generic AI explanations when a project context exists.\n"
+            "- ALWAYS interpret the question in terms of the user's current system and goals.\n"
+            "- Generic AI explanations are only allowed if explicitly requested.\n"
+            "- When asked about how you are built or how to improve, anchor the answer to the current project (playground.py, memory, testing system, etc.).\n"
+            '- Frame answers in terms of "your system" not "AI in general".\n'
+        )
+    if is_fallback_relevant:
+        system_prompt += (
+            "\n"
+            "Fallback intelligence:\n"
+            "- If a tool cannot be used or the request is vague, DO NOT wait for clarification.\n"
+            "- Infer a reasonable research direction from context and proceed.\n"
+            "- Suggest one concrete next research action immediately.\n"
+            "- When research is requested without specifics, propose a concrete research action: one topic, one platform or method, one immediate action.\n"
+        )
 
     journal_block = _latency_trim_block(
         format_journal_block(journal_entries), LATENCY_MISC_APPEND_BLOCK_MAX_CHARS

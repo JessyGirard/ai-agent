@@ -89,7 +89,11 @@ def ask_ai(messages, system_prompt=None):
         content = m.get("content", "")
         if role == "system":
             continue
-        api_messages.append({"role": role, "content": content})
+        # Multimodal (vision): list of {type: text|image_url, ...} per OpenAI chat completions.
+        if isinstance(content, list):
+            api_messages.append({"role": role, "content": content})
+        else:
+            api_messages.append({"role": role, "content": content})
 
     response = client.chat.completions.create(
         model=model_name,

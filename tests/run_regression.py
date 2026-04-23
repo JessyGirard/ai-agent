@@ -658,6 +658,82 @@ def test_build_messages_stable_user_context_compact_for_personal_question_after_
         assert len(lines) <= 3, stable_section
 
 
+def test_build_messages_injects_high_priority_active_memory_for_planning():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        payload = {
+            "meta": {},
+            "memory_items": [
+                {
+                    "memory_id": "mem_goal_income",
+                    "category": "goal",
+                    "value": "Achieve $150/day income",
+                    "confidence": 0.86,
+                    "importance": 0.97,
+                    "status": "active",
+                    "memory_kind": "stable",
+                    "evidence_count": 4,
+                    "last_seen": "runtime",
+                    "trend": "reinforced",
+                    "source_refs": ["runtime"],
+                },
+                {
+                    "memory_id": "mem_project_low",
+                    "category": "project",
+                    "value": "Refactor internal helper names",
+                    "confidence": 0.8,
+                    "importance": 0.6,
+                    "status": "active",
+                    "memory_kind": "emerging",
+                    "evidence_count": 2,
+                    "last_seen": "runtime",
+                    "trend": "reinforced",
+                    "source_refs": ["runtime"],
+                },
+            ],
+        }
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        prompt, _ = playground.build_messages("What should I prioritize next?")
+
+        assert "High-priority active user memory:" in prompt
+        assert "USER PRIORITY: Achieve $150/day income" in prompt
+        assert "DECISION RULE: For decision/planning questions, evaluate all candidate actions against USER PRIORITY first." in prompt
+        assert "CORRECTNESS RULE: If the proposed answer/next step does not support USER PRIORITY, the answer is incorrect and must be revised." in prompt
+        assert "NEXT-STEP RULE: If asked what to do next, always prefer actions that directly move toward USER PRIORITY" in prompt
+        assert "USER PRIORITY: Refactor internal helper names" not in prompt
+
+
+def test_build_messages_priority_block_only_for_decision_or_planning_questions():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        payload = {
+            "meta": {},
+            "memory_items": [
+                {
+                    "memory_id": "mem_goal_income",
+                    "category": "goal",
+                    "value": "Achieve $150/day income",
+                    "confidence": 0.86,
+                    "importance": 0.97,
+                    "status": "active",
+                    "memory_kind": "stable",
+                    "evidence_count": 4,
+                    "last_seen": "runtime",
+                    "trend": "reinforced",
+                    "source_refs": ["runtime"],
+                }
+            ],
+        }
+        temp_memory_path.parent.mkdir(exist_ok=True)
+        temp_memory_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        prompt, _ = playground.build_messages("What file did I open last?")
+
+        assert "High-priority active user memory:" not in prompt
+
+
 def test_retrieve_personal_context_memory_prefers_durable_identity_preference_goal():
     reset_agent_state()
     with isolated_runtime_files() as (temp_memory_path, _, _, _):
@@ -1085,6 +1161,58 @@ def test_runtime_memory_memory02_im_building_writes_project():
 
         assert result and result.get("category") == "project", result
         assert len(items) == 1, items
+
+
+def test_runtime_statement_not_classified_as_identity():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I'm testing the UI right now")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("category") == "project", result
+        assert len(items) == 1, items
+        assert items[0].get("category") != "identity"
+
+
+def test_low_confidence_tentative_runtime_memory_not_active_by_default():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        result = playground.write_runtime_memory("I am a backend engineer")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert result and result.get("status") == "created", result
+        assert len(items) == 1, items
+        assert items[0].get("confidence") < 0.6
+        assert items[0].get("memory_kind") == "tentative"
+        assert items[0].get("status") != "active"
+
+
+def test_ephemeral_testing_statement_importance_not_inflated():
+    reset_agent_state()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        temp_memory_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_memory_path.write_text(
+            json.dumps({"meta": {}, "memory_items": []}),
+            encoding="utf-8",
+        )
+        playground.write_runtime_memory("I'm debugging the UI right now")
+        payload = playground.load_memory_payload()
+        items = payload.get("memory_items", [])
+
+        assert len(items) == 1, items
+        assert float(items[0].get("importance", 0) or 0) <= 0.55
 
 
 def test_runtime_memory_memory02_rejects_want_to_build():
@@ -4944,8 +5072,7 @@ def test_tool_fetch_routing():
 
         def fake_ask_ai(messages, system_prompt=None):
             call_count["n"] += 1
-            if call_count["n"] == 1:
-                return "TOOL:fetch https://example.com"
+            # URL-in-message path: fetch runs first; this is the post-fetch LLM call only.
             return (
                 "Answer:\n"
                 "This is a fetched summary.\n\n"
@@ -4958,7 +5085,7 @@ def test_tool_fetch_routing():
             )
 
         playground.ask_ai = fake_ask_ai
-        # Body must exceed LATENCY-10 trivial cap so the second post-fetch LLM still runs.
+        # Body must exceed LATENCY-10 trivial cap so the post-fetch LLM still runs.
         playground.fetch_page = lambda url: f"FAKE FETCH OK: {url} " + ("a" * 70)
 
         result = playground.handle_user_input("Read https://example.com")
@@ -4966,7 +5093,7 @@ def test_tool_fetch_routing():
         assert "Answer:" in result, "Missing Answer section"
         assert "This is a fetched summary." in result, "Missing final post-fetch answer"
         assert "Action type: research" in result, "Expected research action type"
-        assert call_count["n"] == 2, f"Expected 2 LLM calls, got {call_count['n']}"
+        assert call_count["n"] == 1, f"Expected 1 LLM call (post-fetch only), got {call_count['n']}"
 
     finally:
         playground.ask_ai = original_ask_ai
@@ -4984,8 +5111,6 @@ def test_post_fetch_next_step_quality():
 
         def fake_ask_ai(messages, system_prompt=None):
             call_count["n"] += 1
-            if call_count["n"] == 1:
-                return "TOOL:fetch https://example.com"
             return (
                 "Answer:\n"
                 "The page is the standard Example Domain placeholder.\n\n"
@@ -5011,7 +5136,7 @@ def test_post_fetch_next_step_quality():
             "Use one second real page URL and verify the answer stays grounded in fetched content."
             in result
         ), "Post-fetch next step did not stay concrete and grounded"
-        assert call_count["n"] == 2, f"Expected 2 LLM calls, got {call_count['n']}"
+        assert call_count["n"] == 1, f"Expected 1 LLM call (post-fetch only), got {call_count['n']}"
 
     finally:
         playground.ask_ai = original_ask_ai
@@ -5019,7 +5144,7 @@ def test_post_fetch_next_step_quality():
 
 
 def test_fetch_failure_short_circuits_second_llm():
-    """LATENCY-07: structured fetch failures skip the post-fetch model call."""
+    """URL-first fetch: tagged failure returns Fetch failed with no LLM calls."""
     reset_agent_state()
 
     original_ask_ai = playground.ask_ai
@@ -5030,20 +5155,15 @@ def test_fetch_failure_short_circuits_second_llm():
 
         def fake_ask_ai(messages, system_prompt=None):
             call_count["n"] += 1
-            if call_count["n"] == 1:
-                return "TOOL:fetch https://example.com/slow"
-            raise AssertionError("Second LLM call should not run for fetch failure short-circuit")
+            raise AssertionError("LLM should not run when forced fetch returns a failure tag")
 
         playground.ask_ai = fake_ask_ai
         playground.fetch_page = lambda url: "[fetch:timeout] Request timed out."
 
         result = playground.handle_user_input("Read https://example.com/slow")
 
-        assert call_count["n"] == 1, f"Expected 1 LLM call, got {call_count['n']}"
-        assert "Answer:" in result
-        assert "Action type: research" in result
-        assert "[fetch:timeout]" in result
-        assert "Try a different public page" in result, "Expected deterministic next step for timeout tag"
+        assert call_count["n"] == 0, f"Expected 0 LLM calls, got {call_count['n']}"
+        assert result == "Fetch failed"
 
     finally:
         playground.ask_ai = original_ask_ai
@@ -5071,7 +5191,7 @@ def test_fetch_whitespace_only_short_circuits_second_llm():
 
         result = playground.handle_user_input("Read https://example.com/empty")
 
-        assert call_count["n"] == 1
+        assert call_count["n"] == 0
         assert "Answer:" in result and "Action type: research" in result
 
     finally:
@@ -5100,7 +5220,7 @@ def test_fetch_punctuation_only_short_circuits_second_llm():
 
         result = playground.handle_user_input("Read https://example.com/x")
 
-        assert call_count["n"] == 1
+        assert call_count["n"] == 0
         assert "Answer:" in result and "Action type: research" in result
 
     finally:
@@ -5129,7 +5249,7 @@ def test_fetch_trivially_small_short_circuits_second_llm():
 
         result = playground.handle_user_input("Read https://example.com/")
 
-        assert call_count["n"] == 1
+        assert call_count["n"] == 0
         assert "Answer:" in result and "Action type: research" in result
 
     finally:
@@ -5138,7 +5258,7 @@ def test_fetch_trivially_small_short_circuits_second_llm():
 
 
 def test_fetch_over_trivial_char_cap_still_uses_second_llm():
-    """LATENCY-10: body over char cap still runs second ask_ai."""
+    """LATENCY-10: body over char/word trivial cap runs post-fetch ask_ai (URL-first: single LLM)."""
     reset_agent_state()
 
     original_ask_ai = playground.ask_ai
@@ -5149,8 +5269,6 @@ def test_fetch_over_trivial_char_cap_still_uses_second_llm():
 
         def fake_ask_ai(messages, system_prompt=None):
             call_count["n"] += 1
-            if call_count["n"] == 1:
-                return "TOOL:fetch https://example.com/long"
             return (
                 "Answer:\n"
                 "Summary line.\n\n"
@@ -5168,7 +5286,7 @@ def test_fetch_over_trivial_char_cap_still_uses_second_llm():
 
         playground.handle_user_input("Read https://example.com/long")
 
-        assert call_count["n"] == 2, f"Expected 2 LLM calls, got {call_count['n']}"
+        assert call_count["n"] == 1, f"Expected 1 post-fetch LLM call, got {call_count['n']}"
 
     finally:
         playground.ask_ai = original_ask_ai
@@ -5176,7 +5294,7 @@ def test_fetch_over_trivial_char_cap_still_uses_second_llm():
 
 
 def test_fetch_over_trivial_word_cap_still_uses_second_llm():
-    """LATENCY-10: many short words still run second ask_ai."""
+    """LATENCY-10: many short words still run post-fetch ask_ai (URL-first: single LLM)."""
     reset_agent_state()
 
     original_ask_ai = playground.ask_ai
@@ -5187,8 +5305,6 @@ def test_fetch_over_trivial_word_cap_still_uses_second_llm():
 
         def fake_ask_ai(messages, system_prompt=None):
             call_count["n"] += 1
-            if call_count["n"] == 1:
-                return "TOOL:fetch https://example.com/manywords"
             return (
                 "Answer:\n"
                 "Counted words.\n\n"
@@ -5207,7 +5323,97 @@ def test_fetch_over_trivial_word_cap_still_uses_second_llm():
 
         playground.handle_user_input("Read https://example.com/manywords")
 
-        assert call_count["n"] == 2, f"Expected 2 LLM calls, got {call_count['n']}"
+        assert call_count["n"] == 1, f"Expected 1 post-fetch LLM call, got {call_count['n']}"
+
+    finally:
+        playground.ask_ai = original_ask_ai
+        playground.fetch_page = original_fetch_page
+
+
+def test_post_fetch_quote_guard_strips_unsupported_verbatim_quotes():
+    reset_agent_state()
+
+    original_ask_ai = playground.ask_ai
+    original_fetch_page = playground.fetch_page
+
+    try:
+        call_count = {"n": 0}
+
+        def fake_ask_ai(messages, system_prompt=None):
+            call_count["n"] += 1
+            return (
+                "Answer:\n"
+                'The homepage says "THIS QUOTE IS NOT IN FETCHED CONTENT".\n\n'
+                "Current state:\n"
+                "Focus: ai-agent project\n"
+                "Stage: Phase 4 action-layer refinement\n"
+                "Action type: research\n\n"
+                "Next step:\n"
+                "Verify one concrete detail from the fetched page."
+            )
+
+        playground.ask_ai = fake_ask_ai
+        playground.fetch_page = lambda url: (
+            "Example Domain This domain is for use in documentation examples without needing permission. "
+            "Use this domain in examples."
+        )
+
+        result = playground.handle_user_input("Read https://example.com and quote the headline")
+
+        assert call_count["n"] == 1
+        assert '"THIS QUOTE IS NOT IN FETCHED CONTENT"' not in result
+        assert "THIS QUOTE IS NOT IN FETCHED CONTENT" in result
+
+    finally:
+        playground.ask_ai = original_ask_ai
+        playground.fetch_page = original_fetch_page
+
+
+def test_forced_multi_url_fetch_merges_two_sources_for_post_fetch():
+    reset_agent_state()
+
+    original_ask_ai = playground.ask_ai
+    original_fetch_page = playground.fetch_page
+
+    try:
+        seen_urls = []
+        captured_post_fetch_user_message = {"text": ""}
+
+        def fake_fetch_page(url):
+            seen_urls.append(url)
+            if "bbc" in url:
+                return "BBC HOMEPAGE SNAPSHOT " + ("a " * 70)
+            if "nytimes" in url:
+                return "NYTIMES HOMEPAGE SNAPSHOT " + ("b " * 70)
+            return "UNKNOWN SOURCE " + ("x " * 70)
+
+        def fake_ask_ai(messages, system_prompt=None):
+            captured_post_fetch_user_message["text"] = str(messages[0].get("content", ""))
+            return (
+                "Answer:\n"
+                "Combined source check.\n\n"
+                "Current state:\n"
+                "Focus: ai-agent project\n"
+                "Stage: Phase 4 action-layer refinement\n"
+                "Action type: research\n\n"
+                "Next step:\n"
+                "Verify one detail from each source."
+            )
+
+        playground.fetch_page = fake_fetch_page
+        playground.ask_ai = fake_ask_ai
+
+        result = playground.handle_user_input(
+            "Compare https://www.bbc.com and https://www.nytimes.com headlines"
+        )
+
+        assert seen_urls == ["https://www.bbc.com", "https://www.nytimes.com"]
+        joined_prompt = captured_post_fetch_user_message["text"]
+        assert "=== SOURCE 1: https://www.bbc.com ===" in joined_prompt
+        assert "=== SOURCE 2: https://www.nytimes.com ===" in joined_prompt
+        assert "BBC HOMEPAGE SNAPSHOT" in joined_prompt
+        assert "NYTIMES HOMEPAGE SNAPSHOT" in joined_prompt
+        assert "Combined source check." in result
 
     finally:
         playground.ask_ai = original_ask_ai
@@ -5218,6 +5424,60 @@ def test_fetch_failure_tag_plain_and_tagged():
     assert fetch_failure_tag("Hello world") is None
     assert fetch_failure_tag("[fetch:timeout] x") == "timeout"
     assert fetch_failure_tag("  [fetch:forbidden] HTTP 403") == "forbidden"
+
+
+def test_runtime_priority_guard_replaces_unaligned_tool_refine_next_step():
+    priority = "Achieve $150/day income"
+    initial = "Refine the tool internals for cleaner architecture."
+    out = playground._enforce_user_priority_next_step(initial, priority)
+    assert out != initial
+    assert "USER PRIORITY: Achieve $150/day income" in out
+    assert "revenue" in out.lower() or "client" in out.lower()
+
+
+def test_force_structured_override_enforces_user_priority_on_next_step():
+    reset_agent_state()
+
+    original_is_meta = playground.is_meta_system_override_question
+    original_build_next = playground.build_specific_next_step
+    original_anti_repeat = playground.apply_recent_negative_outcome_anti_repeat_guard
+    original_retrieve_user_purpose = playground.retrieve_user_purpose_memory
+
+    try:
+        playground.is_meta_system_override_question = lambda user_input, focus, stage: True
+        playground.build_specific_next_step = (
+            lambda user_input, focus, stage, action_type: "Refine the tool internals."
+        )
+        playground.apply_recent_negative_outcome_anti_repeat_guard = (
+            lambda user_input, next_step: (next_step, False)
+        )
+        playground.retrieve_user_purpose_memory = lambda user_input, limit=2: [
+            {
+                "memory_id": "mem_goal_income",
+                "category": "goal",
+                "value": "Achieve $150/day income",
+                "confidence": 0.9,
+                "importance": 0.95,
+                "status": "active",
+                "memory_kind": "stable",
+                "evidence_count": 4,
+                "last_seen": "runtime",
+                "trend": "reinforced",
+                "source_refs": ["runtime"],
+            }
+        ]
+
+        result = playground.handle_user_input("What should I do next?")
+
+        assert "Next step:\nRefine the tool internals." not in result
+        assert "USER PRIORITY: Achieve $150/day income" in result
+        assert "revenue" in result.lower() or "client" in result.lower()
+
+    finally:
+        playground.is_meta_system_override_question = original_is_meta
+        playground.build_specific_next_step = original_build_next
+        playground.apply_recent_negative_outcome_anti_repeat_guard = original_anti_repeat
+        playground.retrieve_user_purpose_memory = original_retrieve_user_purpose
 
 
 def test_fetch_page_http_403_classified():
