@@ -1,5 +1,8 @@
+import os
 import re
+import sys
 
+from services import journal_service
 from tools.fetch_page import fetch_failure_tag
 
 # LATENCY-03: cache invariant system text; cap oversized append-only context.
@@ -11,6 +14,52 @@ LATENCY_MISC_APPEND_BLOCK_MAX_CHARS = 16000
 LATENCY_SYSTEM_PROMPT_MAX_CHARS = 58000
 HIGH_PRIORITY_MEMORY_TOP_N = 2
 HIGH_PRIORITY_IMPORTANCE_MIN = 0.85
+
+# Increment 16: set True (or env DEBUG_SEQUENCE=1) to print one [DEBUG] block per build_messages
+# turn to stderr — observability only; does not affect routing or prompts.
+DEBUG_SEQUENCE = False
+
+
+def _sequence_debug_enabled() -> bool:
+    if DEBUG_SEQUENCE:
+        return True
+    return os.environ.get("DEBUG_SEQUENCE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _emit_sequence_debug_turn(
+    *,
+    ul_norm: str,
+    best_recent_match: dict | None,
+    recent_followup_type: str | None,
+    sequence_discipline_mode: bool,
+    continuation_mode: bool,
+    steps_len: int | None,
+    sequence_cursor: int | None,
+    last_rendered: int | None,
+    resolved_target_idx: int | None,
+    indexed_step_injected: bool,
+) -> None:
+    if not _sequence_debug_enabled():
+        return
+    preview = "(none)"
+    if best_recent_match:
+        raw = str(best_recent_match.get("matched_text") or "").replace("\n", "\\n")
+        preview = raw if len(raw) <= 120 else raw[:117] + "…"
+    lines = [
+        "[DEBUG]",
+        f"ul_norm: {ul_norm!r}",
+        f"best_recent_match: {preview}",
+        f"recent_followup_type: {recent_followup_type!r}",
+        f"sequence_discipline_mode: {sequence_discipline_mode}",
+        f"continuation_mode: {continuation_mode}",
+        f"steps_len: {steps_len}",
+        f"sequence_cursor: {sequence_cursor}",
+        f"last_rendered_step_index: {last_rendered}",
+        f"resolved_target_idx: {resolved_target_idx}",
+        f"indexed_step_injected: {indexed_step_injected}",
+    ]
+    print("\n".join(lines), file=sys.stderr, flush=True)
+
 
 # RUNTIME-01–06 + REASONING-01/02/03/04/05/06: execution through correctness/invalid framing + missing-information admission + non-completion/explanation-structure + reasoning-dominance + reasoning-structure-mandate + reasoning-structure routing (same enforcement tail by default; REASONING-06 may omit RUNTIME-03–06 for gated prompts; appended after context + size cap).
 RUNTIME_01_EXECUTION_ENFORCEMENT_BLOCK = """Execution enforcement (RUNTIME-01):
@@ -429,8 +478,283 @@ This user message is classified as casual interaction, not a workflow or analysi
 The default structural Progress/Risks/Decisions/Next Steps enforcement tail is waived for this reply.""".strip()
 
 
+INTERACTION_02_CONTINUATION_ENFORCEMENT_BLOCK = """Continuation override mode (INTERACTION-02):
+
+This user message is a continuation follow-up that references a recent structured sequence.
+
+- Continuation mode has priority over conversation mode, reasoning mode, and clarification fallback for this reply.
+- Continue the referenced sequence immediately.
+- Do NOT ask for clarification unless no prior structured list exists or the reference is ambiguous.
+- Do NOT reset context.
+- Do NOT switch to Known:/Missing:/Conclusion for this reply.
+- Reply in natural prose or list form that continues the sequence directly.
+
+The default structural Progress/Risks/Decisions/Next Steps enforcement tail is waived for this reply.""".strip()
+
+
+INTERACTION_03_SEQUENCE_DISCIPLINE_ENFORCEMENT_BLOCK = """Sequence discipline mode (INTERACTION-03):
+
+This user message is part of a one-by-one instructional sequence.
+
+- Sequence discipline mode has highest priority over continuation mode, conversation mode, reasoning mode, clarification fallback, and project/status templates.
+- Reply with exactly one step only.
+- Keep the original step order from the referenced prior ordered/list-like answer.
+- "Continue" or "Next" means the next single step only.
+- "Explain step N" means explain only step N.
+- "Step N only" means provide only step N.
+- Do NOT dump the full list.
+- Do NOT ask for clarification when a prior ordered/list-like answer exists.
+- Do NOT output Known:/Missing:/Conclusion or Answer:/Current state:/Next step templates.
+
+The default structural Progress/Risks/Decisions/Next Steps enforcement tail is waived for this reply.""".strip()
+
+
+INTERACTION_04_EXPLANATORY_TEMPLATE_ISOLATION_BLOCK = """Template isolation (INTERACTION-04):
+
+This user message is general explanation or educational guidance, not explicit in-repo project/task-tracking.
+
+- Do NOT use the default Progress / Risks / Decisions / Next Steps project-status template for this reply.
+- Reply in natural prose (or a simple list only if the user asked for a list); no fixed harness sections.
+- Do not output Progress:, Risks:, Decisions:, Next Steps:, Answer:, Current state:, Next step:, or Known:/Missing:/Conclusion unless the user explicitly asks for that structure.
+- LATENCY-05: Keep replies concise unless the user asks for depth.
+
+Structural output (RUNTIME-03) through Strict omission (RUNTIME-06) in the default long enforcement tail are inactive for this reply (they describe the project-status template path only).
+
+The default structural Progress/Risks/Decisions/Next Steps enforcement tail is waived for this reply.""".strip()
+
+
+_SEQUENCE_STEP_REF_RE = re.compile(r"\b(?:step|number)\s*(\d+)\b")
+
+
+def _text_has_sequence_like_structure(text: str) -> bool:
+    return journal_service.text_has_structured_or_list_like_sequence(text)
+
+
+def _extract_requested_step_number(ul_norm: str) -> int | None:
+    match = _SEQUENCE_STEP_REF_RE.search(ul_norm or "")
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except Exception:
+        return None
+
+
+def user_input_needs_sequence_discipline_mode(
+    user_input: str,
+    *,
+    best_recent_match: dict | None,
+    recent_followup_type: str | None,
+) -> bool:
+    ul = re.sub(r"\s+", " ", (user_input or "").strip().lower())
+    if not ul:
+        return False
+    if user_input_requests_full_steps_list(ul):
+        return False
+    has_prior_sequence = bool(best_recent_match) and _text_has_sequence_like_structure(
+        best_recent_match.get("matched_text", "")
+    )
+    if not has_prior_sequence:
+        return False
+    sequence_setup_markers = (
+        "one by one",
+        "step by step",
+        "only include number",
+        "only number",
+        "starting with number",
+        "starting with step",
+        "start with number",
+        "start with step",
+        "elaborate on those",
+    )
+    sequence_followup_markers = (
+        "continue",
+        "next",
+        "explain step",
+        "explain number",
+        "step ",
+        "number ",
+    )
+    if any(m in ul for m in sequence_setup_markers):
+        return True
+    if re.search(r"\b(those|these)\s+\d+\s+(points?|steps?)\b", ul):
+        return True
+    if ("those points" in ul or "these points" in ul) and (
+        "one by one" in ul or "starting with" in ul or "start with" in ul
+    ):
+        return True
+    if any(m in ul for m in sequence_followup_markers):
+        return True
+    return recent_followup_type == "continuation"
+
+
+def user_input_requests_full_steps_list(ul_norm: str) -> bool:
+    return journal_service.user_input_requests_full_steps_list_normalized(ul_norm or "")
+
+
+def user_input_is_external_api_testing_education(ul_norm: str) -> bool:
+    """Normal API testing how-to/explanation — not in-repo harness work; suppress Answer/Current state/Next step."""
+    if not ul_norm:
+        return False
+    repo_harness_markers = (
+        "playground.py",
+        "playground",
+        "detect_subtarget",
+        "run_regression",
+        "regression harness",
+        "set focus:",
+        "set stage:",
+        "show state",
+        " titan",
+        "titan ",
+        "memory retrieval",
+        "strict mode gating",
+        "subtarget",
+    )
+    if any(m in ul_norm for m in repo_harness_markers):
+        return False
+    educational_markers = (
+        "test an api",
+        "testing an api",
+        "test the api",
+        "testing api",
+        "api testing",
+        "test api",
+        "rest api",
+        "http api",
+        "api endpoint",
+        "endpoint test",
+        "status code",
+        "status codes",
+        "request body",
+        "response body",
+        "how to test",
+        "proper steps",
+        "professional manner",
+        "postman",
+        "swagger",
+        "openapi",
+    )
+    if not any(m in ul_norm for m in educational_markers):
+        return False
+    if any(
+        k in ul_norm
+        for k in (
+            "api",
+            "endpoint",
+            "http",
+            "rest",
+            "graphql",
+            "json payload",
+        )
+    ):
+        return True
+    if "proper steps" in ul_norm or "professional manner" in ul_norm:
+        return True
+    return False
+
+
+def _repo_project_tracking_anchor(ul_norm: str) -> bool:
+    return any(
+        m in ul_norm
+        for m in (
+            "playground.py",
+            "playground",
+            "detect_subtarget",
+            "run_regression",
+            "regression harness",
+            "set focus:",
+            "set stage:",
+            "show state",
+            "reset state",
+            "memory retrieval",
+            "what should i do next",
+            "what's the next step",
+            "what is the next step",
+            "what do i do next",
+            "next step",
+            "implement ",
+            "refactor",
+            "strict mode gating",
+            "subtarget",
+        )
+    )
+
+
+def user_input_needs_explanatory_template_isolation(
+    ul_norm: str,
+    *,
+    sequence_discipline_mode: bool,
+    continuation_mode: bool,
+    reasoning_structure_mode: bool,
+    conversation_mode: bool,
+    strict_reply: bool,
+    force_structured_override: bool,
+    task_oriented_input: bool,
+) -> bool:
+    """Waive default RUNTIME-03 Progress/Risks/... tail for general technical/API education (not project tracking)."""
+    if not ul_norm:
+        return False
+    if sequence_discipline_mode or continuation_mode:
+        return False
+    if strict_reply or force_structured_override:
+        return False
+    if reasoning_structure_mode or conversation_mode:
+        return False
+    if task_oriented_input:
+        return False
+    if _repo_project_tracking_anchor(ul_norm):
+        return False
+    if user_input_is_external_api_testing_education(ul_norm):
+        return True
+    if re.search(
+        r"\b(describe|explain|compare|overview|guidance|walkthrough|walk me through)\b",
+        ul_norm,
+    ) and any(
+        t in ul_norm
+        for t in (
+            "api",
+            "http",
+            "rest",
+            "graphql",
+            "endpoint",
+            "testing",
+            "test plan",
+            "integration",
+            "contract test",
+            "smoke test",
+        )
+    ):
+        return True
+    return False
+
+
+def build_output_language_directive(lang_code: str) -> str:
+    """Increment 5: user-requested reply language during sequence / continuation (prompt tail)."""
+    labels = {
+        "en": "English",
+        "fr": "French (français)",
+        "es": "Spanish (español)",
+        "de": "German (Deutsch)",
+        "it": "Italian (italiano)",
+        "pt": "Portuguese (português)",
+        "zh": "Chinese (中文)",
+        "ja": "Japanese (日本語)",
+    }
+    label = labels.get(lang_code, lang_code)
+    return f"""OUTPUT LANGUAGE (sequence flow — increment 5):
+- The user requested this reply in {label}.
+- Do not refuse, apologize, or insist on another language unless the user explicitly overrides this message.
+- Maintain the active step-by-step / continuation flow: keep the same step position and progression rules as without this language instruction. Do not restart the sequence, renumber from scratch, or ask which points the user means.
+- Produce the same substantive step content as you would have produced in English, fully translated or naturally adapted into {label}; do not change the underlying technical meaning.
+- Do not trigger clarification-only routing, context resets, or alternate templates on account of language alone.
+""".strip()
+
+
 def user_input_is_simple_clarification(user_input: str) -> bool:
     """INTERACTION-01.2: short disambiguation prompts should stay conversational."""
+    if journal_service.detect_requested_output_language(user_input):
+        return False
     raw = (user_input or "").strip().lower()
     raw = raw.replace("\u2019", "'").replace("\u2018", "'")
     ul = re.sub(r"\s+", " ", raw)
@@ -727,8 +1051,21 @@ def build_runtime_01_execution_enforcement_block(
     *,
     reasoning_structure_mode: bool | None = None,
     conversation_mode: bool | None = None,
+    continuation_mode: bool | None = None,
+    sequence_discipline_mode: bool | None = None,
+    explanatory_template_isolation: bool | None = None,
 ) -> str:
-    """REASONING-06 / INTERACTION-01: choose enforcement tail by routing mode."""
+    """REASONING-06 / INTERACTION-01–04: choose enforcement tail by routing mode."""
+    if sequence_discipline_mode:
+        return (
+            _RUNTIME_ENFORCEMENT_LEAD
+            + "\n\n"
+            + INTERACTION_03_SEQUENCE_DISCIPLINE_ENFORCEMENT_BLOCK
+        ).strip()
+    if continuation_mode:
+        return (
+            _RUNTIME_ENFORCEMENT_LEAD + "\n\n" + INTERACTION_02_CONTINUATION_ENFORCEMENT_BLOCK
+        ).strip()
     if reasoning_structure_mode is None:
         reasoning_structure_mode = user_input_needs_reasoning_structure_mode(user_input)
     if reasoning_structure_mode:
@@ -738,6 +1075,12 @@ def build_runtime_01_execution_enforcement_block(
             + REASONING_06_CONTROL_GATE_BLOCK
             + "\n\n"
             + _REASONING_ENFORCEMENT_TAIL
+        ).strip()
+    if explanatory_template_isolation:
+        return (
+            _RUNTIME_ENFORCEMENT_LEAD
+            + "\n\n"
+            + INTERACTION_04_EXPLANATORY_TEMPLATE_ISOLATION_BLOCK
         ).strip()
     if conversation_mode is None:
         conversation_mode = user_input_needs_conversation_mode(user_input)
@@ -844,10 +1187,18 @@ def build_static_prompt():
     tool_and_action_head = """TOOL RULE:
 - If the user asks about a website, webpage, URL, or online content that you need to read first, respond ONLY with:
   TOOL:fetch https://url
+- If the user asks to search the web or find online information, respond ONLY with:
+  TOOL:brave_search short query
+- Explicit web-search intent ("search the web", "find", "look up") MUST use TOOL:brave_search, even if you think you already know the answer.
+- Priority rule: explicit web-search intent > model memory/knowledge.
+- Do NOT answer from memory when either tool is appropriate.
 - Do NOT explain.
 - Do NOT answer yet.
 - Do NOT wrap the tool command in markdown.
 - Only use TOOL:fetch when a real URL is needed.
+- Keep TOOL:brave_search query text short and clean.
+- Example mapping: "Search the web for what is an API" -> TOOL:brave_search what is an API
+- Example mapping: "Find 3 explanations of HTTP status codes" -> TOOL:brave_search http status codes explained
 
 ACTION RULE:
 - The next step must match the current action type.
@@ -945,6 +1296,7 @@ def choose_post_fetch_next_step(fetched_content):
 def build_post_fetch_messages(user_input, fetched_content, focus, stage, fetch_url=None):
     forced_next_step = choose_post_fetch_next_step(fetched_content)
     fetched_url_line = str(fetch_url or "").strip() or "(unknown)"
+    brave_tool_context = fetched_url_line.startswith("brave://")
 
     system_prompt = f"""
 You are a focused AI agent.
@@ -998,6 +1350,23 @@ Next step:
 - Do not add extra sections.
 - Do not add multiple options unless the user explicitly asks.
 """.strip()
+    if brave_tool_context:
+        system_prompt += (
+            "\n\nBRAVE SOURCE-BACKED ANSWER RULES:\n"
+            "- Use only the returned Brave payload text as source data; do not invent sources.\n"
+            "- In the Answer section, include this concise structure:\n"
+            "  Summary:\n"
+            "  <short useful answer>\n\n"
+            "  Sources:\n"
+            "  - <title> — <url>\n"
+            "  - <title> — <url>\n"
+            "- Include 1-3 sources when available.\n"
+            "- Source integrity: every listed source must be exactly title — URL; skip any item without a URL.\n"
+            "- If no sources are available in the payload, say: No sources were available.\n"
+            "- Summary clarity: avoid repeating phrases; keep wording clean, direct, and concise.\n"
+            "- When helpful, use compact bullet-style phrasing in the Summary section.\n"
+            "- Respect the user's requested output language for wording; keep source URLs unchanged.\n"
+        )
 
     user_message = f"""
 User request:
@@ -1264,8 +1633,29 @@ def build_messages(
     is_strong_recent_answer_match,
     detect_recent_answer_followup_type,
     detect_recent_answer_contradiction_cue,
+    lookup_indexed_steps_for_matched=None,
+    get_sequence_step_cursor=None,
+    set_sequence_step_cursor=None,
+    get_last_rendered_step_index=None,
+    set_last_rendered_step_index=None,
 ):
     ul_norm = re.sub(r"\s+", " ", user_input.strip().lower())
+    best_recent_match = get_best_recent_answer_match(user_input)
+    recent_followup_type = None
+    if best_recent_match:
+        recent_followup_type = detect_recent_answer_followup_type(
+            user_input, best_recent_match["matched_text"]
+        )
+    sequence_discipline_mode = user_input_needs_sequence_discipline_mode(
+        user_input,
+        best_recent_match=best_recent_match,
+        recent_followup_type=recent_followup_type,
+    )
+    full_steps_list_request = user_input_requests_full_steps_list(ul_norm)
+    continuation_mode = recent_followup_type == "continuation"
+    if sequence_discipline_mode:
+        continuation_mode = True
+
     money_query_signals = (
         "make money",
         "making money",
@@ -1358,6 +1748,8 @@ def build_messages(
     )
     reasoning_structure_mode = (
         reasoning_mode_candidate
+        and not sequence_discipline_mode
+        and not continuation_mode
         and not clarification_override_mode
         and not plain_answer_override_mode
         and subtarget != "system risk"
@@ -1368,10 +1760,17 @@ def build_messages(
     force_structured_override = is_meta_system_override_question(user_input, focus, stage) or (
         action_type == "research" and is_vague_research_request(user_input)
     )
+    suppress_project_response_templates = (
+        sequence_discipline_mode or user_input_is_external_api_testing_education(ul_norm)
+    )
     task_oriented_input = (
         strict_reply
         or force_structured_override
-        or action_type in {"test", "fix", "review"}
+        or action_type in {"fix", "review"}
+        or (
+            action_type == "test"
+            and not suppress_project_response_templates
+        )
         or (
             action_type == "research"
             and (
@@ -1409,6 +1808,7 @@ def build_messages(
                 "set stage:",
                 "show state",
             )
+            if not (suppress_project_response_templates and marker == "test ")
         )
     )
     light_task_mode = user_input_needs_light_task_mode(
@@ -1421,11 +1821,25 @@ def build_messages(
     clarify_first_undefined_implement_build = user_input_needs_clarify_first_undefined_implement_build(
         ul_norm
     )
+    if continuation_mode:
+        clarification_override_mode = False
+        reasoning_structure_mode = False
+        conversation_mode = False
+        light_task_mode = False
+        clarify_first_undefined_implement_build = False
+    if sequence_discipline_mode:
+        clarification_override_mode = False
+        reasoning_structure_mode = False
+        conversation_mode = False
+        light_task_mode = False
+        clarify_first_undefined_implement_build = False
+
     simple_question_mode = (
         not task_oriented_input
         and not reasoning_structure_mode
         and bool(re.match(r"^(what|who|where|when|why|how)\b", ul_norm))
         and ("?" in user_input)
+        and not user_input_requests_full_steps_list(ul_norm)
     )
     conversation_mode = (
         (conversation_mode or simple_question_mode)
@@ -1495,6 +1909,38 @@ SYSTEM RISK REPLY:
 - Do not add bullets, prefixes, or suffixes.
 - Reply using exactly this sentence (verbatim):
 {forced_answer_line}
+""".strip()
+    elif sequence_discipline_mode:
+        requested_step = _extract_requested_step_number(ul_norm)
+        target_rule = (
+            f"- Requested target step: {requested_step}. Respond with only step {requested_step}."
+            if requested_step
+            else "- If the user says Continue/Next, respond with only the next single step in order."
+        )
+        answer_and_step_rules = f"""
+SEQUENCE DISCIPLINE MODE:
+- The user requested one-by-one educational sequence behavior.
+- Priority rule: sequence_discipline_mode overrides continuation mode, conversation mode, reasoning mode, fallback clarification, and project/status templates.
+- Respond with exactly one step only.
+- Preserve the original step order from relevant recent assistant output (numbered, bulleted, line-separated, or sentence-ordered list).
+{target_rule}
+- Do NOT dump multiple steps or the full list.
+- Do NOT ask for clarification when the prior ordered/list-like answer exists.
+- Do NOT reset context, request generic missing info, or switch output format mode.
+- Do NOT output Known:, Missing:, Conclusion:, Answer:, Current state:, Next step:, Progress:, Risks:, Decisions:, or Next Steps: unless the user explicitly asks for those headers.
+- Stay in this one-step educational sequence behavior until the user changes topic.
+""".strip()
+    elif continuation_mode:
+        answer_and_step_rules = """
+CONTINUATION OVERRIDE MODE:
+- A continuation follow-up was detected from recent structured assistant output.
+- Priority rule: continuation mode overrides conversation mode, reasoning mode, and clarification fallback.
+- Continue the sequence immediately from the referenced item.
+- Do NOT ask for clarification in this mode unless no prior structured list exists or the reference is ambiguous.
+- Do NOT reset context, request generic missing info, or switch output modes.
+- Reply directly with the next requested step content.
+- Keep the reply concise and natural; no scaffolding headers.
+- Do NOT output Answer:, Current state:, Next step:, Progress:, Risks:, Decisions:, Next Steps:, or Known:/Missing:/Conclusion unless explicitly requested by the user.
 """.strip()
     elif reasoning_structure_mode:
         answer_and_step_rules = f"""
@@ -1664,9 +2110,29 @@ DIRECT ANSWER MODE:
 - Current focus is {focus}; current stage is {stage}; action type is {action_type}. Use these only when relevant.
 """
 
+    if full_steps_list_request and not sequence_discipline_mode:
+        answer_and_step_rules += """
+
+ORDERED STEPS OUTPUT PREFERENCE (full multi-step list — this turn):
+- The user asked for the full process / all steps in order in one reply — not a one-by-one sequence.
+- Output a complete explicit numbered list (1., 2., 3., …) with 4-6 high-impact operator steps for a typical API-testing workflow.
+- Do NOT answer with a single step, a single section, or a teaser; sequence-discipline / single-item mode does not apply to this question.
+- Prefer an explicit numbered list rather than a long comma-separated paragraph.
+- Keep each step concise and action-oriented.
+- API-testing operator contract: prioritize practical workflow language over generic textbook wording.
+- Preferred step flow (merge where needed to stay within 4-6): endpoint scope/contract -> positive-negative-boundary cases -> execute requests + capture evidence -> validate status/headers/payload/response body -> defect reporting + retest/regression.
+- Across the list, cover concrete endpoint targeting, auth/headers, request/response + status-code expectations, payload/body validation, negative/boundary tests, evidence capture, defect reporting, and retest/regression.
+- Keep step titles specific and operational (avoid vague labels like "review docs" or "select tools" unless tied to a concrete API-testing action).
+- Preferred final step title (English): Report Defects, Retest Fixes, and Run Regression.
+- Preferred final step title (French): Reporter les défauts, retester les correctifs et lancer la régression.
+- Output hygiene: include the final step exactly once inside the numbered list; do not echo or restate it as a standalone line after the list.
+- Hard no-postscript rule: output only the numbered list; after the last list item, output nothing else (no paragraph, no summary, no standalone restatement).
+- If the user asks for this full list in French (or another language), return the same 4-6 operator workflow in that language.
+"""
+
     if subtarget == "system risk":
         context_surfacing_block = ""
-    elif conversation_mode or light_task_mode or clarify_first_undefined_implement_build:
+    elif sequence_discipline_mode or conversation_mode or light_task_mode or clarify_first_undefined_implement_build:
         context_surfacing_block = CONTEXT_SURFACING_LIGHT_CONVERSATION
     else:
         context_surfacing_block = CONTEXT_SURFACING_TASK_ORIENTED
@@ -1852,21 +2318,24 @@ DIRECT ANSWER MODE:
     )
     if recent_answers_block:
         system_prompt += "\n\nRecent assistant outputs (session, bounded):\n" + recent_answers_block
-        best_recent_match = get_best_recent_answer_match(user_input)
-        is_recent_relevant = bool(best_recent_match) and detect_recent_answer_relevance(user_input)
+        followup_type = recent_followup_type
+        is_recent_relevant = bool(best_recent_match) and (
+            detect_recent_answer_relevance(user_input) or followup_type == "continuation"
+        )
         if is_recent_relevant:
             if is_strong_recent_answer_match(best_recent_match):
                 matched_snip = _latency_trim_block(
                     best_recent_match["matched_text"], LATENCY_MISC_APPEND_BLOCK_MAX_CHARS
                 )
                 system_prompt += "\n\nRelevant recent assistant output:\n" + matched_snip + "\n"
-            followup_type = detect_recent_answer_followup_type(user_input, best_recent_match["matched_text"])
             if followup_type == "continuation":
                 system_prompt += (
                     "\n\nRecent-answer follow-up type: continuation\n"
                     "- The user may be continuing a recent thread.\n"
                     "- Build on the relevant recent answer if useful.\n"
                     "- Avoid restarting from zero.\n"
+                    "- If the recent answer contains a structured list/steps and the user asks to continue (for example start with a number, next, or continue), continue the sequence directly.\n"
+                    "- Do not ask for clarification in that case unless no prior structured list exists or the reference is ambiguous.\n"
                 )
             elif followup_type == "clarification":
                 system_prompt += (
@@ -1907,14 +2376,146 @@ DIRECT ANSWER MODE:
                     "- Do not claim memory certainty beyond current session context.\n"
                 )
 
+    seq_dbg_steps_len = None
+    seq_dbg_target_idx = None
+    seq_dbg_indexed_injected = False
+    if (
+        lookup_indexed_steps_for_matched is not None
+        and get_sequence_step_cursor is not None
+        and set_sequence_step_cursor is not None
+        and get_last_rendered_step_index is not None
+        and set_last_rendered_step_index is not None
+        and best_recent_match
+    ):
+        steps = lookup_indexed_steps_for_matched(
+            best_recent_match.get("matched_text") or "", user_input
+        )
+        if steps:
+            seq_dbg_steps_len = len(steps)
+            cur = get_sequence_step_cursor()
+            lr = get_last_rendered_step_index()
+            target_idx, new_cur, new_lr = journal_service.resolve_sequence_step_navigation(
+                user_input,
+                ul_norm,
+                cursor_before=cur,
+                last_rendered_step_index=lr,
+                steps_len=len(steps),
+            )
+            if target_idx is not None:
+                seq_dbg_target_idx = int(target_idx)
+                row = next(
+                    (s for s in steps if int(s.get("index", 0)) == int(target_idx)),
+                    None,
+                )
+                if row and str(row.get("content", "")).strip():
+                    body = str(row["content"]).strip()
+                    title_only_constraint = bool(
+                        re.search(r"\b(?:only\s+the\s+title|title\s+only|only\s+title)\b", ul_norm)
+                    )
+                    keep_short_constraint = bool(
+                        re.search(r"\b(?:keep\s+it\s+short|short)\b", ul_norm)
+                    )
+                    explain_step_request = bool(
+                        re.search(r"\bexplain\s+(?:step|number)\s*\d+\b", ul_norm)
+                    )
+                    system_prompt += (
+                        "\n\nINDEXED STEP CONTENT (authoritative for this turn — do not substitute another index):\n"
+                        f"Step {int(target_idx)} of {len(steps)}: {body}\n"
+                        "- Deliver this step's substance only; sequence / continuation rules above still apply.\n"
+                        "- If the user requested a different output language, translate this exact step content only — do not jump to another step index.\n"
+                        "- Default step output format (concise): Title | What it means | Why it matters | One concrete API-testing example | What Jessy should do next.\n"
+                        "- Keep this step meaningfully distinct from other steps; avoid reusing generic wording across Step 2/3/4.\n"
+                        "- Operator-focus checklist for this step: include concrete endpoint thinking, auth/headers, expected status codes, payload/response validation, and practical execution evidence when relevant to the current step index.\n"
+                        "- Elaboration anti-repeat rule: do not repeat the original step line verbatim; expand it with new practical detail.\n"
+                        "- For elaboration turns, ensure the response adds these elements (concise): What it means | Why it matters | One concrete API-testing example | What Jessy should do next.\n"
+                    )
+                    if explain_step_request:
+                        system_prompt += (
+                            "- Explain-step request: add one extra clarifying sentence beyond basic elaboration, but keep the same step index and concise structure.\n"
+                        )
+                    if int(target_idx) == int(len(steps)):
+                        system_prompt += (
+                            "- Final-step clarity requirement: explicitly include defect reporting, retesting fixes, and targeted regression testing.\n"
+                        )
+                    if title_only_constraint:
+                        system_prompt += (
+                            "- Constraint override: return only the step title line for this turn.\n"
+                        )
+                    elif keep_short_constraint:
+                        system_prompt += (
+                            "- Constraint override: keep the response short (2-3 compact lines) while preserving meaning.\n"
+                        )
+                    seq_dbg_indexed_injected = True
+                    # Stabilization invariant: the displayed step is the single source of truth
+                    # for both last_rendered and cursor when a step is rendered.
+                    if new_lr is not None:
+                        set_last_rendered_step_index(int(target_idx))
+                        set_sequence_step_cursor(int(target_idx))
+                    else:
+                        set_sequence_step_cursor(new_cur)
+
     system_prompt = _latency_cap_system_prompt(system_prompt)
+    requested_output_lang = journal_service.detect_requested_output_language(user_input)
+    if (
+        requested_output_lang
+        and best_recent_match
+        and journal_service.text_has_structured_or_list_like_sequence(
+            best_recent_match.get("matched_text", "")
+        )
+        and (
+            sequence_discipline_mode
+            or continuation_mode
+            or journal_service.user_input_is_short_output_language_switch(user_input)
+        )
+    ):
+        system_prompt += "\n\n" + build_output_language_directive(requested_output_lang)
+    interaction_tail_waive = (
+        conversation_mode or light_task_mode or clarify_first_undefined_implement_build
+    )
+    explanatory_template_isolation = user_input_needs_explanatory_template_isolation(
+        ul_norm,
+        sequence_discipline_mode=sequence_discipline_mode,
+        continuation_mode=continuation_mode,
+        reasoning_structure_mode=reasoning_structure_mode,
+        conversation_mode=interaction_tail_waive,
+        strict_reply=strict_reply,
+        force_structured_override=force_structured_override,
+        task_oriented_input=task_oriented_input,
+    )
     system_prompt += "\n\n" + build_runtime_01_execution_enforcement_block(
         user_input,
         reasoning_structure_mode=reasoning_structure_mode,
         conversation_mode=conversation_mode
         or light_task_mode
         or clarify_first_undefined_implement_build,
+        continuation_mode=continuation_mode,
+        sequence_discipline_mode=sequence_discipline_mode,
+        explanatory_template_isolation=explanatory_template_isolation,
     )
+
+    if _sequence_debug_enabled():
+        cur_dbg = (
+            get_sequence_step_cursor()
+            if get_sequence_step_cursor is not None
+            else None
+        )
+        lr_dbg = (
+            get_last_rendered_step_index()
+            if get_last_rendered_step_index is not None
+            else None
+        )
+        _emit_sequence_debug_turn(
+            ul_norm=ul_norm,
+            best_recent_match=best_recent_match,
+            recent_followup_type=recent_followup_type,
+            sequence_discipline_mode=sequence_discipline_mode,
+            continuation_mode=continuation_mode,
+            steps_len=seq_dbg_steps_len,
+            sequence_cursor=cur_dbg,
+            last_rendered=lr_dbg,
+            resolved_target_idx=seq_dbg_target_idx,
+            indexed_step_injected=seq_dbg_indexed_injected,
+        )
 
     messages = [{"role": "user", "content": user_input}]
     return system_prompt, messages

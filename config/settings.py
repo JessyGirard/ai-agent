@@ -55,3 +55,7 @@ def get_openai_api_key_brain() -> str:
 
 def get_openai_brain_model_name() -> str:
     return os.getenv("OPENAI_BRAIN_MODEL", "").strip()
+
+
+def get_brave_api_key() -> str:
+    return os.getenv("BRAVE_API_KEY", "").strip()

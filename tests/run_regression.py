@@ -17,6 +17,7 @@ from requests import ConnectionError as RequestsConnectionError
 from requests import Timeout
 
 import tools.fetch_http as fetch_http_module
+from services import journal_service
 from services import prompt_builder
 from tools.fetch_page import fetch_failure_tag, fetch_page
 
@@ -44,7 +45,7 @@ def run_test(name, fn):
 def reset_agent_state():
     playground.current_state.clear()
     playground.current_state.update(playground.DEFAULT_STATE.copy())
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     persistence_core.consume_persistence_health_events()
 
 
@@ -95,7 +96,7 @@ def isolated_state_file():
 def test_blank_input():
     reset_agent_state()
     result = playground.handle_user_input("   ")
-    assert result == "⚠️ Please type something.", f"Unexpected result: {result}"
+    assert result == "⚠️ Please type something or attach at least one screenshot.", f"Unexpected result: {result}"
 
 
 def test_show_state():
@@ -5257,6 +5258,219 @@ def test_fetch_trivially_small_short_circuits_second_llm():
         playground.fetch_page = original_fetch_page
 
 
+def test_brave_search_tool_command_triggers_tool_and_returns_result():
+    reset_agent_state()
+
+    original_ask_ai = playground.ask_ai
+    original_brave_search = playground.brave_search
+    try:
+        call_count = {"n": 0}
+        seen = {"query": None}
+
+        def fake_ask_ai(messages, system_prompt=None):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return "TOOL:brave_search what is an API"
+            return "Brave result returned."
+
+        def fake_brave_search(query):
+            seen["query"] = query
+            return {
+                "ok": True,
+                "status_code": 200,
+                "query": query,
+                "results": [
+                    {
+                        "title": "API definition",
+                        "snippet": "An API is an application programming interface used to define contracts between clients and services with request and response behaviors for practical integration testing.",
+                        "url": "https://example.com/api",
+                    }
+                ],
+                "error": None,
+            }
+
+        playground.ask_ai = fake_ask_ai
+        playground.brave_search = fake_brave_search
+
+        result = playground.handle_user_input("Can you check this topic?")
+
+        assert seen["query"] == "what is an API", seen
+        assert call_count["n"] == 2, call_count
+        assert result == "Brave result returned."
+    finally:
+        playground.ask_ai = original_ask_ai
+        playground.brave_search = original_brave_search
+
+
+def test_increment3d_explicit_web_search_bypasses_first_llm_and_forces_brave():
+    reset_agent_state()
+    original_ask_ai = playground.ask_ai
+    original_brave_search = playground.brave_search
+    try:
+        call_count = {"n": 0}
+        seen = {"query": None}
+
+        def fake_ask_ai(messages, system_prompt=None):
+            call_count["n"] += 1
+            return "Brave routed response."
+
+        def fake_brave_search(query):
+            seen["query"] = query
+            return {
+                "ok": True,
+                "status_code": 200,
+                "query": query,
+                "results": [
+                    {
+                        "title": "API definition",
+                        "snippet": "API means application programming interface and this explanation is intentionally long enough to avoid deterministic trivial-short-circuit behavior in the post-tool flow so the second LLM pass is exercised.",
+                        "url": "https://example.com/api",
+                    }
+                ],
+                "error": None,
+            }
+
+        playground.ask_ai = fake_ask_ai
+        playground.brave_search = fake_brave_search
+
+        result = playground.handle_user_input("Search the web for what is an API")
+        assert seen["query"] == "what is an api", seen
+        # One LLM call only: post-tool answer synthesis, no first-pass memory answer.
+        assert call_count["n"] == 1, call_count
+        assert result == "Brave routed response."
+    finally:
+        playground.ask_ai = original_ask_ai
+        playground.brave_search = original_brave_search
+
+
+def test_increment3d_non_search_query_does_not_force_brave():
+    reset_agent_state()
+    original_ask_ai = playground.ask_ai
+    original_brave_search = playground.brave_search
+    try:
+        seen = {"called": False}
+
+        def fake_ask_ai(messages, system_prompt=None):
+            return "Normal model answer."
+
+        def fake_brave_search(query):
+            seen["called"] = True
+            return {"ok": False, "status_code": None, "query": query, "results": [], "error": "unexpected"}
+
+        playground.ask_ai = fake_ask_ai
+        playground.brave_search = fake_brave_search
+
+        result = playground.handle_user_input("What is an API?")
+        assert result == "Normal model answer."
+        assert seen["called"] is False
+    finally:
+        playground.ask_ai = original_ask_ai
+        playground.brave_search = original_brave_search
+
+
+def test_increment3e_brave_formatted_payload_includes_sources():
+    payload = playground._format_brave_search_result_for_post_tool(
+        {
+            "ok": True,
+            "status_code": 200,
+            "query": "what is an api",
+            "results": [
+                {
+                    "title": "API definition",
+                    "snippet": "API means application programming interface.",
+                    "url": "https://example.com/api",
+                },
+                {
+                    "title": "HTTP API basics",
+                    "snippet": "HTTP APIs use methods and status codes.",
+                    "url": "https://example.com/http",
+                },
+            ],
+            "error": None,
+        }
+    )
+    assert "BRAVE RESULT" in payload
+    assert "Sources:" in payload
+    assert "- API definition — https://example.com/api" in payload
+    assert "- HTTP API basics — https://example.com/http" in payload
+
+
+def test_increment3f_brave_sources_skip_missing_urls():
+    payload = playground._format_brave_search_result_for_post_tool(
+        {
+            "ok": True,
+            "status_code": 200,
+            "query": "api",
+            "results": [
+                {"title": "No link row", "snippet": "missing url", "url": ""},
+                {"title": "Good row", "snippet": "has url", "url": "https://example.com/good"},
+            ],
+            "error": None,
+        }
+    )
+    assert "Sources:" in payload
+    assert "- Good row — https://example.com/good" in payload
+    assert "- No link row" not in payload
+
+
+def test_increment3e_brave_no_sources_reports_unavailable():
+    payload = playground._format_brave_search_result_for_post_tool(
+        {
+            "ok": True,
+            "status_code": 200,
+            "query": "nothing",
+            "results": [],
+            "error": None,
+        }
+    )
+    assert "Sources:" in payload
+    assert "No sources were available." in payload
+
+
+def test_increment3f_brave_post_fetch_prompt_adds_source_integrity_and_summary_clarity():
+    prompt, _ = playground.build_post_fetch_messages(
+        user_input="Search the web for what is an API",
+        fetched_content="BRAVE RESULT\nSources:\n- API definition — https://example.com/api",
+        focus="ai-agent project",
+        stage="Phase 4 action-layer refinement",
+        fetch_url="brave://search",
+    )
+    assert "Source integrity: every listed source must be exactly title — URL; skip any item without a URL." in prompt
+    assert "Summary clarity: avoid repeating phrases; keep wording clean, direct, and concise." in prompt
+    assert "When helpful, use compact bullet-style phrasing in the Summary section." in prompt
+
+
+def test_increment3e_brave_post_fetch_prompt_rules_include_language_and_sources():
+    prompt, _ = playground.build_post_fetch_messages(
+        user_input="Explique-moi ce sujet en français",
+        fetched_content="BRAVE RESULT\nSources:\n- API definition — https://example.com/api",
+        focus="ai-agent project",
+        stage="Phase 4 action-layer refinement",
+        fetch_url="brave://search",
+    )
+    assert "BRAVE SOURCE-BACKED ANSWER RULES:" in prompt
+    assert "Include 1-3 sources when available." in prompt
+    assert "No sources were available." in prompt
+    assert "Respect the user's requested output language for wording; keep source URLs unchanged." in prompt
+
+
+def test_increment3c_prompt_enforces_brave_for_explicit_web_search_intent():
+    reset_agent_state()
+    prompt, _ = playground.build_messages("Search the web for what is an API")
+    assert "Explicit web-search intent (\"search the web\", \"find\", \"look up\") MUST use TOOL:brave_search" in prompt
+    assert "Priority rule: explicit web-search intent > model memory/knowledge." in prompt
+    assert "Example mapping: \"Search the web for what is an API\" -> TOOL:brave_search what is an API" in prompt
+    assert "Example mapping: \"Find 3 explanations of HTTP status codes\" -> TOOL:brave_search http status codes explained" in prompt
+
+
+def test_increment3c_prompt_enforces_brave_for_find_request():
+    reset_agent_state()
+    prompt, _ = playground.build_messages("Find 3 explanations of HTTP status codes")
+    assert "Explicit web-search intent (\"search the web\", \"find\", \"look up\") MUST use TOOL:brave_search" in prompt
+    assert "Priority rule: explicit web-search intent > model memory/knowledge." in prompt
+    assert "TOOL:brave_search http status codes explained" in prompt
+
+
 def test_fetch_over_trivial_char_cap_still_uses_second_llm():
     """LATENCY-10: body over char/word trivial cap runs post-fetch ask_ai (URL-first: single LLM)."""
     reset_agent_state()
@@ -10345,10 +10559,9 @@ def test_system_eval_case_expected_status_fields_absent_behavior_unchanged():
             )
 
     result = system_eval_core.execute_suite(suite, adapter=A())
-    assert result["ok"] is True, result
+    assert result["ok"] is False, result
     row = result["cases"][0]
-    assert all("expected_status mismatch" not in f for f in row["failures"]), row
-    assert all("expected_status_in mismatch" not in f for f in row["failures"]), row
+    assert any("default status check failed: expected 2xx, got 503" in f for f in row["failures"]), row
 
 
 def test_system_eval_case_expected_status_and_expected_status_in_both_present_rejected():
@@ -14886,7 +15099,7 @@ def test_anti_repeat_guard_positive_feedback_does_not_trigger():
 
 def test_recent_answer_history_is_bounded_and_latest_first():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
 
     total = playground.RECENT_ANSWER_HISTORY_MAX + 3
     for i in range(total):
@@ -15901,19 +16114,19 @@ def test_build_messages_stable_user_context_avoids_same_lane_duplicate_crowding(
 
 def test_detect_recent_answer_relevance_false_when_history_empty():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     assert not playground.detect_recent_answer_relevance("Why did the last answer change?")
 
 
 def test_get_best_recent_answer_match_none_when_history_empty():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     assert playground.get_best_recent_answer_match("Why did the last answer change?") is None
 
 
 def test_get_best_recent_answer_match_selects_more_relevant_output():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history("State persistence survives restart and reopen.")
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
@@ -15927,7 +16140,7 @@ def test_get_best_recent_answer_match_selects_more_relevant_output():
 
 def test_get_best_recent_answer_match_prefers_more_recent_on_equal_strength():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "detect_subtarget routing issues can trigger strict mode behavior."
     )
@@ -15945,7 +16158,7 @@ def test_get_best_recent_answer_match_prefers_more_recent_on_equal_strength():
 
 def test_get_best_recent_answer_match_relevance_beats_recency():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "detect_subtarget routing strict mode gating behavior details."
     )
@@ -15961,7 +16174,7 @@ def test_get_best_recent_answer_match_relevance_beats_recency():
 
 def test_detect_recent_answer_relevance_unchanged_with_equal_strength_candidates():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "detect_subtarget routing issues can trigger strict mode behavior."
     )
@@ -15974,7 +16187,7 @@ def test_detect_recent_answer_relevance_unchanged_with_equal_strength_candidates
 
 def test_detect_recent_answer_relevance_true_on_related_followup():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -15984,7 +16197,7 @@ def test_detect_recent_answer_relevance_true_on_related_followup():
 
 def test_detect_recent_answer_relevance_false_for_short_unrelated_shared_token():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -15994,7 +16207,7 @@ def test_detect_recent_answer_relevance_false_for_short_unrelated_shared_token()
 
 def test_detect_recent_answer_relevance_false_for_generic_tokens_only():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Project system agent memory test stage focus current next step."
     )
@@ -16004,7 +16217,7 @@ def test_detect_recent_answer_relevance_false_for_generic_tokens_only():
 
 def test_detect_recent_answer_relevance_true_after_generic_token_filtering():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -16031,7 +16244,7 @@ def test_is_strong_recent_answer_match_false_for_weak_but_relevant():
 
 def test_build_messages_adds_reflection_guidance_only_when_relevant():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -16047,7 +16260,7 @@ def test_build_messages_adds_reflection_guidance_only_when_relevant():
 
 def test_build_messages_includes_relevant_recent_output_only_when_relevant():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -16064,7 +16277,7 @@ def test_build_messages_includes_relevant_recent_output_only_when_relevant():
 
 def test_build_messages_includes_matched_output_for_strong_match():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -16077,7 +16290,7 @@ def test_build_messages_includes_matched_output_for_strong_match():
 
 def test_build_messages_omits_matched_output_for_weak_but_relevant_followup():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -16093,7 +16306,7 @@ def test_build_messages_omits_matched_output_for_weak_but_relevant_followup():
 
 def test_build_messages_keeps_followup_guidance_when_matched_output_omitted():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -16115,7 +16328,7 @@ def test_detect_recent_answer_contradiction_cue_false_for_unrelated_but():
     matched = "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     q = "But what color is the sky today?"
     assert playground.detect_recent_answer_contradiction_cue(q, matched)
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(matched)
     prompt, _ = playground.build_messages(q)
     assert "Recent-answer contradiction/refinement cue:" not in prompt
@@ -16126,7 +16339,7 @@ def test_detect_recent_answer_contradiction_cue_false_for_unrelated_no():
     matched = "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     q = "No, tell me about weather patterns."
     assert playground.detect_recent_answer_contradiction_cue(q, matched)
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(matched)
     prompt, _ = playground.build_messages(q)
     assert "Recent-answer contradiction/refinement cue:" not in prompt
@@ -16147,16 +16360,43 @@ def test_detect_recent_answer_followup_type_none_without_match():
 
 def test_detect_recent_answer_followup_type_continuation_for_related_followup():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     matched = "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     playground.append_recent_answer_history(matched)
     q = "Continue on detect_subtarget strict mode routing behavior."
     assert playground.detect_recent_answer_followup_type(q, matched) == "continuation"
 
 
+def test_detect_recent_answer_followup_type_continuation_for_structured_list_reference():
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    matched = "1. Validate login flow\n2. Add regression test\n3. Re-run suite"
+    playground.append_recent_answer_history(matched)
+    q = "Start with number 1"
+    assert playground.detect_recent_answer_followup_type(q, matched) == "continuation"
+
+
+def test_detect_recent_answer_followup_type_continuation_for_continue_with_structured_list():
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    matched = "1. Validate login flow\n2. Add regression test\n3. Re-run suite"
+    playground.append_recent_answer_history(matched)
+    q = "Continue"
+    assert playground.detect_recent_answer_followup_type(q, matched) == "continuation"
+
+
+def test_detect_recent_answer_followup_type_continuation_for_next_with_structured_list():
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    matched = "1. Validate login flow\n2. Add regression test\n3. Re-run suite"
+    playground.append_recent_answer_history(matched)
+    q = "Next"
+    assert playground.detect_recent_answer_followup_type(q, matched) == "continuation"
+
+
 def test_detect_recent_answer_followup_type_clarification_for_precision_prompt():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     matched = "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     playground.append_recent_answer_history(matched)
     q = "Can you clarify that and be specific about detect_subtarget?"
@@ -16165,7 +16405,7 @@ def test_detect_recent_answer_followup_type_clarification_for_precision_prompt()
 
 def test_detect_recent_answer_followup_type_correction_for_revision_prompt():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     matched = "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     playground.append_recent_answer_history(matched)
     q = "You said that earlier, but that's wrong now."
@@ -16174,7 +16414,7 @@ def test_detect_recent_answer_followup_type_correction_for_revision_prompt():
 
 def test_build_messages_adds_continuation_guidance_only_for_continuation():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -16186,9 +16426,1417 @@ def test_build_messages_adds_continuation_guidance_only_for_continuation():
     assert "Recent-answer follow-up type: correction" not in prompt
 
 
+def test_build_messages_adds_continuation_guidance_for_numbered_followup_reference():
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    playground.append_recent_answer_history(
+        "1. Validate login flow\n2. Add regression test\n3. Re-run suite"
+    )
+    prompt, _ = playground.build_messages("Start with number 1")
+    assert "Recent-answer follow-up type: continuation" in prompt
+    assert "continue the sequence directly" in prompt
+    assert "Do not ask for clarification in that case" in prompt
+
+
+def test_build_messages_continuation_override_priority_for_start_with_number_1():
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    playground.append_recent_answer_history(
+        "1. Validate login flow\n2. Add regression test\n3. Re-run suite"
+    )
+    prompt, _ = playground.build_messages("Start with number 1")
+    assert "SEQUENCE DISCIPLINE MODE:" in prompt
+    assert "Priority rule: sequence_discipline_mode overrides continuation mode, conversation mode, reasoning mode, fallback clarification, and project/status templates." in prompt
+    assert "Do NOT ask for clarification when the prior ordered/list-like answer exists." in prompt
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in prompt
+    assert "CLARIFY-FIRST (UNDEFINED IMPLEMENT/BUILD TARGET):" not in prompt
+
+
+def test_build_messages_continuation_override_priority_for_continue_and_next():
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    playground.append_recent_answer_history(
+        "1. Validate login flow\n2. Add regression test\n3. Re-run suite"
+    )
+    prompt_continue, _ = playground.build_messages("Continue")
+    prompt_next, _ = playground.build_messages("Next")
+    assert "SEQUENCE DISCIPLINE MODE:" in prompt_continue
+    assert "SEQUENCE DISCIPLINE MODE:" in prompt_next
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in prompt_continue
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in prompt_next
+
+
+def test_sequence_discipline_mode_exact_requested_flow_enforces_one_step_behavior():
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+
+    initial_list = (
+        "1. Define scope and acceptance criteria.\n"
+        "2. Prepare environment and test data.\n"
+        "3. Validate authentication and authorization.\n"
+        "4. Execute positive-path endpoint tests.\n"
+        "5. Execute negative and boundary tests.\n"
+        "6. Validate performance, reliability, and retries.\n"
+        "7. Report findings with evidence and follow-up actions."
+    )
+
+    q1 = "What are all the proper steps in order to test an API in a professional manner?"
+    _prompt1, _ = playground.build_messages(q1)
+    playground.append_recent_answer_history(initial_list, user_input=q1)
+
+    q2 = "Please, one by one, not all in the same reply, elaborate on those 7 points, starting with number 1. Only include number 1, so if I have questions I can ask please."
+    prompt2, _ = playground.build_messages(q2)
+    assert "SEQUENCE DISCIPLINE MODE:" in prompt2
+    assert "Respond with exactly one step only." in prompt2
+    assert "Do NOT dump multiple steps or the full list." in prompt2
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in prompt2
+    assert "OUTPUT FORMAT RULES:" not in prompt2
+
+    q3 = "Start with number 1."
+    prompt3, _ = playground.build_messages(q3)
+    assert "SEQUENCE DISCIPLINE MODE:" in prompt3
+    assert "Requested target step: 1. Respond with only step 1." in prompt3
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in prompt3
+    assert "OUTPUT FORMAT RULES:" not in prompt3
+
+    q4 = "Continue."
+    prompt4, _ = playground.build_messages(q4)
+    assert "SEQUENCE DISCIPLINE MODE:" in prompt4
+    assert "If the user says Continue/Next, respond with only the next single step in order." in prompt4
+    assert "CLARIFY-FIRST (UNDEFINED IMPLEMENT/BUILD TARGET):" not in prompt4
+
+    q5 = "Next."
+    prompt5, _ = playground.build_messages(q5)
+    assert "SEQUENCE DISCIPLINE MODE:" in prompt5
+    assert "If the user says Continue/Next, respond with only the next single step in order." in prompt5
+
+    q6 = "Explain step 2."
+    prompt6, _ = playground.build_messages(q6)
+    assert "SEQUENCE DISCIPLINE MODE:" in prompt6
+    assert "Requested target step: 2. Respond with only step 2." in prompt6
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in prompt6
+
+    q7 = "Give me step 3 only."
+    prompt7, _ = playground.build_messages(q7)
+    assert "SEQUENCE DISCIPLINE MODE:" in prompt7
+    assert "Requested target step: 3. Respond with only step 3." in prompt7
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in prompt7
+    assert "OUTPUT FORMAT RULES:" not in prompt7
+    assert "Use exactly these three sections in this order:\n\nAnswer:" not in prompt7
+
+
+def test_detect_recent_answer_followup_type_elaborate_on_those_points_is_continuation():
+    reset_agent_state()
+    matched = (
+        "Review requirements and test entry criteria.\n"
+        "Validate sample payloads and check error responses.\n"
+        "Verify logging and automate regression coverage.\n"
+    )
+    q = (
+        "Please, one by one, not all in the same reply, elaborate on those 12 points, "
+        "starting with number 1. Only include number 1."
+    )
+    assert playground.detect_recent_answer_followup_type(q, matched) == "continuation"
+
+
+def test_sequence_discipline_twelve_line_separated_steps_live_failure():
+    """Prior answer: unnumbered line-separated list; user references those 12 points — no clarification path."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    lines = [
+        "Review the API contract and authentication model.",
+        "Define explicit acceptance criteria and negative cases.",
+        "Set up isolated test environments and data fixtures.",
+        "Create reusable client helpers for auth and headers.",
+        "Exercise happy-path requests with representative payloads.",
+        "Validate HTTP status codes and error mapping behavior.",
+        "Assert response schema, types, and required fields strictly.",
+        "Cover pagination, filtering, and idempotency where applicable.",
+        "Run concurrency and rate-limit behavior checks safely.",
+        "Measure latency and basic performance thresholds on critical paths.",
+        "Add security checks for injection, auth bypass, and sensitive data leaks.",
+        "Automate the suite in CI with deterministic reporting and artifacts.",
+    ]
+    playground.append_recent_answer_history("\n".join(lines))
+    q = (
+        "Please, one by one, not all in the same reply, elaborate on those 12 points, "
+        "starting with number 1. Only include number 1, so if I have questions I can ask please."
+    )
+    prompt, _ = playground.build_messages(q)
+    assert "SEQUENCE DISCIPLINE MODE:" in prompt
+    assert "Requested target step: 1. Respond with only step 1." in prompt
+    assert "CLARIFY-FIRST (UNDEFINED IMPLEMENT/BUILD TARGET):" not in prompt
+    assert "OUTPUT FORMAT RULES:" not in prompt
+
+
+def test_external_api_testing_education_suppresses_three_section_templates():
+    reset_agent_state()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    prompt, _ = playground.build_messages(q)
+    assert "OUTPUT FORMAT RULES:" not in prompt
+    assert "Use exactly these three sections in this order:" not in prompt
+
+
+def test_sequence_language_switch_mid_flow():
+    """Increment 5: language pivot mid sequence — anchor list, continue, then French; no clarify reset."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    _full_steps_q = "What are all the proper steps in order to test an API in a professional manner?"
+    playground.append_recent_answer_history(
+        "1. First step about API scope\n"
+        "2. Second step about test design\n"
+        "3. Third step about execution\n",
+        user_input=_full_steps_q,
+    )
+    p1, _ = playground.build_messages("Start with number 1.")
+    assert "SEQUENCE DISCIPLINE MODE:" in p1
+    playground.append_recent_answer_history(
+        "Step 1: define the API surface and environments you will exercise.",
+        user_input="Start with number 1.",
+    )
+    p2, _ = playground.build_messages("Continue.")
+    assert "SEQUENCE DISCIPLINE MODE:" in p2 or "CONTINUATION OVERRIDE MODE:" in p2
+    playground.append_recent_answer_history(
+        "Step 2: design concrete cases including negative paths.",
+        user_input="Continue.",
+    )
+    p3, _ = playground.build_messages("en français svp cette fois si")
+    assert "OUTPUT LANGUAGE (sequence flow — increment 5):" in p3
+    assert "French (français)" in p3
+    assert "Do not refuse" in p3
+    assert "CLARIFY-FIRST (UNDEFINED IMPLEMENT/BUILD TARGET):" not in p3
+    assert (
+        "SEQUENCE DISCIPLINE MODE:" in p3
+        or "CONTINUATION OVERRIDE MODE:" in p3
+        or "Continuation override mode (INTERACTION-02):" in p3
+    )
+
+
+def test_step_alignment_persistence_across_language_switch():
+    """Increment 6: indexed step store + cursor — exact step body survives continue and language pivot."""
+    reset_agent_state()
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    initial_list = (
+        "1. IDX_STEP_ONE_UNIQUE_PHRASE_ALPHA\n"
+        "2. IDX_STEP_TWO_UNIQUE_PHRASE_BETA\n"
+        "3. IDX_STEP_THREE_UNIQUE_PHRASE_GAMMA\n"
+    )
+    _full_steps_q = "What are all the proper steps in order to test an API in a professional manner?"
+    playground.append_recent_answer_history(initial_list, user_input=_full_steps_q)
+    assert len(playground.recent_answer_step_frames) == len(playground.recent_answer_history)
+
+    p1, _ = playground.build_messages("Start with number 1.")
+    assert "INDEXED STEP CONTENT" in p1
+    l1 = _indexed_step_line(p1, 1, 3)
+    assert "IDX_STEP_ONE_UNIQUE_PHRASE_ALPHA" in l1
+    assert "IDX_STEP_TWO_UNIQUE_PHRASE_BETA" not in l1
+
+    playground.append_recent_answer_history("Narration for step one only.", user_input="Start with number 1.")
+    p2, _ = playground.build_messages("Continue")
+    l2 = _indexed_step_line(p2, 2, 3)
+    assert "IDX_STEP_TWO_UNIQUE_PHRASE_BETA" in l2
+    assert "IDX_STEP_THREE_UNIQUE_PHRASE_GAMMA" not in l2
+
+    playground.append_recent_answer_history("Narration for step two only.", user_input="Continue")
+    p3, _ = playground.build_messages("en français svp cette fois si")
+    l3 = _indexed_step_line(p3, 2, 3)
+    assert "IDX_STEP_TWO_UNIQUE_PHRASE_BETA" in l3
+    assert "IDX_STEP_THREE_UNIQUE_PHRASE_GAMMA" not in l3
+    assert "OUTPUT LANGUAGE (sequence flow — increment 5):" in p3
+
+    p4, _ = playground.build_messages("step 3")
+    l4 = _indexed_step_line(p4, 3, 3)
+    assert "IDX_STEP_THREE_UNIQUE_PHRASE_GAMMA" in l4
+    assert "IDX_STEP_ONE_UNIQUE_PHRASE_ALPHA" not in l4
+
+    p5, _ = playground.build_messages("step 2")
+    l5 = _indexed_step_line(p5, 2, 3)
+    assert "IDX_STEP_TWO_UNIQUE_PHRASE_BETA" in l5
+    assert "IDX_STEP_THREE_UNIQUE_PHRASE_GAMMA" not in l5
+
+
+def test_indexed_sequence_continue_then_next_advances_one_step_at_a_time():
+    """Cursor must track last delivered step: Continue → 2, Next → 3 (never skip to 4)."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    q_list = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = (
+        "1. CURSOR_ONE_UNIQUE\n"
+        "2. CURSOR_TWO_UNIQUE\n"
+        "3. CURSOR_THREE_UNIQUE\n"
+        "4. CURSOR_FOUR_UNIQUE\n"
+    )
+    playground.append_recent_answer_history(lst, user_input=q_list)
+    p1, _ = playground.build_messages("Start with number 1.")
+    assert "CURSOR_ONE_UNIQUE" in _indexed_step_line(p1, 1, 4)
+    assert playground.get_sequence_step_cursor() == 1
+    playground.append_recent_answer_history("reply step 1", user_input="Start with number 1.")
+    p2, _ = playground.build_messages("Continue")
+    assert "CURSOR_TWO_UNIQUE" in _indexed_step_line(p2, 2, 4)
+    assert "CURSOR_FOUR_UNIQUE" not in _indexed_step_line(p2, 2, 4)
+    assert playground.get_sequence_step_cursor() == 2
+    playground.append_recent_answer_history("reply step 2", user_input="Continue")
+    p3, _ = playground.build_messages("Next")
+    assert "CURSOR_THREE_UNIQUE" in _indexed_step_line(p3, 3, 4)
+    assert "CURSOR_FOUR_UNIQUE" not in _indexed_step_line(p3, 3, 4)
+    assert playground.get_sequence_step_cursor() == 3
+
+
+def test_language_switch_uses_last_rendered_step_not_cursor():
+    """Increment 7: short language pivot must translate last displayed step, not sequence cursor."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    q_list = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = (
+        "1. LR_LANG_ONE\n"
+        "2. LR_LANG_TWO_RENDER_MARK\n"
+        "3. LR_LANG_THREE_OTHER\n"
+    )
+    playground.append_recent_answer_history(lst, user_input=q_list)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("r1", user_input="Start with number 1.")
+    assert playground.get_last_rendered_step_index() == 1
+    playground.build_messages("Continue")
+    playground.append_recent_answer_history("r2", user_input="Continue")
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+    playground.build_messages("Next")
+    playground.append_recent_answer_history("r3", user_input="Next")
+    assert playground.get_sequence_step_cursor() == 3
+    assert playground.get_last_rendered_step_index() == 3
+    playground.build_messages("Explain step 2.")
+    playground.append_recent_answer_history("r4", user_input="Explain step 2.")
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+    p_fr, _ = playground.build_messages("en français svp cette fois si")
+    line = _indexed_step_line(p_fr, 2, 3)
+    assert "LR_LANG_TWO_RENDER_MARK" in line
+    assert "LR_LANG_THREE_OTHER" not in line
+    assert "OUTPUT LANGUAGE" in p_fr
+
+
+def _inc1_indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+    prefix = f"Step {step_n} of {total}:"
+    for line in prompt.splitlines():
+        if line.strip().startswith(prefix):
+            return line.strip()
+    raise AssertionError(f"missing indexed line {prefix!r}")
+
+
+def test_increment1_french_polish_detect_phrases():
+    """Increment 1: common French/English pivot phrases map to output-language codes."""
+    assert journal_service.detect_requested_output_language("français svp") == "fr"
+    assert journal_service.detect_requested_output_language("Français SVP.") == "fr"
+    assert journal_service.detect_requested_output_language("back to English please") == "en"
+    assert journal_service.detect_requested_output_language("en anglais maintenant") == "en"
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1_french_polish_transcript_english_french_english(capsys):
+    """Transcript A: English → French pivot (same step) → English pivot (same step); DEBUG on."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. IA_FR_EN_ONE\n2. IA_FR_EN_TWO\n3. IA_FR_EN_THREE\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("s1", user_input="Start with number 1.")
+    playground.build_messages("Continue")
+    playground.append_recent_answer_history("s2", user_input="Continue")
+    assert playground.get_last_rendered_step_index() == 2
+
+    p_fr, _ = playground.build_messages("français svp")
+    err1 = capsys.readouterr().err
+    assert "[DEBUG]" in err1
+    assert "resolved_target_idx: 2" in err1
+    assert "OUTPUT LANGUAGE" in p_fr and "French (français)" in p_fr
+    line_fr = _inc1_indexed_step_line(p_fr, 2, 3)
+    assert "IA_FR_EN_TWO" in line_fr
+    assert "IA_FR_EN_THREE" not in line_fr
+
+    playground.append_recent_answer_history("s2fr", user_input="français svp")
+    p_en, _ = playground.build_messages("back to english")
+    err2 = capsys.readouterr().err
+    assert "[DEBUG]" in err2
+    assert "resolved_target_idx: 2" in err2
+    assert "OUTPUT LANGUAGE" in p_en and "English" in p_en
+    line_en = _inc1_indexed_step_line(p_en, 2, 3)
+    assert "IA_FR_EN_TWO" in line_en
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1_french_polish_continue_next_with_french_pivots(capsys):
+    """Transcript B: Continue/Next progression; French OUTPUT LANGUAGE on pivot turns only."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. IA_CN_FR_A\n2. IA_CN_FR_B\n3. IA_CN_FR_C\n4. IA_CN_FR_D\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("a1", user_input="Start with number 1.")
+    p_co, _ = playground.build_messages("Continue")
+    assert "IA_CN_FR_B" in _inc1_indexed_step_line(p_co, 2, 4)
+    capsys.readouterr()
+    playground.append_recent_answer_history("a2", user_input="Continue")
+    p_piv, _ = playground.build_messages("en français")
+    err = capsys.readouterr().err
+    assert "[DEBUG]" in err
+    assert "OUTPUT LANGUAGE" in p_piv and "French (français)" in p_piv
+    assert "IA_CN_FR_B" in _inc1_indexed_step_line(p_piv, 2, 4)
+    playground.append_recent_answer_history("a2fr", user_input="en français")
+    p_next, _ = playground.build_messages("Next")
+    assert "IA_CN_FR_C" in _inc1_indexed_step_line(p_next, 3, 4)
+    assert "French (français)" not in p_next
+    capsys.readouterr()
+    playground.append_recent_answer_history("a3", user_input="Next")
+    p_fr3, _ = playground.build_messages("français svp")
+    assert "OUTPUT LANGUAGE" in p_fr3 and "French (français)" in p_fr3
+    assert "IA_CN_FR_C" in _inc1_indexed_step_line(p_fr3, 3, 4)
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1_french_polish_explain_step_in_french(capsys):
+    """Transcript C: explain-step + requested French; same step index, OUTPUT LANGUAGE fr."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. IA_EX_FR_ONE\n2. IA_EX_FR_TWO\n3. IA_EX_FR_THREE\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("r1", user_input="Start with number 1.")
+    playground.build_messages("Continue")
+    playground.append_recent_answer_history("r2", user_input="Continue")
+    p, _ = playground.build_messages("Explain step 2 in French")
+    err = capsys.readouterr().err
+    assert "[DEBUG]" in err
+    assert "OUTPUT LANGUAGE" in p and "French (français)" in p
+    assert "IA_EX_FR_TWO" in _inc1_indexed_step_line(p, 2, 3)
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1_french_polish_give_me_step_only_in_french(capsys):
+    """Transcript D: give me step N only + in French → that step only + OUTPUT LANGUAGE fr."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. IA_GM_ONE\n2. IA_GM_TWO\n3. IA_GM_THREE\n4. IA_GM_FOUR\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("x1", user_input="Start with number 1.")
+    p, _ = playground.build_messages("Give me step 3 only in French please")
+    err = capsys.readouterr().err
+    assert "[DEBUG]" in err
+    assert "OUTPUT LANGUAGE" in p and "French (français)" in p
+    assert "IA_GM_THREE" in _inc1_indexed_step_line(p, 3, 4)
+    assert "IA_GM_FOUR" not in _inc1_indexed_step_line(p, 3, 4)
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1_french_polish_mixed_language_courtesy_start(capsys):
+    """Transcript E: courtesy French tokens + English step cues; progression + FR pivot."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. IA_MX_ONE\n2. IA_MX_TWO\n3. IA_MX_THREE\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    p1, _ = playground.build_messages("Start with number 1 s'il vous plaît")
+    capsys.readouterr()
+    assert "IA_MX_ONE" in _inc1_indexed_step_line(p1, 1, 3)
+    playground.append_recent_answer_history("m1", user_input="Start with number 1 s'il vous plaît")
+    p2, _ = playground.build_messages("Continue")
+    assert "IA_MX_TWO" in _inc1_indexed_step_line(p2, 2, 3)
+    capsys.readouterr()
+    playground.append_recent_answer_history("m2", user_input="Continue")
+    p3, _ = playground.build_messages("français svp")
+    err = capsys.readouterr().err
+    assert "[DEBUG]" in err
+    assert "OUTPUT LANGUAGE" in p3 and "French (français)" in p3
+    assert "IA_MX_TWO" in _inc1_indexed_step_line(p3, 2, 3)
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1b_continue_en_francais_progresses_and_sets_language(capsys):
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I1B_CF_ONE\n2. I1B_CF_TWO\n3. I1B_CF_THREE\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("c1", user_input="Start with number 1.")
+    p, _ = playground.build_messages("Continue en français")
+    err = capsys.readouterr().err
+    assert "[DEBUG]" in err
+    assert "resolved_target_idx: 2" in err
+    assert "OUTPUT LANGUAGE" in p and "French (français)" in p
+    assert "I1B_CF_TWO" in _inc1_indexed_step_line(p, 2, 3)
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1b_next_en_francais_progresses_and_sets_language(capsys):
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I1B_NF_ONE\n2. I1B_NF_TWO\n3. I1B_NF_THREE\n4. I1B_NF_FOUR\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("n1", user_input="Start with number 1.")
+    playground.build_messages("Continue")
+    playground.append_recent_answer_history("n2", user_input="Continue")
+    p, _ = playground.build_messages("Next en français")
+    err = capsys.readouterr().err
+    assert "[DEBUG]" in err
+    assert "resolved_target_idx: 3" in err
+    assert "OUTPUT LANGUAGE" in p and "French (français)" in p
+    assert "I1B_NF_THREE" in _inc1_indexed_step_line(p, 3, 4)
+    assert "I1B_NF_FOUR" not in _inc1_indexed_step_line(p, 3, 4)
+    assert playground.get_sequence_step_cursor() == 3
+    assert playground.get_last_rendered_step_index() == 3
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1b_continue_in_english_progresses_and_sets_language(capsys):
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I1B_CE_ONE\n2. I1B_CE_TWO\n3. I1B_CE_THREE\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("e1", user_input="Start with number 1.")
+    p, _ = playground.build_messages("Continue in English")
+    err = capsys.readouterr().err
+    assert "[DEBUG]" in err
+    assert "resolved_target_idx: 2" in err
+    assert "OUTPUT LANGUAGE" in p and "English" in p
+    assert "I1B_CE_TWO" in _inc1_indexed_step_line(p, 2, 3)
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1b_next_in_french_progresses_and_sets_language(capsys):
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I1B_NIF_ONE\n2. I1B_NIF_TWO\n3. I1B_NIF_THREE\n4. I1B_NIF_FOUR\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("f1", user_input="Start with number 1.")
+    playground.build_messages("Continue")
+    playground.append_recent_answer_history("f2", user_input="Continue")
+    p, _ = playground.build_messages("Next in French")
+    err = capsys.readouterr().err
+    assert "[DEBUG]" in err
+    assert "resolved_target_idx: 3" in err
+    assert "OUTPUT LANGUAGE" in p and "French (français)" in p
+    assert "I1B_NIF_THREE" in _inc1_indexed_step_line(p, 3, 4)
+    assert "I1B_NIF_FOUR" not in _inc1_indexed_step_line(p, 3, 4)
+    assert playground.get_sequence_step_cursor() == 3
+    assert playground.get_last_rendered_step_index() == 3
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1c_frame_retention_under_stress_transcript(capsys):
+    """Increment 1C: keep all sequence pivots anchored to the active API-testing indexed frame."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = (
+        "1. I1C_API_SCOPE\n"
+        "2. I1C_CASE_DESIGN\n"
+        "3. I1C_ENV_EXECUTION\n"
+        "4. I1C_ANALYZE_REPORT\n"
+    )
+    playground.append_recent_answer_history(lst, user_input=q)
+
+    obo = (
+        "Please, one by one, not all in the same reply, elaborate on those points, "
+        "starting with number 1. Only include number 1, so if I have questions I can ask please."
+    )
+    p1, _ = playground.build_messages(obo)
+    d1 = capsys.readouterr().err
+    assert "resolved_target_idx: 1" in d1
+    assert "I1C_API_SCOPE" in _inc1_indexed_step_line(p1, 1, 4)
+    assert "I1C_CASE_DESIGN" not in _inc1_indexed_step_line(p1, 1, 4)
+    playground.append_recent_answer_history("i1c-r1", user_input=obo)
+    assert playground.get_sequence_step_cursor() == 1
+    assert playground.get_last_rendered_step_index() == 1
+
+    p2, _ = playground.build_messages("Start with number 1.")
+    d2 = capsys.readouterr().err
+    assert "resolved_target_idx: 1" in d2
+    assert "I1C_API_SCOPE" in _inc1_indexed_step_line(p2, 1, 4)
+    playground.append_recent_answer_history("i1c-r2", user_input="Start with number 1.")
+    assert playground.get_sequence_step_cursor() == 1
+    assert playground.get_last_rendered_step_index() == 1
+
+    p3, _ = playground.build_messages("Continue en français.")
+    d3 = capsys.readouterr().err
+    assert "resolved_target_idx: 2" in d3
+    assert "OUTPUT LANGUAGE" in p3 and "French (français)" in p3
+    assert "I1C_CASE_DESIGN" in _inc1_indexed_step_line(p3, 2, 4)
+    playground.append_recent_answer_history("i1c-r3", user_input="Continue en français.")
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+    p4, _ = playground.build_messages("Next in English.")
+    d4 = capsys.readouterr().err
+    assert "resolved_target_idx: 3" in d4
+    assert "OUTPUT LANGUAGE" in p4 and "English" in p4
+    assert "I1C_ENV_EXECUTION" in _inc1_indexed_step_line(p4, 3, 4)
+    assert "I1C_ANALYZE_REPORT" not in _inc1_indexed_step_line(p4, 3, 4)
+    playground.append_recent_answer_history("i1c-r4", user_input="Next in English.")
+    assert playground.get_sequence_step_cursor() == 3
+    assert playground.get_last_rendered_step_index() == 3
+
+    p5, _ = playground.build_messages("Explain step 2 in French.")
+    d5 = capsys.readouterr().err
+    assert "resolved_target_idx: 2" in d5
+    assert "OUTPUT LANGUAGE" in p5 and "French (français)" in p5
+    assert "I1C_CASE_DESIGN" in _inc1_indexed_step_line(p5, 2, 4)
+    playground.append_recent_answer_history("i1c-r5", user_input="Explain step 2 in French.")
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+    p6, _ = playground.build_messages("Give me step 4 only in French please.")
+    d6 = capsys.readouterr().err
+    assert "resolved_target_idx: 4" in d6
+    assert "OUTPUT LANGUAGE" in p6 and "French (français)" in p6
+    assert "I1C_ANALYZE_REPORT" in _inc1_indexed_step_line(p6, 4, 4)
+    playground.append_recent_answer_history("i1c-r6", user_input="Give me step 4 only in French please.")
+    assert playground.get_sequence_step_cursor() == 4
+    assert playground.get_last_rendered_step_index() == 4
+
+    p7, _ = playground.build_messages("Back to English.")
+    d7 = capsys.readouterr().err
+    assert "resolved_target_idx: 4" in d7
+    assert "OUTPUT LANGUAGE" in p7 and "English" in p7
+    assert "I1C_ANALYZE_REPORT" in _inc1_indexed_step_line(p7, 4, 4)
+    playground.append_recent_answer_history("i1c-r7", user_input="Back to English.")
+    assert playground.get_sequence_step_cursor() == 4
+    assert playground.get_last_rendered_step_index() == 4
+
+    p8, _ = playground.build_messages("Continue in English.")
+    d8 = capsys.readouterr().err
+    assert "resolved_target_idx: 4" in d8
+    assert "OUTPUT LANGUAGE" in p8 and "English" in p8
+    assert "I1C_ANALYZE_REPORT" in _inc1_indexed_step_line(p8, 4, 4)
+    assert playground.get_sequence_step_cursor() == 4
+    assert playground.get_last_rendered_step_index() == 4
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1d_french_hard_lock_accents_variants_and_repeated_switches(capsys):
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I1D_A_ONE\n2. I1D_A_TWO\n3. I1D_A_THREE\n4. I1D_A_FOUR\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("d1", user_input="Start with number 1.")
+    playground.build_messages("Continue")
+    playground.append_recent_answer_history("d2", user_input="Continue")
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+    for phrase in ("francais svp", "en francais", "FRANÇAIS SVP", "fr svp", "french please"):
+        p, _ = playground.build_messages(phrase)
+        d = capsys.readouterr().err
+        assert "resolved_target_idx: 2" in d
+        assert "OUTPUT LANGUAGE" in p and "French (français)" in p
+        assert "I1D_A_TWO" in _inc1_indexed_step_line(p, 2, 4)
+        assert playground.get_sequence_step_cursor() == 2
+        assert playground.get_last_rendered_step_index() == 2
+
+    p_en, _ = playground.build_messages("back to English")
+    d_en = capsys.readouterr().err
+    assert "resolved_target_idx: 2" in d_en
+    assert "OUTPUT LANGUAGE" in p_en and "English" in p_en
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+    p_fr2, _ = playground.build_messages("en français")
+    d_fr2 = capsys.readouterr().err
+    assert "resolved_target_idx: 2" in d_fr2
+    assert "OUTPUT LANGUAGE" in p_fr2 and "French (français)" in p_fr2
+    playground.append_recent_answer_history("to-fr", user_input="en français")
+    p_en2, _ = playground.build_messages("English")
+    d_en2 = capsys.readouterr().err
+    assert "resolved_target_idx: 2" in d_en2
+    assert "OUTPUT LANGUAGE" in p_en2 and "English" in p_en2
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+
+@patch.dict(os.environ, {"DEBUG_SEQUENCE": "1"}, clear=False)
+def test_increment1d_french_hard_lock_noise_mid_sentence_and_constraints(capsys):
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I1D_B_ONE\n2. I1D_B_TWO\n3. I1D_B_THREE\n4. I1D_B_FOUR\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("b1", user_input="Start with number 1.")
+
+    p2, _ = playground.build_messages("continue en français!!!")
+    d2 = capsys.readouterr().err
+    assert "resolved_target_idx: 2" in d2
+    assert "OUTPUT LANGUAGE" in p2 and "French (français)" in p2
+    assert "I1D_B_TWO" in _inc1_indexed_step_line(p2, 2, 4)
+    playground.append_recent_answer_history(_inc1_indexed_step_line(p2, 2, 4), user_input="continue en français!!!")
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+    p3, _ = playground.build_messages("next en français???")
+    d3 = capsys.readouterr().err
+    assert "resolved_target_idx: 3" in d3
+    assert "OUTPUT LANGUAGE" in p3 and "French (français)" in p3
+    assert "I1D_B_THREE" in _inc1_indexed_step_line(p3, 3, 4)
+    playground.append_recent_answer_history(_inc1_indexed_step_line(p3, 3, 4), user_input="next en français???")
+    assert playground.get_sequence_step_cursor() == 3
+    assert playground.get_last_rendered_step_index() == 3
+
+    for txt in ("en français svp...", "continue, en français", "next - en français"):
+        p, _ = playground.build_messages(txt)
+        d = capsys.readouterr().err
+        assert "[DEBUG]" in d
+        assert "OUTPUT LANGUAGE" in p and "French (français)" in p
+
+    p4, _ = playground.build_messages("Continue but in French please")
+    d4 = capsys.readouterr().err
+    assert "resolved_target_idx: 4" in d4
+    assert "OUTPUT LANGUAGE" in p4 and "French (français)" in p4
+    assert "I1D_B_FOUR" in _inc1_indexed_step_line(p4, 4, 4)
+
+    p4b, _ = playground.build_messages("Next and answer in French")
+    d4b = capsys.readouterr().err
+    assert "resolved_target_idx: 4" in d4b
+    assert "OUTPUT LANGUAGE" in p4b and "French (français)" in p4b
+    assert "I1D_B_FOUR" in _inc1_indexed_step_line(p4b, 4, 4)
+
+    p_ex, _ = playground.build_messages("Explain step 2 but answer in French")
+    d_ex = capsys.readouterr().err
+    assert "resolved_target_idx: 2" in d_ex
+    assert "OUTPUT LANGUAGE" in p_ex and "French (français)" in p_ex
+    assert "I1D_B_TWO" in _inc1_indexed_step_line(p_ex, 2, 4)
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+    p_c1, _ = playground.build_messages("Next en français, but only the title")
+    d_c1 = capsys.readouterr().err
+    assert "resolved_target_idx: 3" in d_c1
+    assert "OUTPUT LANGUAGE" in p_c1 and "French (français)" in p_c1
+    assert "I1D_B_THREE" in _inc1_indexed_step_line(p_c1, 3, 4)
+    assert playground.get_sequence_step_cursor() == 3
+    assert playground.get_last_rendered_step_index() == 3
+
+    p_c2, _ = playground.build_messages("Continue in English, keep it short")
+    d_c2 = capsys.readouterr().err
+    assert "resolved_target_idx: 4" in d_c2
+    assert "OUTPUT LANGUAGE" in p_c2 and "English" in p_c2
+    assert "I1D_B_FOUR" in _inc1_indexed_step_line(p_c2, 4, 4)
+    assert playground.get_sequence_step_cursor() == 4
+    assert playground.get_last_rendered_step_index() == 4
+
+    p_c3, _ = playground.build_messages("Donne-moi l’étape 3 seulement, en français, court")
+    d_c3 = capsys.readouterr().err
+    assert "resolved_target_idx: 3" in d_c3
+    assert "OUTPUT LANGUAGE" in p_c3 and "French (français)" in p_c3
+    assert "I1D_B_THREE" in _inc1_indexed_step_line(p_c3, 3, 4)
+    assert playground.get_sequence_step_cursor() == 3
+    assert playground.get_last_rendered_step_index() == 3
+
+
+def test_increment2_step_quality_template_english_distinct_and_explain():
+    """Increment 2: indexed step turns inject concise quality template and distinctness guidance."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I2_SCOPE\n2. I2_CASES\n3. I2_EXECUTION\n4. I2_REPORTING\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+
+    p1, _ = playground.build_messages("Start with number 1.")
+    assert "I2_SCOPE" in _inc1_indexed_step_line(p1, 1, 4)
+    assert "Default step output format (concise): Title | What it means | Why it matters | One concrete API-testing example | What Jessy should do next." in p1
+    assert "Keep this step meaningfully distinct from other steps" in p1
+
+    playground.append_recent_answer_history("r1", user_input="Start with number 1.")
+    p2, _ = playground.build_messages("Continue.")
+    assert "I2_CASES" in _inc1_indexed_step_line(p2, 2, 4)
+    assert "I2_EXECUTION" not in _inc1_indexed_step_line(p2, 2, 4)
+    assert "Default step output format (concise): Title | What it means | Why it matters | One concrete API-testing example | What Jessy should do next." in p2
+
+    playground.append_recent_answer_history("r2", user_input="Continue.")
+    p3, _ = playground.build_messages("Next.")
+    assert "I2_EXECUTION" in _inc1_indexed_step_line(p3, 3, 4)
+    assert "I2_CASES" not in _inc1_indexed_step_line(p3, 3, 4)
+
+    playground.append_recent_answer_history("r3", user_input="Next.")
+    p_explain, _ = playground.build_messages("Explain step 2.")
+    assert "I2_CASES" in _inc1_indexed_step_line(p_explain, 2, 4)
+    assert "Explain-step request: add one extra clarifying sentence" in p_explain
+
+
+def test_increment2_step_quality_template_french_title_only_and_short():
+    """Increment 2: French mode keeps quality template and applies title-only / short overrides."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I2F_ONE\n2. I2F_TWO\n3. I2F_THREE\n4. I2F_FOUR\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("fr1", user_input="Start with number 1.")
+    playground.build_messages("Continue en français")
+    playground.append_recent_answer_history("fr2", user_input="Continue en français")
+
+    p_title, _ = playground.build_messages("Next en français, but only the title")
+    assert "OUTPUT LANGUAGE" in p_title and "French (français)" in p_title
+    assert "I2F_THREE" in _inc1_indexed_step_line(p_title, 3, 4)
+    assert "Constraint override: return only the step title line for this turn." in p_title
+
+    playground.append_recent_answer_history("fr3", user_input="Next en français, but only the title")
+    p_short, _ = playground.build_messages("Continue in English, keep it short")
+    assert "OUTPUT LANGUAGE" in p_short and "English" in p_short
+    assert "I2F_FOUR" in _inc1_indexed_step_line(p_short, 4, 4)
+    assert "Constraint override: keep the response short (2-3 compact lines) while preserving meaning." in p_short
+
+
+def test_increment2b_full_list_contract_operator_focused():
+    """Increment 2B: full API-testing list contract emphasizes practical operator workflow."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    p, _ = playground.build_messages(
+        "What are all the proper steps in order to test an API in a professional manner?"
+    )
+    assert "ORDERED STEPS OUTPUT PREFERENCE (full multi-step list — this turn):" in p
+    assert "API-testing operator contract: prioritize practical workflow language over generic textbook wording." in p
+    assert "Across the list, cover concrete endpoint targeting, auth/headers" in p
+    assert "Keep step titles specific and operational" in p
+
+
+def test_increment2e_full_list_contract_is_tight_operator_workflow():
+    """Increment 2E: full API list contract is 4-6 steps with required operator flow coverage."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    p, _ = playground.build_messages(
+        "What are all the proper steps in order to test an API in a professional manner?"
+    )
+    assert "ORDERED STEPS OUTPUT PREFERENCE (full multi-step list — this turn):" in p
+    assert "with 4-6 high-impact operator steps for a typical API-testing workflow" in p
+    assert "Preferred step flow (merge where needed to stay within 4-6): endpoint scope/contract -> positive-negative-boundary cases -> execute requests + capture evidence -> validate status/headers/payload/response body -> defect reporting + retest/regression." in p
+    assert "If the user asks for this full list in French (or another language), return the same 4-6 operator workflow in that language." in p
+
+
+def test_increment2e_full_list_contract_french_request_keeps_same_workflow():
+    """Increment 2E: French full-list ask keeps the same 4-6 operator workflow contract."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    p, _ = playground.build_messages(
+        "What are all the proper steps in order to test an API in a professional manner, in French?"
+    )
+    assert "with 4-6 high-impact operator steps for a typical API-testing workflow" in p
+    assert "Preferred step flow (merge where needed to stay within 4-6): endpoint scope/contract -> positive-negative-boundary cases -> execute requests + capture evidence -> validate status/headers/payload/response body -> defect reporting + retest/regression." in p
+    assert "If the user asks for this full list in French (or another language), return the same 4-6 operator workflow in that language." in p
+
+
+def test_increment2f_full_list_contract_includes_final_step_regression_en_fr():
+    """Increment 2F: full-list contract pins final step wording with regression in EN/FR."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    p_en, _ = playground.build_messages(
+        "What are all the proper steps in order to test an API in a professional manner?"
+    )
+    assert "Preferred final step title (English): Report Defects, Retest Fixes, and Run Regression." in p_en
+    assert "Preferred final step title (French): Reporter les défauts, retester les correctifs et lancer la régression." in p_en
+    assert "Output hygiene: include the final step exactly once inside the numbered list; do not echo or restate it as a standalone line after the list." in p_en
+
+    p_fr, _ = playground.build_messages(
+        "What are all the proper steps in order to test an API in a professional manner, in French?"
+    )
+    assert "Preferred final step title (English): Report Defects, Retest Fixes, and Run Regression." in p_fr
+    assert "Preferred final step title (French): Reporter les défauts, retester les correctifs et lancer la régression." in p_fr
+    assert "Output hygiene: include the final step exactly once inside the numbered list; do not echo or restate it as a standalone line after the list." in p_fr
+
+
+def test_increment2g_full_list_contract_prevents_duplicate_final_step_echo_en_fr():
+    """Increment 2G: full-list contract explicitly forbids duplicate final-step echo in EN/FR."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    p_en, _ = playground.build_messages(
+        "What are all the proper steps in order to test an API in a professional manner?"
+    )
+    assert "with 4-6 high-impact operator steps for a typical API-testing workflow" in p_en
+    assert "Preferred final step title (English): Report Defects, Retest Fixes, and Run Regression." in p_en
+    assert "Output hygiene: include the final step exactly once inside the numbered list; do not echo or restate it as a standalone line after the list." in p_en
+    assert "Hard no-postscript rule: output only the numbered list; after the last list item, output nothing else (no paragraph, no summary, no standalone restatement)." in p_en
+
+    p_fr, _ = playground.build_messages(
+        "What are all the proper steps in order to test an API in a professional manner, en français ?"
+    )
+    assert "with 4-6 high-impact operator steps for a typical API-testing workflow" in p_fr
+    assert "Preferred final step title (French): Reporter les défauts, retester les correctifs et lancer la régression." in p_fr
+    assert "Output hygiene: include the final step exactly once inside the numbered list; do not echo or restate it as a standalone line after the list." in p_fr
+    assert "Hard no-postscript rule: output only the numbered list; after the last list item, output nothing else (no paragraph, no summary, no standalone restatement)." in p_fr
+
+
+def test_increment2f_final_step_elaboration_contract_mentions_retest_and_regression():
+    """Increment 2F: final step elaboration prompt requires defect reporting + retest + targeted regression."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I2F_STEP1\n2. I2F_STEP2\n3. I2F_STEP3\n4. I2F_STEP4\n5. I2F_STEP5\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    p5, _ = playground.build_messages("Give me step 5 only.")
+    assert "I2F_STEP5" in _inc1_indexed_step_line(p5, 5, 5)
+    assert "Final-step clarity requirement: explicitly include defect reporting, retesting fixes, and targeted regression testing." in p5
+
+
+def test_increment2b_step_prompts_include_operator_quality_focus_english_and_french():
+    """Increment 2B: step prompts carry operator-focused checklist and preserve language behavior."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I2B_ONE\n2. I2B_TWO\n3. I2B_THREE\n4. I2B_FOUR\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+
+    p1, _ = playground.build_messages("Start with number 1.")
+    assert "I2B_ONE" in _inc1_indexed_step_line(p1, 1, 4)
+    assert "Default step output format (concise): Title | What it means | Why it matters | One concrete API-testing example | What Jessy should do next." in p1
+    assert "Operator-focus checklist for this step: include concrete endpoint thinking, auth/headers, expected status codes, payload/response validation, and practical execution evidence" in p1
+
+    playground.append_recent_answer_history("i2b-r1", user_input="Start with number 1.")
+    p2, _ = playground.build_messages("Continue.")
+    assert "I2B_TWO" in _inc1_indexed_step_line(p2, 2, 4)
+    assert "I2B_THREE" not in _inc1_indexed_step_line(p2, 2, 4)
+
+    playground.append_recent_answer_history("i2b-r2", user_input="Continue.")
+    p3, _ = playground.build_messages("Next.")
+    assert "I2B_THREE" in _inc1_indexed_step_line(p3, 3, 4)
+    assert "I2B_TWO" not in _inc1_indexed_step_line(p3, 3, 4)
+
+    playground.append_recent_answer_history("i2b-r3", user_input="Next.")
+    pex, _ = playground.build_messages("Explain step 2.")
+    assert "I2B_TWO" in _inc1_indexed_step_line(pex, 2, 4)
+    assert "Explain-step request: add one extra clarifying sentence" in pex
+
+    pfr, _ = playground.build_messages("Explain step 2 in French.")
+    assert "OUTPUT LANGUAGE" in pfr and "French (français)" in pfr
+    assert "I2B_TWO" in _inc1_indexed_step_line(pfr, 2, 4)
+    assert "Operator-focus checklist for this step: include concrete endpoint thinking, auth/headers, expected status codes, payload/response validation, and practical execution evidence" in pfr
+
+    ptitle, _ = playground.build_messages("Next en français, but only the title")
+    assert "OUTPUT LANGUAGE" in ptitle and "French (français)" in ptitle
+    assert "Constraint override: return only the step title line for this turn." in ptitle
+
+    pshort, _ = playground.build_messages("Continue in English, keep it short")
+    assert "OUTPUT LANGUAGE" in pshort and "English" in pshort
+    assert "Constraint override: keep the response short (2-3 compact lines) while preserving meaning." in pshort
+
+
+def test_increment2d_elaboration_contract_english_no_repeat_and_expand():
+    """Increment 2D: elaboration turns must expand beyond list line and avoid verbatim repeat."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I2D_SCOPE_LINE\n2. I2D_CASES_LINE\n3. I2D_EXEC_LINE\n4. I2D_REPORT_LINE\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+
+    p1, _ = playground.build_messages("Start with number 1.")
+    assert "I2D_SCOPE_LINE" in _inc1_indexed_step_line(p1, 1, 4)
+    assert "Elaboration anti-repeat rule: do not repeat the original step line verbatim; expand it with new practical detail." in p1
+    assert "For elaboration turns, ensure the response adds these elements (concise): What it means | Why it matters | One concrete API-testing example | What Jessy should do next." in p1
+    playground.append_recent_answer_history("i2d-r1", user_input="Start with number 1.")
+
+    p2, _ = playground.build_messages("Continue.")
+    assert "I2D_CASES_LINE" in _inc1_indexed_step_line(p2, 2, 4)
+    assert "Elaboration anti-repeat rule: do not repeat the original step line verbatim; expand it with new practical detail." in p2
+    playground.append_recent_answer_history("i2d-r2", user_input="Continue.")
+
+    p_explain, _ = playground.build_messages("Explain step 2.")
+    assert "I2D_CASES_LINE" in _inc1_indexed_step_line(p_explain, 2, 4)
+    assert "Explain-step request: add one extra clarifying sentence beyond basic elaboration" in p_explain
+
+
+def test_increment2d_elaboration_contract_french_and_short_constraints():
+    """Increment 2D: same anti-repeat expansion contract in French and with short/title constraints."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. I2D_FR_ONE\n2. I2D_FR_TWO\n3. I2D_FR_THREE\n4. I2D_FR_FOUR\n"
+    playground.append_recent_answer_history(lst, user_input=q)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("fr-r1", user_input="Start with number 1.")
+
+    p_fr, _ = playground.build_messages("Continue en français.")
+    assert "OUTPUT LANGUAGE" in p_fr and "French (français)" in p_fr
+    assert "I2D_FR_TWO" in _inc1_indexed_step_line(p_fr, 2, 4)
+    assert "Elaboration anti-repeat rule: do not repeat the original step line verbatim; expand it with new practical detail." in p_fr
+    playground.append_recent_answer_history("fr-r2", user_input="Continue en français.")
+
+    p_short, _ = playground.build_messages("Continue in English, keep it short")
+    assert "OUTPUT LANGUAGE" in p_short and "English" in p_short
+    assert "Constraint override: keep the response short (2-3 compact lines) while preserving meaning." in p_short
+    assert "For elaboration turns, ensure the response adds these elements (concise): What it means | Why it matters | One concrete API-testing example | What Jessy should do next." in p_short
+
+    p_title, _ = playground.build_messages("Next en français, title only")
+    assert "OUTPUT LANGUAGE" in p_title and "French (français)" in p_title
+    assert "Constraint override: return only the step title line for this turn." in p_title
+
+
+def test_start_with_number_sets_cursor_correctly():
+    """Increment 8: Start with number N initializes cursor so Continue returns N+1, not N+2."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    q_list = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = (
+        "1. START_ALIGN_ONE\n"
+        "2. START_ALIGN_TWO\n"
+        "3. START_ALIGN_THREE\n"
+    )
+    playground.append_recent_answer_history(lst, user_input=q_list)
+    p1, _ = playground.build_messages("Start with number 1.")
+    assert "START_ALIGN_ONE" in _indexed_step_line(p1, 1, 3)
+    assert playground.get_sequence_step_cursor() == 1
+    assert playground.get_last_rendered_step_index() == 1
+    playground.append_recent_answer_history("reply1", user_input="Start with number 1.")
+    p2, _ = playground.build_messages("Continue")
+    assert "START_ALIGN_TWO" in _indexed_step_line(p2, 2, 3)
+    assert "START_ALIGN_THREE" not in _indexed_step_line(p2, 2, 3)
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+
+def test_next_after_continue_returns_step_three_no_skip():
+    """Increment 9: Next must advance one step from the same base as Continue (no jump to 4)."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    q_list = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = (
+        "1. NEXT_BASE_ONE\n"
+        "2. NEXT_BASE_TWO\n"
+        "3. NEXT_BASE_THREE\n"
+        "4. NEXT_BASE_FOUR\n"
+    )
+    playground.append_recent_answer_history(lst, user_input=q_list)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("a1", user_input="Start with number 1.")
+    playground.build_messages("Continue")
+    playground.append_recent_answer_history("a2", user_input="Continue")
+    p_next, _ = playground.build_messages("Next")
+    line = _indexed_step_line(p_next, 3, 4)
+    assert "NEXT_BASE_THREE" in line
+    assert "NEXT_BASE_FOUR" not in line
+    assert playground.get_sequence_step_cursor() == 3
+    assert playground.get_last_rendered_step_index() == 3
+
+
+def test_append_stores_multi_step_frame_resets_last_rendered_with_cursor_increment_10():
+    """New multi-step frames from a full-list append must clear last_rendered, not only cursor."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    q_list = "What are all the proper steps in order to test an API in a professional manner?"
+    playground.append_recent_answer_history("1. A\n2. B\n3. C\n", user_input=q_list)
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("r1", user_input="Start with number 1.")
+    playground.build_messages("Continue")
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+    playground.append_recent_answer_history(
+        "1. Xx\n2. Yy\n",
+        user_input=q_list,
+    )
+    assert playground.get_sequence_step_cursor() == 0
+    assert playground.get_last_rendered_step_index() == 0
+
+
+def test_duplicate_reanchor_step_one_then_continue_next_increment_10():
+    """Full list → elaborate step 1 → Start with 1 again → Continue is 2, Next is 3 (no skip)."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    lines = [
+        "Review the API contract and authentication model.",
+        "Define explicit acceptance criteria and negative cases.",
+        "Set up isolated test environments and data fixtures.",
+        "Create reusable client helpers for auth and headers.",
+        "Exercise happy-path requests with representative payloads.",
+        "Validate HTTP status codes and error mapping behavior.",
+        "Assert response schema, types, and required fields strictly.",
+        "Cover pagination, filtering, and idempotency where applicable.",
+        "Run concurrency and rate-limit behavior checks safely.",
+        "Measure latency and basic performance thresholds on critical paths.",
+        "Add security checks for injection, auth bypass, and sensitive data leaks.",
+        "Automate the suite in CI with deterministic reporting and artifacts.",
+    ]
+    playground.append_recent_answer_history("\n".join(lines))
+    q_full = (
+        "Please, one by one, not all in the same reply, elaborate on those 12 points, "
+        "starting with number 1. Only include number 1, so if I have questions I can ask please."
+    )
+    p1, _ = playground.build_messages(q_full)
+    assert "INDEXED STEP CONTENT" in p1
+    assert "Step 1 of 12:" in p1
+    assert playground.get_sequence_step_cursor() == 1
+    assert playground.get_last_rendered_step_index() == 1
+
+    playground.append_recent_answer_history("Narration for the first point only.", user_input=q_full)
+    p2, _ = playground.build_messages("Start with number 1.")
+    assert "Step 1 of 12:" in p2
+    assert playground.get_sequence_step_cursor() == 1
+    assert playground.get_last_rendered_step_index() == 1
+
+    playground.append_recent_answer_history("Again step one summary.", user_input="Start with number 1.")
+    p3, _ = playground.build_messages("Continue.")
+    line2 = _indexed_step_line(p3, 2, 12)
+    assert "Define explicit acceptance criteria and negative cases." in line2
+    assert "Create reusable client helpers" not in line2
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+    playground.append_recent_answer_history("Step two reply.", user_input="Continue.")
+    p4, _ = playground.build_messages("Next")
+    line3 = _indexed_step_line(p4, 3, 12)
+    assert "Set up isolated test environments and data fixtures." in line3
+    assert playground.get_sequence_step_cursor() == 3
+    assert playground.get_last_rendered_step_index() == 3
+
+
+def test_increment_14_duplicate_start_with_number_one_resyncs_cursor_and_last_rendered():
+    """Re-show step 1 must pin cursor and last_rendered to 1 so Continue→2, Next→3."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    q_list = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. INC14_ONE\n2. INC14_TWO\n3. INC14_THREE\n"
+    playground.append_recent_answer_history(lst, user_input=q_list)
+    playground.build_messages("Start with number 1.")
+    assert playground.get_sequence_step_cursor() == playground.get_last_rendered_step_index() == 1
+    playground.append_recent_answer_history("r1", user_input="Start with number 1.")
+    playground.build_messages("Start with number 1.")
+    assert playground.get_sequence_step_cursor() == playground.get_last_rendered_step_index() == 1
+    playground.append_recent_answer_history("r1b", user_input="Start with number 1.")
+    p2, _ = playground.build_messages("Continue.")
+    assert "INC14_TWO" in _indexed_step_line(p2, 2, 3)
+    assert playground.get_sequence_step_cursor() == playground.get_last_rendered_step_index() == 2
+    playground.append_recent_answer_history("r2", user_input="Continue.")
+    p3, _ = playground.build_messages("Next")
+    assert "INC14_THREE" in _indexed_step_line(p3, 3, 3)
+    assert playground.get_sequence_step_cursor() == playground.get_last_rendered_step_index() == 3
+
+
+def test_one_by_one_entry_only_include_anchors_before_stray_step_number_increment_11():
+    """Pace + only-include must initialize at N; generic must not bind an earlier step|number."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    lines = [
+        "Review the API contract and authentication model.",
+        "Define explicit acceptance criteria and negative cases.",
+        "Set up isolated test environments and data fixtures.",
+        "Create reusable client helpers for auth and headers.",
+        "Exercise happy-path requests with representative payloads.",
+        "Validate HTTP status codes and error mapping behavior.",
+        "Assert response schema, types, and required fields strictly.",
+        "Cover pagination, filtering, and idempotency where applicable.",
+        "Run concurrency and rate-limit behavior checks safely.",
+        "Measure latency and basic performance thresholds on critical paths.",
+        "Add security checks for injection, auth bypass, and sensitive data leaks.",
+        "Automate the suite in CI with deterministic reporting and artifacts.",
+    ]
+    playground.append_recent_answer_history("\n".join(lines))
+    q = (
+        "First re-read step 2 and number 3 in the list for context. "
+        "Please, one by one, not all in the same reply, elaborate on those 12 points. "
+        "Only include number 1, so I can follow up after."
+    )
+    p1, _ = playground.build_messages(q)
+    assert "INDEXED STEP CONTENT" in p1
+    line1 = _indexed_step_line(p1, 1, 12)
+    assert "Review the API contract and authentication model." in line1
+    assert "Define explicit acceptance criteria and negative cases." not in line1
+    assert playground.get_sequence_step_cursor() == 1
+    assert playground.get_last_rendered_step_index() == 1
+
+    playground.append_recent_answer_history("Narration for point one.", user_input=q)
+    p2, _ = playground.build_messages("Continue.")
+    assert "Step 2 of 12:" in p2
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+
+    playground.append_recent_answer_history("Narration for point two.", user_input="Continue.")
+    p3, _ = playground.build_messages("Next")
+    assert "Step 3 of 12:" in p3
+    assert playground.get_sequence_step_cursor() == 3
+    assert playground.get_last_rendered_step_index() == 3
+
+
+def test_increment_12_cursor_matches_last_rendered_after_each_indexed_step():
+    """Continue/Next advance from last_rendered only; cursor stays aligned after each display."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    q_list = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = "1. INC12_STEP_ONE\n2. INC12_STEP_TWO\n3. INC12_STEP_THREE\n"
+    playground.append_recent_answer_history(lst, user_input=q_list)
+    p1, _ = playground.build_messages("Start with number 1.")
+    assert "INC12_STEP_ONE" in _indexed_step_line(p1, 1, 3)
+    assert playground.get_sequence_step_cursor() == playground.get_last_rendered_step_index() == 1
+
+    playground.append_recent_answer_history("r1", user_input="Start with number 1.")
+    p2, _ = playground.build_messages("Continue.")
+    assert "INC12_STEP_TWO" in _indexed_step_line(p2, 2, 3)
+    assert playground.get_sequence_step_cursor() == playground.get_last_rendered_step_index() == 2
+
+    playground.append_recent_answer_history("r2", user_input="Continue.")
+    p3, _ = playground.build_messages("Next")
+    assert "INC12_STEP_THREE" in _indexed_step_line(p3, 3, 3)
+    assert playground.get_sequence_step_cursor() == playground.get_last_rendered_step_index() == 3
+
+
+def test_increment_13_critical_endpoints_list_frame_and_next_after_parasite():
+    """Full list frame keeps 4 steps; bare Next must not bind a short numbered aside (live Inc 13)."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    from services import journal_service
+
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    lst = (
+        "1. Identify Critical Endpoints\n"
+        "2. Define Test Cases\n"
+        "3. Set Up the Test Environment\n"
+        "4. Execute Tests\n"
+    )
+    extracted = journal_service.extract_indexed_steps_from_text(lst)
+    assert len(extracted) == 4
+    step3 = next(s for s in extracted if int(s["index"]) == 3)
+    assert step3["content"] == "Set Up the Test Environment"
+
+    playground.append_recent_answer_history(lst, user_input=q)
+    frame = playground.recent_answer_step_frames[-1]
+    assert len(frame) == 4
+    assert next(s for s in frame if int(s["index"]) == 3)["content"] == "Set Up the Test Environment"
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    playground.build_messages("Start with number 1.")
+    playground.append_recent_answer_history("r1", user_input="Start with number 1.")
+    playground.build_messages("Continue")
+    playground.append_recent_answer_history("r2", user_input="Continue")
+    # Numbered aside stored as a 1-item frame (store_indexed default True when user_input omitted).
+    playground.append_recent_answer_history("Closing thought.\n\n1. lone\n")
+    p_next, _ = playground.build_messages("Next")
+    line3 = _indexed_step_line(p_next, 3, 4)
+    assert "Set Up the Test Environment" in line3
+    assert "Execute Tests" not in line3
+    assert playground.get_sequence_step_cursor() == playground.get_last_rendered_step_index() == 3
+
+
+def test_increment_16_exact_transcript_one_by_one_start_continue_next_regression():
+    """Exact transcript coverage: full list -> one-by-one(1) -> start 1 -> continue -> next."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    q0 = "What are all the proper steps in order to test an API in a professional manner?"
+    assistant_full_list = (
+        "1. Identify Critical Endpoints\n"
+        "2. Define Test Cases\n"
+        "3. Set Up the Test Environment\n"
+        "4. Execute Tests\n"
+    )
+    playground.append_recent_answer_history(assistant_full_list, user_input=q0)
+
+    q1 = (
+        "Please, one by one, not all in the same reply, elaborate on those 4 points, "
+        "starting with number 1. Only include number 1, so if I have questions I can ask please."
+    )
+    p1, _ = playground.build_messages(q1)
+    assert "Identify Critical Endpoints" in _indexed_step_line(p1, 1, 4)
+    assert playground.get_sequence_step_cursor() == 1
+    assert playground.get_last_rendered_step_index() == 1
+    playground.append_recent_answer_history("Step 1 of 4: Identify Critical Endpoints", user_input=q1)
+
+    q2 = "Start with number 1"
+    p2, _ = playground.build_messages(q2)
+    assert "Identify Critical Endpoints" in _indexed_step_line(p2, 1, 4)
+    assert playground.get_sequence_step_cursor() == 1
+    assert playground.get_last_rendered_step_index() == 1
+    playground.append_recent_answer_history("Step 1 of 4: Identify Critical Endpoints", user_input=q2)
+
+    q3 = "Continue"
+    p3, _ = playground.build_messages(q3)
+    assert "Define Test Cases" in _indexed_step_line(p3, 2, 4)
+    assert playground.get_sequence_step_cursor() == 2
+    assert playground.get_last_rendered_step_index() == 2
+    playground.append_recent_answer_history("Step 2 of 4: Define Test Cases", user_input=q3)
+
+    q4 = "Next"
+    p4, _ = playground.build_messages(q4)
+    assert "Set Up the Test Environment" in _indexed_step_line(p4, 3, 4)
+    assert playground.get_sequence_step_cursor() == 3
+    assert playground.get_last_rendered_step_index() == 3
+
+
+def test_explanatory_template_isolation_waives_progress_runtime_for_api_guidance():
+    """INTERACTION-04: general API testing explanation must not append RUNTIME-03 Progress/Risks tail."""
+    reset_agent_state()
+    q = (
+        "Describe contract testing strategies for HTTP APIs in microservices, "
+        "including how consumer-driven contracts differ from schema-only checks."
+    )
+    prompt, _ = playground.build_messages(q)
+    assert "Template isolation (INTERACTION-04):" in prompt
+    assert "Category integrity (RUNTIME-04):" not in prompt
+    assert "Begin your reply with the first section header line: Progress:" not in prompt
+
+
+def test_sequence_discipline_mode_anchors_to_recent_unnumbered_ordered_steps():
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    playground.append_recent_answer_history(
+        "The proper sequence includes understanding API documentation, defining test cases, checking response status codes, validating response body data, performing performance and security testing, and automating tests."
+    )
+    q = "Please, one by one, not all in the same reply, elaborate on those 7 points, starting with number 1."
+    prompt, _ = playground.build_messages(q)
+    assert "SEQUENCE DISCIPLINE MODE:" in prompt
+    assert "Requested target step: 1. Respond with only step 1." in prompt
+    assert "Do NOT ask for clarification when the prior ordered/list-like answer exists." in prompt
+    assert "REASONING OUTPUT MODE (REASONING-06 gate active):" not in prompt
+    assert "CLARIFY-FIRST (UNDEFINED IMPLEMENT/BUILD TARGET):" not in prompt
+
+
+def test_all_proper_steps_request_prefers_numbered_list_output():
+    reset_agent_state()
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    prompt, _ = playground.build_messages(q)
+    assert "ORDERED STEPS OUTPUT PREFERENCE" in prompt
+    assert "full multi-step list" in prompt.lower()
+    assert "SEQUENCE DISCIPLINE MODE:" not in prompt
+    assert "Prefer an explicit numbered list" in prompt
+
+
+def test_full_steps_api_question_not_one_step_mode_and_indexed_frames_ignore_prior_advisory():
+    """After Increment 6: full-list API question must not inherit sequence/continuation from a prior short checklist."""
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    playground.append_recent_answer_history(
+        "Test for: status codes, response body, headers, and error cases.",
+        user_input="Quick reminder: what should I sanity-check on an API response?",
+    )
+    q = "What are all the proper steps in order to test an API in a professional manner?"
+    prompt, _ = playground.build_messages(q)
+    assert "ORDERED STEPS OUTPUT PREFERENCE" in prompt
+    assert "SEQUENCE DISCIPLINE MODE:" not in prompt
+    assert "Recent-answer follow-up type: continuation" not in prompt
+    sim = (
+        "1. PLAN_SCOPE_UNIQUE_X\n"
+        "2. DESIGN_CASES_UNIQUE_Y\n"
+        "3. EXECUTE_RUNS_UNIQUE_Z\n"
+        "4. VALIDATE_RESULTS_UNIQUE_W\n"
+    )
+    playground.append_recent_answer_history(sim, user_input=q)
+    assert playground.recent_answer_step_frames[-1] is not None
+    assert len(playground.recent_answer_step_frames[-1]) >= 4
+    assert playground.recent_answer_step_frames[-2] is None
+    p2, _ = playground.build_messages("step 2")
+
+    def _indexed_step_line(prompt: str, step_n: int, total: int) -> str:
+        prefix = f"Step {step_n} of {total}:"
+        for line in prompt.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+        raise AssertionError(f"missing indexed line {prefix!r}")
+
+    line = _indexed_step_line(p2, 2, 4)
+    assert "DESIGN_CASES_UNIQUE_Y" in line
+    assert "status codes" not in line.lower()
+
+
 def test_build_messages_adds_clarification_guidance_only_for_clarification():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -16202,7 +17850,7 @@ def test_build_messages_adds_clarification_guidance_only_for_clarification():
 
 def test_build_messages_adds_correction_guidance_only_for_correction():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -16216,7 +17864,7 @@ def test_build_messages_adds_correction_guidance_only_for_correction():
 
 def test_build_messages_adds_no_followup_type_guidance_for_unrelated_prompt():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )
@@ -16226,7 +17874,7 @@ def test_build_messages_adds_no_followup_type_guidance_for_unrelated_prompt():
 
 def test_build_messages_adds_contradiction_guidance_and_self_correction_rule():
     reset_agent_state()
-    playground.recent_answer_history.clear()
+    playground.clear_recent_answer_session()
     playground.append_recent_answer_history(
         "Routing misclassification in detect_subtarget can trigger strict-mode gating."
     )

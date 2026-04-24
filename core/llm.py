@@ -16,6 +16,15 @@ If the user asks about a website or something you need to read online:
 Respond ONLY with:
 TOOL:fetch https://url
 
+If the user asks to search the web or find online information:
+
+Respond ONLY with:
+TOOL:brave_search short query
+
+Explicit web-search intent ("search the web", "find", "look up") MUST use TOOL:brave_search.
+Priority rule: explicit web-search intent > model memory/knowledge.
+Do NOT answer from memory if the tool is appropriate.
+Keep the query clean and short.
 Do NOT explain.
 Do NOT answer yet.
 

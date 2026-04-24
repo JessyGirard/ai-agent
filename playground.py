@@ -21,6 +21,7 @@ from core.persistence import (
 from services import journal_service, memory_service
 from services import prompt_builder
 from services import routing_service
+from tools.brave_search import brave_search
 from tools.fetch_page import fetch_failure_tag, fetch_page
 
 MEMORY_FILE = Path("memory/extracted_memory.json")
@@ -59,6 +60,47 @@ _LATENCY07_EMPTY_FETCH_ANSWER_LINE = "The fetch did not return usable page text.
 current_state = {}
 RECENT_ANSWER_HISTORY_MAX = journal_service.RECENT_ANSWER_HISTORY_MAX
 recent_answer_history = journal_service.make_recent_answer_history()
+recent_answer_step_frames = journal_service.make_recent_answer_step_frames()
+_sequence_step_cursor = 0
+_last_rendered_step_index = 0
+
+
+def get_sequence_step_cursor() -> int:
+    return _sequence_step_cursor
+
+
+def set_sequence_step_cursor(value: int) -> None:
+    global _sequence_step_cursor
+    try:
+        _sequence_step_cursor = max(0, int(value))
+    except (TypeError, ValueError):
+        pass
+
+
+def get_last_rendered_step_index() -> int:
+    return _last_rendered_step_index
+
+
+def set_last_rendered_step_index(value: int) -> None:
+    global _last_rendered_step_index
+    try:
+        _last_rendered_step_index = max(0, int(value))
+    except (TypeError, ValueError):
+        pass
+
+
+def clear_recent_answer_session() -> None:
+    """Clear bounded recent-assistant history and parallel indexed-step frames (tests / resets)."""
+    recent_answer_history.clear()
+    recent_answer_step_frames.clear()
+    set_sequence_step_cursor(0)
+    set_last_rendered_step_index(0)
+
+
+def lookup_indexed_steps_for_matched(matched_text, user_input):
+    return journal_service.lookup_steps_for_matched_answer(
+        matched_text, recent_answer_history, recent_answer_step_frames, user_input=user_input
+    )
 
 
 def _latency_truncate_text(text: str, limit: int, label: str) -> str:
@@ -332,8 +374,23 @@ def apply_recent_negative_outcome_anti_repeat_guard(user_input, candidate_next_s
     )
 
 
-def append_recent_answer_history(response_text):
-    journal_service.append_recent_answer_history(response_text, recent_answer_history)
+def append_recent_answer_history(response_text, user_input=None):
+    store_indexed_steps = True
+    if user_input is not None:
+        ul = re.sub(r"\s+", " ", str(user_input).strip().lower())
+        store_indexed_steps = journal_service.user_input_requests_full_steps_list_normalized(ul)
+    journal_service.append_recent_answer_history(
+        response_text,
+        recent_answer_history,
+        recent_answer_step_frames,
+        store_indexed_steps=store_indexed_steps,
+    )
+    frame = recent_answer_step_frames[-1] if recent_answer_step_frames else None
+    if store_indexed_steps and frame and len(frame) >= 2:
+        set_sequence_step_cursor(0)
+        # Keep last_rendered aligned with cursor reset (Increment 10 — stale lr + fresh cur
+        # made Continue/Next advance from last_rendered while the cursor restarted).
+        set_last_rendered_step_index(0)
 
 
 def format_recent_answer_history_block():
@@ -1717,20 +1774,66 @@ def parse_tool_command(response_text):
     # LATENCY-07: require a single-line, full-string tool invocation (no extra prose).
     if "\n" in response_text or "\r" in response_text:
         return None
-    match = re.fullmatch(r"TOOL:fetch\s+(https?://\S+)", response_text)
+    match_fetch = re.fullmatch(r"TOOL:fetch\s+(https?://\S+)", response_text)
+    if match_fetch:
+        url = match_fetch.group(1)
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return None
+        return {
+            "tool": "fetch",
+            "url": url,
+        }
 
-    if not match:
-        return None
+    match_brave = re.fullmatch(r"TOOL:brave_search\s+(.+)", response_text)
+    if match_brave:
+        query = (match_brave.group(1) or "").strip()
+        if not query:
+            return None
+        return {
+            "tool": "brave_search",
+            "query": query,
+        }
+    return None
 
-    url = match.group(1)
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        return None
 
-    return {
-        "tool": "fetch",
-        "url": url,
-    }
+def _format_brave_search_result_for_post_tool(search_result: dict) -> str:
+    if not isinstance(search_result, dict):
+        return "Brave search failed: invalid tool result."
+    if not search_result.get("ok"):
+        return str(search_result.get("error") or "Brave search failed.")
+    rows = search_result.get("results") or []
+    lines = ["BRAVE RESULT", f"Query: {search_result.get('query', '')}".strip()]
+    lines.append("Sources:")
+    if not rows:
+        lines.append("- No sources were available.")
+        return "\n".join(lines)
+
+    source_rows: list[tuple[str, str]] = []
+    for row in rows:
+        title = str((row or {}).get("title") or "").strip() or "(untitled)"
+        url = str((row or {}).get("url") or "").strip()
+        if not url:
+            continue
+        source_rows.append((title, url))
+        if len(source_rows) >= 3:
+            break
+    if not source_rows:
+        lines.append("- No sources were available.")
+    else:
+        for title, url in source_rows:
+            lines.append(f"- {title} — {url}")
+
+    lines.append("Snippets:")
+    for i, row in enumerate(rows[:5], start=1):
+        title = str((row or {}).get("title") or "").strip()
+        snippet = str((row or {}).get("snippet") or "").strip()
+        url = str((row or {}).get("url") or "").strip()
+        lines.append(f"{i}. {title or '(untitled)'}")
+        if snippet:
+            lines.append(f"Snippet: {snippet}")
+        lines.append("")
+    return "\n".join(lines).strip()
 
 
 _URL_IN_USER_RE = re.compile(r"https?://[^\s<>\"'\)]+", re.IGNORECASE)
@@ -1789,6 +1892,29 @@ def _merge_fetched_sources_for_prompt(sources: list[tuple[str, str]]) -> str:
     for idx, (url, body) in enumerate(sources, start=1):
         blocks.append(f"=== SOURCE {idx}: {url} ===\n{body}")
     return "\n\n".join(blocks).strip()
+
+
+def _extract_explicit_web_search_query(user_input: str) -> str | None:
+    """Routing-level hard trigger for explicit web-search intent (Increment 3D)."""
+    if not user_input or not isinstance(user_input, str):
+        return None
+    ul = re.sub(r"\s+", " ", user_input.strip().lower())
+    if not ul:
+        return None
+    if not (
+        re.search(r"\bsearch\s+the\s+web\b", ul)
+        or re.search(r"\blook\s+up\b", ul)
+        or re.search(r"\bfind\b", ul)
+    ):
+        return None
+    q = ul
+    q = re.sub(r"^\s*search\s+the\s+web\s+for\s+", "", q)
+    q = re.sub(r"^\s*search\s+the\s+web\s*", "", q)
+    q = re.sub(r"^\s*look\s+up\s+", "", q)
+    q = re.sub(r"^\s*find\s+", "", q)
+    q = re.sub(r"^\s*for\s+", "", q)
+    q = q.strip(" .!?")
+    return q or None
 
 
 def _strip_unsupported_quoted_spans(response_text: str, fetched_for_llm: str) -> tuple[str, bool]:
@@ -1952,7 +2078,7 @@ def _complete_fetch_after_load(
             response_text=final_response,
             action_type="research",
         )
-        append_recent_answer_history(final_response)
+        append_recent_answer_history(final_response, user_input=user_input)
         return final_response
     post_fetch_max_turns = 6
     post_fetch_system_prompt, post_fetch_messages = build_post_fetch_messages(
@@ -1979,7 +2105,7 @@ def _complete_fetch_after_load(
         response_text=final_response,
         action_type="research",
     )
-    append_recent_answer_history(final_response)
+    append_recent_answer_history(final_response, user_input=user_input)
     return final_response
 
 
@@ -2157,6 +2283,11 @@ def build_messages(user_input):
         is_strong_recent_answer_match=is_strong_recent_answer_match,
         detect_recent_answer_followup_type=detect_recent_answer_followup_type,
         detect_recent_answer_contradiction_cue=detect_recent_answer_contradiction_cue,
+        lookup_indexed_steps_for_matched=lookup_indexed_steps_for_matched,
+        get_sequence_step_cursor=get_sequence_step_cursor,
+        set_sequence_step_cursor=set_sequence_step_cursor,
+        get_last_rendered_step_index=get_last_rendered_step_index,
+        set_last_rendered_step_index=set_last_rendered_step_index,
     )
 
 
@@ -2195,7 +2326,7 @@ def handle_user_input(user_input: str, vision_images: list | None = None) -> str
             response_text=command_result,
             action_type="state",
         )
-        append_recent_answer_history(command_result)
+        append_recent_answer_history(command_result, user_input=stripped)
         return command_result
 
     write_runtime_memory(user_input)
@@ -2254,7 +2385,7 @@ def handle_user_input(user_input: str, vision_images: list | None = None) -> str
                     digest=digest,
                 )
                 if failure_tag is not None:
-                    append_recent_answer_history("Fetch failed")
+                    append_recent_answer_history("Fetch failed", user_input=user_input)
                     return "Fetch failed"
                 fetched_sources.append((forced_fetch_url, fetch_raw_norm))
             merged_fetch_url = ", ".join(url for url, _ in fetched_sources)
@@ -2266,6 +2397,18 @@ def handle_user_input(user_input: str, vision_images: list | None = None) -> str
                 stage,
                 merged_fetch_url,
                 merged_fetched_content,
+            )
+        forced_brave_query = _extract_explicit_web_search_query(user_input)
+        if forced_brave_query:
+            search_result = brave_search(forced_brave_query)
+            search_payload = _format_brave_search_result_for_post_tool(search_result)
+            return _complete_fetch_after_load(
+                user_input,
+                journal_display_user,
+                focus,
+                stage,
+                "brave://search",
+                search_payload,
             )
 
     force_structured_override = (
@@ -2302,7 +2445,7 @@ def handle_user_input(user_input: str, vision_images: list | None = None) -> str
             response_text=response,
             action_type=action_type,
         )
-        append_recent_answer_history(response)
+        append_recent_answer_history(response, user_input=user_input)
         return response
 
     system_prompt, messages = build_messages(user_input)
@@ -2332,6 +2475,17 @@ def handle_user_input(user_input: str, vision_images: list | None = None) -> str
             fetch_url,
             fetched_content,
         )
+    if tool_command and tool_command["tool"] == "brave_search":
+        search_result = brave_search(tool_command["query"])
+        search_payload = _format_brave_search_result_for_post_tool(search_result)
+        return _complete_fetch_after_load(
+            user_input,
+            journal_display_user,
+            focus,
+            stage,
+            "brave://search",
+            search_payload,
+        )
 
     append_project_journal(
         entry_type="conversation",
@@ -2339,7 +2493,7 @@ def handle_user_input(user_input: str, vision_images: list | None = None) -> str
         response_text=response,
         action_type=infer_action_type(user_input, get_current_stage()),
     )
-    append_recent_answer_history(response)
+    append_recent_answer_history(response, user_input=user_input)
     return response
 
 
