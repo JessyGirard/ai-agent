@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -9,7 +10,7 @@ import requests
 
 from core import system_eval_status_coercion
 
-SYSTEM_EVAL_LANES = frozenset({"stability", "correctness", "consistency", "prompt_response"})
+SYSTEM_EVAL_LANES = frozenset({"stability", "correctness", "consistency", "prompt_response", "smoke"})
 CONSISTENCY_REPEAT_DEFAULT = 3
 CONSISTENCY_REPEAT_MAX = 50
 STABILITY_ATTEMPTS_DEFAULT = 3
@@ -33,7 +34,18 @@ _REQUEST_VAR_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\
 
 # Step fields that are HTTP request metadata, not assertions (Increment 43).
 _STEP_REQUEST_KEYS = frozenset(
-    {"name", "method", "url", "headers", "payload", "timeout_seconds", "body", "send_json_body", "use"}
+    {
+        "name",
+        "method",
+        "url",
+        "headers",
+        "payload",
+        "timeout_seconds",
+        "body",
+        "send_json_body",
+        "use",
+        "assertions",
+    }
 )
 
 
@@ -231,6 +243,124 @@ def _substitute_request_payload(obj, variables: dict[str, object]) -> tuple[obje
     return obj, None
 
 
+_DOTENV_LOADED_FOR_SINGLE_REQUEST = False
+
+
+def ensure_system_eval_dotenv_loaded() -> None:
+    """
+    Load ``.env`` from the project root (parent of ``core/``) once.
+
+    Used by Tool 1 single-request placeholder resolution so ``{{VAR}}`` can map to
+    variables defined only in ``.env``. Does not override keys already set in the process
+    environment (standard python-dotenv behavior).
+    """
+    global _DOTENV_LOADED_FOR_SINGLE_REQUEST
+    if _DOTENV_LOADED_FOR_SINGLE_REQUEST:
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        _DOTENV_LOADED_FOR_SINGLE_REQUEST = True
+        return
+    root = Path(__file__).resolve().parents[1]
+    env_path = root / ".env"
+    load_dotenv(dotenv_path=env_path if env_path.is_file() else None)
+    _DOTENV_LOADED_FOR_SINGLE_REQUEST = True
+
+
+def _collect_placeholder_names_from_payload(obj) -> set[str]:
+    names: set[str] = set()
+
+    def walk(o):
+        if isinstance(o, str):
+            for m in _REQUEST_VAR_PLACEHOLDER_RE.finditer(o):
+                names.add(m.group(1))
+        elif isinstance(o, dict):
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for x in o:
+                walk(x)
+
+    walk(obj)
+    return names
+
+
+def collect_single_request_placeholder_variable_names(
+    *,
+    url: str,
+    query_params: dict[str, str],
+    headers: dict[str, str],
+    payload: dict,
+) -> set[str]:
+    names: set[str] = set()
+    for m in _REQUEST_VAR_PLACEHOLDER_RE.finditer(url or ""):
+        names.add(m.group(1))
+    for v in query_params.values():
+        for m in _REQUEST_VAR_PLACEHOLDER_RE.finditer(str(v)):
+            names.add(m.group(1))
+    for v in headers.values():
+        if isinstance(v, str):
+            for m in _REQUEST_VAR_PLACEHOLDER_RE.finditer(v):
+                names.add(m.group(1))
+    names.update(_collect_placeholder_names_from_payload(payload))
+    return names
+
+
+def resolve_placeholder_variables_from_environment(names: set[str]) -> tuple[dict[str, str], str | None]:
+    """
+    Build substitution values from ``os.environ``. Each name must be present with a
+    non-empty value (after strip). Returns ``({}, error)`` on failure.
+    """
+    if not names:
+        return {}, None
+    missing = sorted(n for n in names if not (os.environ.get(n) or "").strip())
+    if missing:
+        return {}, "Unset or empty environment variable(s) for placeholder(s): " + ", ".join(missing)
+    return {n: os.environ[n] for n in names}, None
+
+
+def apply_env_placeholders_single_request(
+    *,
+    url: str,
+    query_params: dict[str, str],
+    headers: dict[str, str],
+    payload: dict,
+) -> tuple[str, dict[str, str], dict[str, str], dict, str | None]:
+    """
+    Resolve ``{{var}}`` placeholders from the environment (after ``ensure_system_eval_dotenv_loaded``)
+    into the URL, query-string values, header string values, and string leaves of the JSON payload.
+
+    Returns ``(url, query_params, headers, payload, error_or_None)``.
+    """
+    ensure_system_eval_dotenv_loaded()
+    names = collect_single_request_placeholder_variable_names(
+        url=url, query_params=query_params, headers=headers, payload=payload
+    )
+    if not names:
+        return url, query_params, headers, payload, None
+    variables, err = resolve_placeholder_variables_from_environment(names)
+    if err:
+        return url, query_params, headers, payload, err
+    vobj: dict[str, object] = dict(variables)
+    url_out, e1 = _substitute_request_string(url, vobj)
+    if e1:
+        return url, query_params, headers, payload, e1
+    qp_out: dict[str, str] = {}
+    for k, val in query_params.items():
+        nv, e = _substitute_request_string(str(val), vobj)
+        if e:
+            return url, query_params, headers, payload, e
+        qp_out[k] = nv
+    hdr_out, e2 = _substitute_request_headers(headers, vobj)
+    if e2:
+        return url, query_params, headers, payload, e2
+    pay_out, e3 = _substitute_request_payload(payload, vobj)
+    if e3:
+        return url, query_params, headers, payload, e3
+    return url_out, qp_out, hdr_out, pay_out, None
+
+
 def _adapter_case_dict(case: dict, *, url: str, headers: dict, payload) -> dict:
     out = {
         "name": case.get("name", ""),
@@ -343,6 +473,63 @@ def _build_substituted_adapter_case_direct(
     return _adapter_case_dict(case, url=u2, headers=h2, payload=p2), None
 
 
+def _substitute_request_string_keep_missing(s: str, variables: dict[str, object]) -> str:
+    if not isinstance(s, str):
+        s = str(s)
+    parts: list[str] = []
+    pos = 0
+    for m in _REQUEST_VAR_PLACEHOLDER_RE.finditer(s):
+        name = m.group(1)
+        parts.append(s[pos : m.start()])
+        if name in variables:
+            parts.append(_substitute_value_fragment(variables[name]))
+        else:
+            parts.append(m.group(0))
+        pos = m.end()
+    parts.append(s[pos:])
+    return "".join(parts)
+
+
+def _substitute_request_headers_keep_missing(headers: dict, variables: dict[str, object]) -> dict:
+    out: dict[str, str] = {}
+    for k, v in headers.items():
+        ks = str(k)
+        if isinstance(v, str):
+            out[ks] = _substitute_request_string_keep_missing(v, variables)
+        else:
+            out[ks] = str(v) if v is not None else ""
+    return out
+
+
+def _substitute_request_payload_keep_missing(obj, variables: dict[str, object]):
+    if isinstance(obj, str):
+        return _substitute_request_string_keep_missing(obj, variables)
+    if isinstance(obj, list):
+        return [_substitute_request_payload_keep_missing(x, variables) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _substitute_request_payload_keep_missing(v, variables) for k, v in obj.items()}
+    return obj
+
+
+def _build_substituted_adapter_case_direct_keep_missing(case: dict, variables: dict[str, object]) -> dict:
+    """
+    Steps-only variant: substitute known placeholders and keep unknown ``{{var}}`` unchanged.
+    """
+    url_tmpl = str(case.get("url", "")).strip()
+    headers_tmpl = case.get("headers", {})
+    if not isinstance(headers_tmpl, dict):
+        headers_tmpl = {}
+    payload_tmpl = case.get("payload", {})
+    if not isinstance(payload_tmpl, dict):
+        payload_tmpl = {}
+    u2 = _substitute_request_string_keep_missing(url_tmpl, variables)
+    h2 = _substitute_request_headers_keep_missing(headers_tmpl, variables)
+    p2 = _substitute_request_payload_keep_missing(payload_tmpl, variables)
+    if not isinstance(p2, dict):
+        p2 = {}
+    return _adapter_case_dict(case, url=u2, headers=h2, payload=p2)
+
+
 def _step_failure_prefix(step_name: str) -> str:
     return "step failed: " + json.dumps({"step": step_name}, ensure_ascii=False)
 
@@ -396,6 +583,47 @@ def _normalize_suite_step(raw: object, case_name: str, idx: int, default_timeout
         if k in _STEP_REQUEST_KEYS:
             continue
         assertions[k] = v
+    structured_assertions = raw.get("assertions")
+    if structured_assertions is not None:
+        if not isinstance(structured_assertions, list):
+            raise ValueError(
+                f"Case '{case_name}' step {step_name!r} has invalid 'assertions'; expected array of objects."
+            )
+        json_path_equals: dict[str, object] = {}
+        for ai, a in enumerate(structured_assertions):
+            if not isinstance(a, dict):
+                raise ValueError(
+                    f"Case '{case_name}' step {step_name!r} assertion at index {ai} must be an object."
+                )
+            atype = str(a.get("type", "")).strip()
+            if atype != "json_path_equals":
+                raise ValueError(
+                    f"Case '{case_name}' step {step_name!r} has unsupported assertion type {atype!r}; "
+                    "supported: json_path_equals."
+                )
+            path_raw = str(a.get("path", "")).strip()
+            if not path_raw:
+                raise ValueError(
+                    f"Case '{case_name}' step {step_name!r} assertion at index {ai} is missing non-empty 'path'."
+                )
+            path_norm = _normalize_json_path_input(path_raw)
+            if not path_norm:
+                raise ValueError(
+                    f"Case '{case_name}' step {step_name!r} assertion at index {ai} has invalid 'path' {path_raw!r}."
+                )
+            if "expected" not in a:
+                raise ValueError(
+                    f"Case '{case_name}' step {step_name!r} assertion at index {ai} is missing 'expected'."
+                )
+            json_path_equals[path_norm] = a.get("expected")
+        if json_path_equals:
+            existing = assertions.get("body_json_path_equals")
+            if isinstance(existing, dict):
+                merged = dict(existing)
+                merged.update(json_path_equals)
+                assertions["body_json_path_equals"] = merged
+            else:
+                assertions["body_json_path_equals"] = json_path_equals
     _validate_minimal_assertion_keys(assertions, f"{case_name} step '{step_name}'")
     headers = raw.get("headers", {})
     if headers is not None and not isinstance(headers, dict):
@@ -433,6 +661,141 @@ def _cap_output_full(text: str | None) -> str:
     if keep < 1:
         return _OUTPUT_FULL_TRUNC_MARKER[: _OUTPUT_FULL_MAX_CHARS]
     return s[:keep] + _OUTPUT_FULL_TRUNC_MARKER
+
+
+def _normalize_summary_whitespace(text: str) -> str:
+    return " ".join(str(text).split()).strip()
+
+
+def _is_meaningful_summary_text(text: str) -> bool:
+    s = _normalize_summary_whitespace(text)
+    if len(s) < 20:
+        return False
+    if s.startswith("{") or s.startswith("["):
+        return False
+    sl = s.lower()
+    if sl.startswith("http://") or sl.startswith("https://") or sl.startswith("www."):
+        return False
+    return any(ch.isalpha() for ch in s)
+
+
+def _extract_first_meaningful_text(obj) -> str | None:
+    if isinstance(obj, str):
+        s = _normalize_summary_whitespace(obj)
+        return s if _is_meaningful_summary_text(s) else None
+    if isinstance(obj, list):
+        for x in obj:
+            got = _extract_first_meaningful_text(x)
+            if got:
+                return got
+        return None
+    if isinstance(obj, dict):
+        for k in ("answer", "response", "summary", "text", "content", "snippet", "description", "title"):
+            if k in obj:
+                got = _extract_first_meaningful_text(obj[k])
+                if got:
+                    return got
+        for v in obj.values():
+            got = _extract_first_meaningful_text(v)
+            if got:
+                return got
+        return None
+    return None
+
+
+def _extract_response_summary(output_text: str | None) -> str:
+    """
+    Build a short human-readable summary from response text without changing stored raw outputs.
+    """
+    raw = str(output_text or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        # Prefer Brave-style grounding snippets first when available.
+        grounding = parsed.get("grounding")
+        if isinstance(grounding, dict):
+            generic = grounding.get("generic")
+            got = _extract_first_meaningful_text(generic)
+            if got:
+                return got[:280]
+        got = _extract_first_meaningful_text(parsed)
+        if got:
+            return got[:280]
+    elif isinstance(parsed, list):
+        got = _extract_first_meaningful_text(parsed)
+        if got:
+            return got[:280]
+    for line in raw.splitlines():
+        s = _normalize_summary_whitespace(line)
+        if _is_meaningful_summary_text(s):
+            return s[:280]
+    s = _normalize_summary_whitespace(raw)
+    return s[:280]
+
+
+def _is_sensitive_request_header_name(name: str) -> bool:
+    k = str(name or "").strip().lower().replace("-", "_")
+    tokens = (
+        "authorization",
+        "token",
+        "password",
+        "secret",
+        "api_key",
+        "apikey",
+        "subscription_key",
+    )
+    return any(t in k for t in tokens)
+
+
+def _mask_request_headers_for_output(headers: dict | None) -> dict[str, str]:
+    if not isinstance(headers, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in headers.items():
+        ks = str(k)
+        out[ks] = "[REDACTED]" if _is_sensitive_request_header_name(ks) else str(v)
+    return out
+
+
+def _is_sensitive_body_key(name: str) -> bool:
+    k = str(name or "").strip().lower().replace("-", "_")
+    tokens = (
+        "authorization",
+        "token",
+        "password",
+        "secret",
+        "api_key",
+        "apikey",
+        "subscription_key",
+    )
+    return any(t in k for t in tokens)
+
+
+def _mask_request_body_for_output(body):
+    if body is None:
+        return None
+    if isinstance(body, dict):
+        out = {}
+        for k, v in body.items():
+            if _is_sensitive_body_key(str(k)):
+                out[k] = "[REDACTED]"
+            else:
+                out[k] = _mask_request_body_for_output(v)
+        return out
+    if isinstance(body, list):
+        return [_mask_request_body_for_output(x) for x in body]
+    return body
+
+
+def _request_body_for_output(request_case: dict):
+    method = str(request_case.get("method", "POST")).upper()
+    payload = request_case.get("payload", {})
+    body = _json_body_for_http_request(method, request_case, payload)
+    return _mask_request_body_for_output(body)
 
 
 def _normalize_response_headers(headers_obj) -> dict:
@@ -951,7 +1314,7 @@ def validate_suite(suite):
         if not isinstance(assertions, dict):
             raise ValueError(f"Case '{name}' has invalid 'assertions'; expected object.")
         _validate_minimal_assertion_keys(assertions, name)
-        lane = None
+        lane = "smoke"
         if "lane" in case and case["lane"] is not None:
             lane_raw = str(case["lane"]).strip()
             if lane_raw:
@@ -1348,8 +1711,11 @@ def _walk_json_path_segment(current: object, part: str) -> object | _JsonPathSte
 
 def _resolve_json_path(obj: object, path: str) -> object | None:
     """Walk dot-separated path with optional ``name[i]`` list segments; None if missing or invalid."""
+    norm = _normalize_json_path_input(path)
+    if norm == "":
+        return obj if isinstance(obj, dict) else None
     current = obj
-    for part in path.split("."):
+    for part in norm.split("."):
         nxt = _walk_json_path_segment(current, part)
         if nxt is _JSON_PATH_STEP_FAILED:
             return None
@@ -1357,10 +1723,22 @@ def _resolve_json_path(obj: object, path: str) -> object | None:
     return current
 
 
+def _normalize_json_path_input(path: str) -> str:
+    s = str(path or "").strip()
+    if s == "$":
+        return ""
+    if s.startswith("$."):
+        return s[2:]
+    return s
+
+
 def _json_path_exists(root: object, path: str) -> bool:
     """True if dot path resolves (dict keys and ``name[i]`` list indices); leaf may be JSON null."""
+    norm = _normalize_json_path_input(path)
+    if norm == "":
+        return isinstance(root, dict)
     current = root
-    for part in path.split("."):
+    for part in norm.split("."):
         nxt = _walk_json_path_segment(current, part)
         if nxt is _JSON_PATH_STEP_FAILED:
             return False
@@ -1569,7 +1947,7 @@ def _run_extract(extract_spec: dict, output_text: str) -> tuple[list[str], dict[
         if not isinstance(var_name, str) or not isinstance(path_key, str):
             continue
         vn = var_name.strip()
-        path_resolved = path_key.strip()
+        path_resolved = _normalize_json_path_input(path_key.strip())
         if not vn or not path_resolved:
             continue
         val = _resolve_json_path(parsed, path_resolved)
@@ -2211,46 +2589,50 @@ def _run_n_attempts(case, adapter, n):
 
 def _execute_correctness_case(
     case, adapter
-) -> tuple[list[str], AdapterResult | None, dict[str, object], list[dict]]:
+) -> tuple[list[str], AdapterResult | None, dict[str, object], list[dict], dict, object]:
     """Default lane: optional second HTTP hop after successful extract when templates use {{var}}."""
     variables: dict[str, object] = {}
     needs_second = _case_request_templates_have_placeholders(case)
 
     run1, err1 = _build_substituted_adapter_case(case, {}, first_hop=True)
     if err1:
-        return [err1], None, {}, []
+        return [err1], None, {}, [], {}, None
     r1, attempts1, exhausted1 = _run_case_with_optional_retries(
         run1, adapter, retries=case.get("retries"), retry_delay_ms=case.get("retry_delay_ms")
     )
     if exhausted1:
-        return [exhausted1], r1, {}, attempts1
+        return [exhausted1], r1, {}, attempts1, dict(run1.get("headers", {})), _request_body_for_output(run1)
     failures = _evaluate_single_attempt(case, r1)
     if failures:
-        return failures, r1, {}, attempts1
+        return failures, r1, {}, attempts1, dict(run1.get("headers", {})), _request_body_for_output(run1)
     exf, variables = _maybe_extract(case, r1)
     failures.extend(exf)
     if failures:
-        return failures, r1, variables, attempts1
+        return failures, r1, variables, attempts1, dict(run1.get("headers", {})), _request_body_for_output(run1)
 
     adapter_result = r1
     attempts_out = list(attempts1)
+    request_headers = dict(run1.get("headers", {}))
+    request_body = _request_body_for_output(run1)
     if needs_second:
         run2, err2 = _build_substituted_adapter_case(case, variables, first_hop=False)
         if err2:
-            return [err2], r1, variables, attempts_out
+            return [err2], r1, variables, attempts_out, request_headers, request_body
         r2, attempts2, exhausted2 = _run_case_with_optional_retries(
             run2, adapter, retries=case.get("retries"), retry_delay_ms=case.get("retry_delay_ms")
         )
         attempts_out.extend(attempts2)
+        request_headers = dict(run2.get("headers", {}))
+        request_body = _request_body_for_output(run2)
         if exhausted2:
-            return [exhausted2], r2, variables, attempts_out
+            return [exhausted2], r2, variables, attempts_out, request_headers, request_body
         failures = _evaluate_single_attempt(case, r2)
         adapter_result = r2
         if failures:
-            return failures, adapter_result, variables, attempts_out
+            return failures, adapter_result, variables, attempts_out, request_headers, request_body
         # Variables for {{...}} substitution are taken from the first hop only (Increment 42).
 
-    return failures, adapter_result, variables, attempts_out
+    return failures, adapter_result, variables, attempts_out, request_headers, request_body
 
 
 def _step_result_reason(failures: list[str]) -> str:
@@ -2263,7 +2645,7 @@ def _step_result_reason(failures: list[str]) -> str:
 
 def _execute_steps_case(
     case, adapter
-) -> tuple[list[str], AdapterResult | None, dict[str, object], str, str, list[dict]]:
+) -> tuple[list[str], AdapterResult | None, dict[str, object], str, str, dict, object, list[dict]]:
     """Run ordered ``steps`` with shared variables; prefix failures with ``step failed`` JSON.
 
     Returns ``step_results`` (Increment 45): one entry per executed step, PASS or FAIL with url
@@ -2273,40 +2655,40 @@ def _execute_steps_case(
     last_result: AdapterResult | None = None
     last_method = str(case.get("method", "POST")).upper()
     last_url = str(case.get("url", ""))
+    last_headers: dict = dict(case.get("headers", {})) if isinstance(case.get("headers", {}), dict) else {}
+    last_body = _request_body_for_output(case if isinstance(case, dict) else {})
     step_results: list[dict] = []
     for st in case["steps"]:
         step_name = st["step_name"]
         shell = _case_request_shell_for_step(case, st)
-        run_dict, err = _build_substituted_adapter_case_direct(shell, variables)
-        if err:
-            step_results.append(
-                {
-                    "step": step_name,
-                    "status": "FAIL",
-                    "url": str(shell.get("url", "")).strip(),
-                    "latency_ms": 0,
-                    "reason": err,
-                }
-            )
-            return (
-                _prefix_failures_for_step(step_name, [err]),
-                last_result,
-                variables,
-                last_method,
-                last_url,
-                step_results,
-            )
+        step_expected_status = _expected_status_code_for_assertions(st.get("assertions"))
+        run_dict = _build_substituted_adapter_case_direct_keep_missing(shell, variables)
         last_result, step_attempts, step_exhausted = _run_case_with_optional_retries(
             run_dict, adapter, retries=case.get("retries"), retry_delay_ms=case.get("retry_delay_ms")
         )
         last_method = str(run_dict.get("method", last_method)).upper()
         last_url = str(run_dict.get("url", last_url))
+        last_headers = dict(run_dict.get("headers", {})) if isinstance(run_dict.get("headers", {}), dict) else {}
+        last_body = _request_body_for_output(run_dict)
         if step_exhausted:
+            step_failures = [step_exhausted]
             row = {
                 "step": step_name,
                 "status": "FAIL",
+                "method": str(run_dict.get("method", "")).upper(),
                 "url": str(run_dict.get("url", "")),
+                "request_headers": _mask_request_headers_for_output(run_dict.get("headers", {})),
+                "request_body": _request_body_for_output(run_dict),
+                "status_code": last_result.status_code,
+                "expected_status_code": step_expected_status,
                 "latency_ms": int(last_result.latency_ms),
+                "response_headers": dict(last_result.response_headers or {}),
+                "response_summary": _extract_response_summary(last_result.output_text or ""),
+                "output_preview": (last_result.output_text or "")[:600],
+                "output_full": _cap_output_full(last_result.output_text or ""),
+                "ok": False,
+                "failures": step_failures,
+                "error_message": _error_message_for_case(False, step_failures),
                 "reason": step_exhausted,
             }
             if case.get("retries") is not None:
@@ -2319,6 +2701,8 @@ def _execute_steps_case(
                 variables,
                 last_method,
                 last_url,
+                last_headers,
+                last_body,
                 step_results,
             )
         ev_case = {"assertions": st["assertions"]}
@@ -2328,8 +2712,20 @@ def _execute_steps_case(
             row = {
                 "step": step_name,
                 "status": "FAIL",
+                "method": str(run_dict.get("method", "")).upper(),
                 "url": str(run_dict.get("url", "")),
+                "request_headers": _mask_request_headers_for_output(run_dict.get("headers", {})),
+                "request_body": _request_body_for_output(run_dict),
+                "status_code": last_result.status_code,
+                "expected_status_code": step_expected_status,
                 "latency_ms": int(last_result.latency_ms),
+                "response_headers": dict(last_result.response_headers or {}),
+                "response_summary": _extract_response_summary(last_result.output_text or ""),
+                "output_preview": (last_result.output_text or "")[:600],
+                "output_full": _cap_output_full(last_result.output_text or ""),
+                "ok": False,
+                "failures": list(failures),
+                "error_message": _error_message_for_case(False, failures),
                 "reason": reason,
             }
             if case.get("retries") is not None:
@@ -2342,6 +2738,8 @@ def _execute_steps_case(
                 variables,
                 last_method,
                 last_url,
+                last_headers,
+                last_body,
                 step_results,
             )
         exf, new_vars = _maybe_extract(ev_case, last_result)
@@ -2351,8 +2749,20 @@ def _execute_steps_case(
             row = {
                 "step": step_name,
                 "status": "FAIL",
+                "method": str(run_dict.get("method", "")).upper(),
                 "url": str(run_dict.get("url", "")),
+                "request_headers": _mask_request_headers_for_output(run_dict.get("headers", {})),
+                "request_body": _request_body_for_output(run_dict),
+                "status_code": last_result.status_code,
+                "expected_status_code": step_expected_status,
                 "latency_ms": int(last_result.latency_ms),
+                "response_headers": dict(last_result.response_headers or {}),
+                "response_summary": _extract_response_summary(last_result.output_text or ""),
+                "output_preview": (last_result.output_text or "")[:600],
+                "output_full": _cap_output_full(last_result.output_text or ""),
+                "ok": False,
+                "failures": list(exf),
+                "error_message": _error_message_for_case(False, exf),
                 "reason": reason,
             }
             if case.get("retries") is not None:
@@ -2365,19 +2775,33 @@ def _execute_steps_case(
                 variables,
                 last_method,
                 last_url,
+                last_headers,
+                last_body,
                 step_results,
             )
         row = {
             "step": step_name,
             "status": "PASS",
+            "method": str(run_dict.get("method", "")).upper(),
             "url": str(run_dict.get("url", "")),
+            "request_headers": _mask_request_headers_for_output(run_dict.get("headers", {})),
+            "request_body": _request_body_for_output(run_dict),
+            "status_code": last_result.status_code,
+            "expected_status_code": step_expected_status,
             "latency_ms": int(last_result.latency_ms),
+            "response_headers": dict(last_result.response_headers or {}),
+            "response_summary": _extract_response_summary(last_result.output_text or ""),
+            "output_preview": (last_result.output_text or "")[:600],
+            "output_full": _cap_output_full(last_result.output_text or ""),
+            "ok": True,
+            "failures": [],
+            "error_message": None,
         }
         if case.get("retries") is not None:
             row["attempts_total"] = len(step_attempts)
             row["attempts"] = step_attempts
         step_results.append(row)
-    return [], last_result, variables, last_method, last_url, step_results
+    return [], last_result, variables, last_method, last_url, last_headers, last_body, step_results
 
 
 def _execute_prompt_response_case(case: dict, adapter) -> tuple[bool, list[str], AdapterResult]:
@@ -2467,6 +2891,51 @@ def _execute_prompt_response_case(case: dict, adapter) -> tuple[bool, list[str],
     return len(failures) == 0, failures, adapter_result
 
 
+def _expected_status_code_for_case(case: dict) -> int:
+    """
+    Report-friendly expected status code.
+    Uses explicit expected status when present; otherwise defaults to 200.
+    """
+    if case.get("expected_status") is not None:
+        try:
+            return int(case["expected_status"])
+        except (TypeError, ValueError):
+            return 200
+    assertions = case.get("assertions")
+    if isinstance(assertions, dict) and assertions.get("status_code") is not None:
+        try:
+            return int(assertions["status_code"])
+        except (TypeError, ValueError):
+            return 200
+    return 200
+
+
+def _expected_status_code_for_assertions(assertions: dict | None) -> int:
+    if isinstance(assertions, dict):
+        if assertions.get("expected_status") is not None:
+            try:
+                return int(assertions["expected_status"])
+            except (TypeError, ValueError):
+                return 200
+        if assertions.get("status_code") is not None:
+            try:
+                return int(assertions["status_code"])
+            except (TypeError, ValueError):
+                return 200
+    return 200
+
+
+def _error_message_for_case(case_ok: bool, failures: list[str] | None) -> str | None:
+    if case_ok:
+        return None
+    if isinstance(failures, list):
+        for f in failures:
+            s = str(f).strip()
+            if s:
+                return s
+    return "case failed"
+
+
 def execute_suite(suite, adapter, fail_fast=False):
     started = time.perf_counter()
     case_results = []
@@ -2485,10 +2954,15 @@ def execute_suite(suite, adapter, fail_fast=False):
                     "lane": case.get("lane"),
                     "ok": case_ok,
                     "failures": case_failures,
+                    "error_message": _error_message_for_case(case_ok, case_failures),
                     "status_code": adapter_result.status_code,
+                    "expected_status_code": _expected_status_code_for_case(case),
                     "latency_ms": adapter_result.latency_ms,
                     "output_preview": (adapter_result.output_text or "")[:600],
                     "output_full": _cap_output_full(adapter_result.output_text or ""),
+                    "response_summary": _extract_response_summary(adapter_result.output_text or ""),
+                    "request_headers": _mask_request_headers_for_output({}),
+                    "request_body": None,
                     "response_headers": dict(adapter_result.response_headers or {}),
                     "method": "PROMPT",
                     "url": "prompt://local",
@@ -2527,7 +3001,9 @@ def execute_suite(suite, adapter, fail_fast=False):
                 "attempts": attempts_out,
                 "ok": case_ok,
                 "failures": case_failures,
+                "error_message": _error_message_for_case(case_ok, case_failures),
                 "status_code": last_adapter_result.status_code if last_adapter_result else None,
+                "expected_status_code": _expected_status_code_for_case(case),
                 "latency_ms": last_adapter_result.latency_ms if last_adapter_result else 0,
                 "output_preview": (last_adapter_result.output_text or "")[:600]
                 if last_adapter_result
@@ -2535,6 +3011,11 @@ def execute_suite(suite, adapter, fail_fast=False):
                 "output_full": _cap_output_full(last_adapter_result.output_text or "")
                 if last_adapter_result
                 else "",
+                "response_summary": _extract_response_summary(last_adapter_result.output_text or "")
+                if last_adapter_result
+                else "",
+                "request_headers": _mask_request_headers_for_output(case.get("headers", {})),
+                "request_body": _request_body_for_output(case),
                 "response_headers": dict(last_adapter_result.response_headers)
                 if last_adapter_result
                 else {},
@@ -2570,7 +3051,9 @@ def execute_suite(suite, adapter, fail_fast=False):
                 "attempts": attempts_out,
                 "ok": case_ok,
                 "failures": case_failures,
+                "error_message": _error_message_for_case(case_ok, case_failures),
                 "status_code": last_adapter_result.status_code if last_adapter_result else None,
+                "expected_status_code": _expected_status_code_for_case(case),
                 "latency_ms": last_adapter_result.latency_ms if last_adapter_result else 0,
                 "output_preview": (last_adapter_result.output_text or "")[:600]
                 if last_adapter_result
@@ -2578,6 +3061,11 @@ def execute_suite(suite, adapter, fail_fast=False):
                 "output_full": _cap_output_full(last_adapter_result.output_text or "")
                 if last_adapter_result
                 else "",
+                "response_summary": _extract_response_summary(last_adapter_result.output_text or "")
+                if last_adapter_result
+                else "",
+                "request_headers": _mask_request_headers_for_output(case.get("headers", {})),
+                "request_body": _request_body_for_output(case),
                 "response_headers": dict(last_adapter_result.response_headers)
                 if last_adapter_result
                 else {},
@@ -2591,12 +3079,12 @@ def execute_suite(suite, adapter, fail_fast=False):
             case_results.append(row)
         else:
             if case.get("steps"):
-                failures, adapter_result, variables, row_method, row_url, step_results = _execute_steps_case(
+                failures, adapter_result, variables, row_method, row_url, row_headers, row_body, step_results = _execute_steps_case(
                     case, adapter
                 )
                 retry_attempts = []
             else:
-                failures, adapter_result, variables, retry_attempts = _execute_correctness_case(case, adapter)
+                failures, adapter_result, variables, retry_attempts, row_headers, row_body = _execute_correctness_case(case, adapter)
                 row_method = case["method"]
                 row_url = case["url"]
                 step_results = []
@@ -2619,17 +3107,22 @@ def execute_suite(suite, adapter, fail_fast=False):
                 "lane": case.get("lane"),
                 "ok": case_ok,
                 "failures": failures,
+                "error_message": _error_message_for_case(case_ok, failures),
                 "status_code": adapter_result.status_code,
+                "expected_status_code": _expected_status_code_for_case(case),
                 "latency_ms": adapter_result.latency_ms,
                 "output_preview": (adapter_result.output_text or "")[:600],
                 "output_full": _cap_output_full(adapter_result.output_text or ""),
+                "response_summary": _extract_response_summary(adapter_result.output_text or ""),
+                "request_headers": _mask_request_headers_for_output(row_headers),
+                "request_body": row_body,
                 "response_headers": dict(adapter_result.response_headers),
                 "method": row_method,
                 "url": row_url,
             }
             if case.get("steps"):
                 row["variables"] = variables
-                row["step_results"] = step_results
+                row["steps"] = step_results
             elif isinstance(case.get("assertions"), dict) and case["assertions"].get("extract") is not None:
                 row["variables"] = variables
             if case.get("max_duration_ms") is not None:
@@ -2641,6 +3134,9 @@ def execute_suite(suite, adapter, fail_fast=False):
         if fail_fast and not case_results[-1].get("ok"):
             break
     elapsed_seconds = round(time.perf_counter() - started, 3)
+    finished_utc = datetime.now(timezone.utc).isoformat()
+    for row in case_results:
+        row["ran_at_utc"] = finished_utc
     return {
         "suite_name": suite["suite_name"],
         "target_name": suite["target_name"],
@@ -2649,24 +3145,60 @@ def execute_suite(suite, adapter, fail_fast=False):
         "failed_cases": failed,
         "ok": failed == 0,
         "elapsed_seconds": elapsed_seconds,
-        "ran_at_utc": datetime.now(timezone.utc).isoformat(),
+        "ran_at_utc": finished_utc,
         "cases": case_results,
     }
+
+
+def _utc_iso_to_filename_timestamp(iso: str | None) -> str:
+    """Turn ``result['ran_at_utc']`` into a Windows-safe ``YYYY-MM-DD_HHMMSS`` fragment (UTC)."""
+    if iso:
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            return dt.strftime("%Y-%m-%d_%H%M%S")
+        except (ValueError, TypeError):
+            pass
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
+
+
+def build_timestamped_artifact_stem(base_stem: str, result: dict | None) -> str:
+    """
+    Return ``<slug>_<YYYY-MM-DD_HHMMSS>`` so each run gets a unique pair of files in Explorer.
+
+    Uses ``result['ran_at_utc']`` when present so the stem matches the JSON timestamp.
+    """
+    raw = (base_stem or "system_eval").strip() or "system_eval"
+    safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", raw).strip("._-") or "system_eval"
+    iso = result.get("ran_at_utc") if isinstance(result, dict) else None
+    suffix = _utc_iso_to_filename_timestamp(iso)
+    return f"{safe}_{suffix}"
 
 
 def write_result_artifacts(result, output_dir, file_stem):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    json_path = output_path / f"{file_stem}.json"
-    md_path = output_path / f"{file_stem}.md"
+    stem = build_timestamped_artifact_stem(file_stem, result)
+    json_path = output_path / f"{stem}.json"
+    md_path = output_path / f"{stem}.md"
+    latest_json_path = output_path / f"{file_stem}.json"
+    latest_md_path = output_path / f"{file_stem}.md"
 
     json_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Keep a stable "latest" artifact alongside timestamped history for easy discovery in Explorer.
+    json_path_text = json_path.read_text(encoding="utf-8")
+    latest_json_path.write_text(json_path_text, encoding="utf-8")
 
+    ran_at = result.get("ran_at_utc", "") if isinstance(result, dict) else ""
     lines = [
         f"# System Eval Report: {result.get('suite_name')}",
         "",
         f"- Target: `{result.get('target_name')}`",
         f"- Status: `{'PASS' if result.get('ok') else 'FAIL'}`",
+        f"- Run at (UTC): `{ran_at}`",
         f"- Executed cases: `{result.get('executed_cases')}`",
         f"- Passed: `{result.get('passed_cases')}`",
         f"- Failed: `{result.get('failed_cases')}`",
@@ -2686,7 +3218,9 @@ def write_result_artifacts(result, output_dir, file_stem):
         if failures:
             for failure in failures:
                 lines.append(f"  - {failure}")
-        step_results = case.get("step_results")
+        step_results = case.get("steps")
+        if not step_results:
+            step_results = case.get("step_results")
         if step_results:
             lines.append("  ### Steps")
             lines.append("")
@@ -2729,5 +3263,7 @@ def write_result_artifacts(result, output_dir, file_stem):
                     f"(status `{att.get('status_code')}`, latency_ms `{att.get('latency_ms')}`)"
                 )
     lines.append("")
-    md_path.write_text("\n".join(lines), encoding="utf-8")
+    md_text = "\n".join(lines)
+    md_path.write_text(md_text, encoding="utf-8")
+    latest_md_path.write_text(md_text, encoding="utf-8")
     return {"json_path": str(json_path), "markdown_path": str(md_path)}

@@ -137,4 +137,21 @@ There is **no separate “ChatGPT” participant** in this thread. When people s
 
 ---
 
+## 8. Final closeout report (end-of-day)
+
+- Full broad regression sweep executed before closeout:
+  - `python -m pytest tests/run_regression.py -v --tb=short`
+  - Result: **717 passed**.
+- Commit created with intended code/session changes (excluding runtime journal noise files):
+  - Commit: `a09fd29`
+  - Message: `Finalize sequence/quality hardening and Brave tool integration.`
+- Push completed successfully:
+  - Branch: `openai-migration`
+  - Remote update: `c700a83..a09fd29  openai-migration -> openai-migration`
+- Remaining local modified files intentionally not committed (runtime journals):
+  - `memory/project_journal.jsonl`
+  - `memory/project_journal_archive.jsonl`
+
+---
+
 *End of session log for 2026-04-23 (Cursor).*

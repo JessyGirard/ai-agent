@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app import tool3_run_log
@@ -220,6 +221,9 @@ def run_tool3_regression_eval(
         }
         case_rows.append(row)
 
+    finished_utc = datetime.now(timezone.utc).isoformat()
+    for row in case_rows:
+        row["ran_at_utc"] = finished_utc
     result = {
         "suite_name": str(raw_suite.get("suite_name") or "tool3-regression-suite"),
         "target_name": str(raw_suite.get("target_name") or "tool3-regression-target"),
@@ -228,6 +232,7 @@ def run_tool3_regression_eval(
         "failed_cases": 0 if ok else len(case_rows),
         "ok": ok,
         "elapsed_seconds": elapsed,
+        "ran_at_utc": finished_utc,
         "cases": case_rows,
         "command_exit_code": int(proc.returncode),
     }

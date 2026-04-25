@@ -1,0 +1,30 @@
+{
+  "suite_name": "steps-demo",
+  "target_name": "operator",
+  "cases": [
+    {
+      "name": "2-step simple test",
+      "lane": "smoke",
+      "steps": [
+        {
+          "name": "step_1_get",
+          "method": "GET",
+          "url": "https://httpbin.org/json",
+          "expected_status_code": 200
+        },
+        {
+          "name": "step_2_post",
+          "method": "POST",
+          "url": "https://httpbin.org/post",
+          "request_headers": {
+            "Content-Type": "application/json"
+          },
+          "request_body": {
+            "id": "77"
+          },
+          "expected_status_code": 200
+        }
+      ]
+    }
+  ]
+}

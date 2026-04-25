@@ -7926,7 +7926,7 @@ def test_system_eval_lane_preserved_in_results_and_artifacts():
     assert len(result["cases"][2]["attempts"]) == 3, result["cases"][2]
     assert "repeat_count" not in result["cases"][0], result["cases"][0]
     assert "attempts" not in result["cases"][1], result["cases"][1]
-    assert result["cases"][3]["lane"] is None, result["cases"][3]
+    assert result["cases"][3]["lane"] == "smoke", result["cases"][3]
 
     with tempfile.TemporaryDirectory() as temp_dir:
         paths = system_eval_core.write_result_artifacts(
@@ -7934,14 +7934,14 @@ def test_system_eval_lane_preserved_in_results_and_artifacts():
         )
         written = json.loads(Path(paths["json_path"]).read_text(encoding="utf-8"))
         assert written["cases"][0]["lane"] == "stability", written
-        assert written["cases"][3]["lane"] is None, written
+        assert written["cases"][3]["lane"] == "smoke", written
         assert written["cases"][0]["attempts_passed"] == 3, written
         assert written["cases"][2]["attempts_passed"] == 3, written
         md_text = Path(paths["markdown_path"]).read_text(encoding="utf-8")
         assert "lane=`stability`" in md_text, md_text
         assert "lane=`correctness`" in md_text, md_text
         assert "lane=`consistency`" in md_text, md_text
-        assert "lane=(none)" in md_text, md_text
+        assert "lane=`smoke`" in md_text, md_text
         assert "stability:" in md_text, md_text
         assert "stability_attempts=`3`" in md_text, md_text
         assert "consistency:" in md_text, md_text
@@ -10169,7 +10169,14 @@ def test_system_eval_execute_suite_success_with_fake_adapter():
     assert result["failed_cases"] == 0, result
     assert result["passed_cases"] == 1, result
     assert result["cases"][0]["ok"] is True, result["cases"][0]
-    assert result["cases"][0]["lane"] is None, result["cases"][0]
+    assert result["cases"][0]["lane"] == "smoke", result["cases"][0]
+    assert result["cases"][0]["method"] == "POST", result["cases"][0]
+    assert result["cases"][0]["expected_status_code"] == 200, result["cases"][0]
+    assert result["cases"][0]["request_headers"] == {}, result["cases"][0]
+    assert result["cases"][0]["request_body"] == {"input": "hello"}, result["cases"][0]
+    assert result["cases"][0]["error_message"] is None, result["cases"][0]
+    assert "request_method" not in result["cases"][0], result["cases"][0]
+    assert result["cases"][0]["response_summary"] == "service healthy", result["cases"][0]
 
 
 def test_system_eval_execute_suite_records_assertion_failures():
@@ -10204,6 +10211,8 @@ def test_system_eval_execute_suite_records_assertion_failures():
     assert result["failed_cases"] == 1, result
     assert result["cases"][0]["ok"] is False, result["cases"][0]
     assert any("missing required token" in f for f in result["cases"][0]["failures"]), result["cases"][0]
+    assert isinstance(result["cases"][0].get("error_message"), str), result["cases"][0]
+    assert "missing required token" in result["cases"][0]["error_message"], result["cases"][0]
 
 
 def test_system_eval_expected_status_passes():
@@ -12512,13 +12521,14 @@ def test_system_eval_step_results_all_pass_two_steps():
 
     result = system_eval_core.execute_suite(suite, adapter=A())
     assert result["ok"] is True, result
-    sr = result["cases"][0].get("step_results")
+    sr = result["cases"][0].get("steps")
     assert sr is not None and len(sr) == 2, sr
     assert sr[0]["step"] == "login" and sr[0]["status"] == "PASS", sr[0]
     assert sr[0]["url"] == "https://example.com/login" and sr[0]["latency_ms"] == 10, sr[0]
     assert "reason" not in sr[0], sr[0]
     assert sr[1]["step"] == "get_user" and sr[1]["status"] == "PASS", sr[1]
     assert sr[1]["url"] == "https://example.com/users/ab" and sr[1]["latency_ms"] == 20, sr[1]
+    assert "step_results" not in result["cases"][0], result["cases"][0]
 
 
 def test_system_eval_step_results_second_step_fail():
@@ -12567,12 +12577,33 @@ def test_system_eval_step_results_second_step_fail():
 
     result = system_eval_core.execute_suite(suite, adapter=A())
     assert result["ok"] is False, result
-    sr = result["cases"][0].get("step_results")
+    sr = result["cases"][0].get("steps")
     assert sr is not None and len(sr) == 2, sr
     assert sr[0]["status"] == "PASS" and sr[0]["step"] == "login", sr[0]
     assert sr[1]["status"] == "FAIL" and sr[1]["step"] == "get_user", sr[1]
     assert sr[1].get("reason"), sr[1]
     assert "body_json_path" in sr[1]["reason"] or "missing" in sr[1]["reason"].lower(), sr[1]["reason"]
+    assert "step_results" not in result["cases"][0], result["cases"][0]
+
+
+def test_write_result_artifacts_filename_includes_utc_timestamp_from_ran_at():
+    result = {
+        "suite_name": "stem-ts",
+        "target_name": "t",
+        "executed_cases": 0,
+        "passed_cases": 0,
+        "failed_cases": 0,
+        "ok": True,
+        "elapsed_seconds": 0.0,
+        "ran_at_utc": "2026-04-25T12:34:56.789012+00:00",
+        "cases": [],
+    }
+    with tempfile.TemporaryDirectory() as td:
+        paths = system_eval_core.write_result_artifacts(result, td, file_stem="my_run")
+        json_path = Path(paths["json_path"])
+        md_path = Path(paths["markdown_path"])
+    assert json_path.name == "my_run_2026-04-25_123456.json", json_path.name
+    assert md_path.name == "my_run_2026-04-25_123456.md", md_path.name
 
 
 def test_write_result_artifacts_markdown_includes_step_results_pass():
@@ -12624,6 +12655,7 @@ def test_write_result_artifacts_markdown_includes_step_results_pass():
     with tempfile.TemporaryDirectory() as td:
         paths = system_eval_core.write_result_artifacts(result, td, file_stem="steps_md_pass")
         md_text = Path(paths["markdown_path"]).read_text(encoding="utf-8")
+    assert "Run at (UTC):" in md_text, md_text
     assert "### Steps" in md_text, md_text
     assert "login" in md_text and "get_user" in md_text, md_text
     assert "PASS" in md_text, md_text
@@ -12685,6 +12717,148 @@ def test_write_result_artifacts_markdown_includes_step_results_fail():
     assert "FAIL" in md_text, md_text
     assert "Reason:" in md_text, md_text
     assert "missing.leaf" in md_text or "body_json_path" in md_text, md_text
+
+
+def test_system_eval_steps_two_step_output_contains_single_request_fields():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "steps-fields",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "scenario_steps_fields",
+                    "assertions": {},
+                    "steps": [
+                        {
+                            "name": "s1",
+                            "method": "GET",
+                            "url": "https://example.com/one",
+                            "payload": {},
+                            "extract": {"id": "$.data.id", "token": "$.token"},
+                            "status_code": 200,
+                        },
+                        {
+                            "name": "s2",
+                            "method": "POST",
+                            "url": "https://example.com/two/{{id}}",
+                            "headers": {
+                                "Content-Type": "application/json",
+                                "Authorization": "Bearer {{token}}",
+                                "X-Missing": "{{never_set}}",
+                            },
+                            "payload": {"query": "what is an api", "id": "{{id}}"},
+                            "status_code": 200,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.n = 0
+
+        def run_case(self, case):
+            self.n += 1
+            if self.n == 1:
+                body = '{"token":"tok-123","data":{"id":"42"}}'
+            else:
+                body = '{"ok":true,"n":2}'
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text=body, latency_ms=5 + self.n, response_headers={"Content-Type": "application/json"}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is True, result
+    case0 = result["cases"][0]
+    assert case0["ok"] is True, case0
+    assert isinstance(case0.get("steps"), list) and len(case0["steps"]) == 2, case0
+    s1 = case0["steps"][0]
+    s2 = case0["steps"][1]
+    for s in (s1, s2):
+        for k in (
+            "method",
+            "url",
+            "request_headers",
+            "request_body",
+            "status_code",
+            "expected_status_code",
+            "latency_ms",
+            "response_headers",
+            "response_summary",
+            "output_preview",
+            "output_full",
+            "ok",
+            "failures",
+            "error_message",
+        ):
+            assert k in s, (k, s)
+    assert s1["request_body"] is None, s1
+    assert s2["url"] == "https://example.com/two/42", s2
+    assert s2["request_headers"]["Authorization"] == "[REDACTED]", s2
+    assert s2["request_headers"]["X-Missing"] == "{{never_set}}", s2
+    assert s2["request_body"] == {"query": "what is an api", "id": "42"}, s2
+
+
+def test_system_eval_steps_structured_json_path_assertions_failures_populated():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "steps-structured-assertions",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "scenario_structured_assertions",
+                    "assertions": {},
+                    "steps": [
+                        {
+                            "name": "step_1",
+                            "method": "GET",
+                            "url": "https://example.com/one",
+                            "payload": {},
+                            "assertions": [
+                                {"type": "json_path_equals", "path": "$.id", "expected": 77},
+                                {"type": "json_path_equals", "path": "$.id", "expected": 99},
+                            ],
+                        },
+                        {
+                            "name": "step_2",
+                            "method": "GET",
+                            "url": "https://example.com/two",
+                            "payload": {},
+                            "status_code": 200,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class A:
+        def __init__(self):
+            self.n = 0
+
+        def run_case(self, case):
+            self.n += 1
+            if self.n == 1:
+                text = '{"id":77}'
+            else:
+                text = '{"ok":true}'
+            return system_eval_core.AdapterResult(
+                ok=True, status_code=200, output_text=text, latency_ms=9 + self.n, response_headers={}
+            )
+
+    result = system_eval_core.execute_suite(suite, adapter=A())
+    assert result["ok"] is False, result
+    case0 = result["cases"][0]
+    assert case0["ok"] is False, case0
+    assert isinstance(case0.get("failures"), list) and case0["failures"], case0
+    assert any("body_json_path_equals mismatch" in f for f in case0["failures"]), case0
+    sr = case0.get("steps") or []
+    assert len(sr) == 1, sr  # fail-fast at failing step
+    assert sr[0]["ok"] is False, sr[0]
+    assert isinstance(sr[0].get("failures"), list) and sr[0]["failures"], sr[0]
+    assert any("body_json_path_equals mismatch" in f for f in sr[0]["failures"]), sr[0]
 
 
 def test_system_eval_step_templates_missing_raises():
@@ -14369,13 +14543,24 @@ def test_system_eval_runner_script_smoke_with_fake_http():
             assert completed.returncode == 0, (
                 f"system_eval_runner smoke failed\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
             )
-            assert (output_dir / "runner_smoke.json").exists(), "Missing JSON artifact"
-            assert (output_dir / "runner_smoke.md").exists(), "Missing markdown artifact"
-            artifact = json.loads((output_dir / "runner_smoke.json").read_text(encoding="utf-8"))
+            json_line = next(
+                (ln for ln in completed.stdout.splitlines() if ln.startswith("SYSTEM_EVAL_JSON:")), ""
+            )
+            assert json_line, f"missing SYSTEM_EVAL_JSON in stdout:\n{completed.stdout}"
+            json_path = Path(json_line.split(":", 1)[1].strip())
+            assert json_path.is_file(), json_path
+            md_line = next(
+                (ln for ln in completed.stdout.splitlines() if ln.startswith("SYSTEM_EVAL_MARKDOWN:")), ""
+            )
+            assert md_line, completed.stdout
+            md_path = Path(md_line.split(":", 1)[1].strip())
+            assert md_path.is_file(), md_path
+            assert json_path.stem == md_path.stem, (json_path, md_path)
+            artifact = json.loads(json_path.read_text(encoding="utf-8"))
             assert artifact["cases"][0].get("lane") == "stability", artifact
             assert artifact["cases"][0].get("stability_attempts") == 3, artifact
             assert artifact["cases"][0].get("attempts_total") == 3, artifact
-            md_smoke = (output_dir / "runner_smoke.md").read_text(encoding="utf-8")
+            md_smoke = md_path.read_text(encoding="utf-8")
             assert "lane=`stability`" in md_smoke, md_smoke
             assert "stability:" in md_smoke, md_smoke
         finally:
@@ -14596,6 +14781,113 @@ def test_tool1_ui_prepare_single_request_merges_query_and_headers():
     assert prep["headers"]["Authorization"] == "Bearer old", prep
     assert prep["headers"]["X-API-Key"] == "secret-123", prep
     assert prep["payload"] == {"ok": True}, prep
+
+
+def test_tool1_prepare_single_request_substitutes_env_placeholders_BRAVE_API_KEY():
+    from app import ui as app_ui
+
+    with patch.dict(os.environ, {"BRAVE_API_KEY": "subbed-brave-token"}, clear=False):
+        prep, err = app_ui._tool1_prepare_single_request(
+            url="https://example.com/base?trace={{BRAVE_API_KEY}}",
+            method="POST",
+            body_text=json.dumps({"q": "{{BRAVE_API_KEY}}", "nested": {"t": "{{BRAVE_API_KEY}}"}}),
+            headers_text=json.dumps(
+                {"X-Subscription-Token": "{{BRAVE_API_KEY}}", "Accept": "application/json"}
+            ),
+            query_params_text=json.dumps({"x": "pre-{{BRAVE_API_KEY}}-post"}),
+            auth_mode="none",
+            bearer_token="",
+            basic_username="",
+            basic_password="",
+            api_key_header_name="",
+            api_key_value="",
+        )
+    assert err is None, err
+    assert prep is not None
+    assert prep["headers"]["X-Subscription-Token"] == "subbed-brave-token", prep["headers"]
+    assert prep["payload"]["q"] == "subbed-brave-token", prep["payload"]
+    assert prep["payload"]["nested"]["t"] == "subbed-brave-token", prep["payload"]
+    assert prep["final_url"].count("subbed-brave-token") >= 2, prep["final_url"]
+
+
+def test_tool1_prepare_single_request_missing_env_placeholder_errors_before_request():
+    from app import ui as app_ui
+
+    ghost = "ZZ_TOOL1_MISSING_PLACEHOLDER_VAR_99421"
+    assert ghost not in os.environ
+    prep, err = app_ui._tool1_prepare_single_request(
+        url="https://example.com/h?token={{" + ghost + "}}",
+        method="GET",
+        body_text="",
+        headers_text="{}",
+        query_params_text="{}",
+        auth_mode="none",
+        bearer_token="",
+        basic_username="",
+        basic_password="",
+        api_key_header_name="",
+        api_key_value="",
+    )
+    assert prep is None, prep
+    assert err and ghost in err, err
+    assert "Unset or empty environment variable" in err, err
+
+
+def test_tool1_single_request_env_placeholder_execute_suite_local_http_200():
+    from app import ui as app_ui
+
+    token = "local-roundtrip-brave-style-token"
+    with patch.dict(os.environ, {"BRAVE_API_KEY": token}, clear=False):
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                got = self.headers.get("X-Subscription-Token", "")
+                n = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(n) if n > 0 else b""
+                try:
+                    body = json.loads(raw.decode("utf-8") or "{}")
+                except json.JSONDecodeError:
+                    body = {}
+                ok = got == token and body.get("q") == "what is an API" and body.get("country") == "US"
+                out = b'{"ok":true}' if ok else b'{"ok":false}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, format, *args):
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            port = server.server_port
+            prep, err = app_ui._tool1_prepare_single_request(
+                url=f"http://127.0.0.1:{port}/res/v1/llm/context",
+                method="POST",
+                body_text=json.dumps(
+                    {"q": "what is an API", "country": "US", "search_lang": "en"},
+                ),
+                headers_text=json.dumps({"X-Subscription-Token": "{{BRAVE_API_KEY}}"}),
+                query_params_text="{}",
+                auth_mode="none",
+                bearer_token="",
+                basic_username="",
+                basic_password="",
+                api_key_header_name="",
+                api_key_value="",
+            )
+            assert err is None, err
+            suite = system_eval_core.validate_suite(prep["suite_dict"])
+            adapter = system_eval_core.HttpTargetAdapter(default_timeout_seconds=5)
+            result = system_eval_core.execute_suite(suite, adapter=adapter, fail_fast=False)
+            assert result.get("ok") is True, result
+            assert result["cases"][0]["status_code"] == 200, result["cases"][0]
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 def test_tool1_ui_parse_headers_invalid_json_errors():
@@ -18518,12 +18810,24 @@ def main():
         ("system_eval_step_results_all_pass_two_steps", test_system_eval_step_results_all_pass_two_steps),
         ("system_eval_step_results_second_step_fail", test_system_eval_step_results_second_step_fail),
         (
+            "write_result_artifacts_filename_includes_utc_timestamp_from_ran_at",
+            test_write_result_artifacts_filename_includes_utc_timestamp_from_ran_at,
+        ),
+        (
             "write_result_artifacts_markdown_includes_step_results_pass",
             test_write_result_artifacts_markdown_includes_step_results_pass,
         ),
         (
             "write_result_artifacts_markdown_includes_step_results_fail",
             test_write_result_artifacts_markdown_includes_step_results_fail,
+        ),
+        (
+            "system_eval_steps_two_step_output_contains_single_request_fields",
+            test_system_eval_steps_two_step_output_contains_single_request_fields,
+        ),
+        (
+            "system_eval_steps_structured_json_path_assertions_failures_populated",
+            test_system_eval_steps_structured_json_path_assertions_failures_populated,
         ),
         ("system_eval_body_contains_passes", test_system_eval_body_contains_passes),
         ("system_eval_body_contains_fails", test_system_eval_body_contains_fails),
@@ -18640,6 +18944,18 @@ def main():
         (
             "tool1_ui_prepare_single_request_merges_query_and_headers",
             test_tool1_ui_prepare_single_request_merges_query_and_headers,
+        ),
+        (
+            "tool1_prepare_single_request_substitutes_env_placeholders_BRAVE_API_KEY",
+            test_tool1_prepare_single_request_substitutes_env_placeholders_BRAVE_API_KEY,
+        ),
+        (
+            "tool1_prepare_single_request_missing_env_placeholder_errors_before_request",
+            test_tool1_prepare_single_request_missing_env_placeholder_errors_before_request,
+        ),
+        (
+            "tool1_single_request_env_placeholder_execute_suite_local_http_200",
+            test_tool1_single_request_env_placeholder_execute_suite_local_http_200,
         ),
         ("tool1_ui_parse_headers_invalid_json_errors", test_tool1_ui_parse_headers_invalid_json_errors),
         (

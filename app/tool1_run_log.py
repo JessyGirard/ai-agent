@@ -408,6 +408,13 @@ def build_tool1_run_record_single(
     else:
         sn, tn = "single-request", "operator"
         requests = []
+    artifact_stem = "single_request"
+    jp = artifact_paths.get("json_path") if isinstance(artifact_paths, dict) else None
+    if jp:
+        try:
+            artifact_stem = Path(str(jp)).stem
+        except (TypeError, ValueError):
+            artifact_stem = "single_request"
     rec: dict[str, Any] = {
         "schema_version": TOOL1_RUN_LOG_SCHEMA_VERSION,
         "run_timestamp_utc": _utc_now_iso(),
@@ -417,7 +424,7 @@ def build_tool1_run_record_single(
         "target_name": tn,
         "configuration": {
             "output_dir": _resolve_output_dir_for_log(output_dir_rel, root),
-            "file_stem": "single_request",
+            "file_stem": artifact_stem,
             "fail_fast": False,
             "timeout_seconds": int(timeout_seconds),
         },

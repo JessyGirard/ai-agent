@@ -1,0 +1,148 @@
+{
+  "suite_name": "steps-demo",
+  "target_name": "operator",
+  "executed_cases": 1,
+  "passed_cases": 1,
+  "failed_cases": 0,
+  "ok": true,
+  "elapsed_seconds": 1.946,
+  "ran_at_utc": "2026-04-25T06:51:34.609119+00:00",
+  "cases": [
+    {
+      "name": "2-step simple test",
+      "lane": "smoke",
+      "ok": true,
+      "failures": [],
+      "error_message": null,
+      "status_code": 200,
+      "expected_status_code": 200,
+      "latency_ms": 948,
+      "output_preview": "{\n  \"args\": {}, \n  \"data\": \"{}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"2\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-requests/2.33.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69ec6477-616b279459e1cda87eaae0d1\"\n  }, \n  \"json\": {}, \n  \"origin\": \"24.64.148.53\", \n  \"url\": \"https://httpbin.org/post\"\n}\n",
+      "output_full": "{\n  \"args\": {}, \n  \"data\": \"{}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"2\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-requests/2.33.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69ec6477-616b279459e1cda87eaae0d1\"\n  }, \n  \"json\": {}, \n  \"origin\": \"24.64.148.53\", \n  \"url\": \"https://httpbin.org/post\"\n}\n",
+      "response_summary": "python-requests/2.33.1",
+      "request_headers": {},
+      "request_body": {},
+      "response_headers": {
+        "Date": "Sat, 25 Apr 2026 06:51:35 GMT",
+        "Content-Type": "application/json",
+        "Content-Length": "439",
+        "Connection": "keep-alive",
+        "Server": "gunicorn/19.9.0",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Credentials": "true"
+      },
+      "method": "POST",
+      "url": "https://httpbin.org/post",
+      "variables": {},
+      "steps": [
+        {
+          "step": "step_1_get",
+          "status": "PASS",
+          "method": "GET",
+          "url": "https://httpbin.org/json",
+          "request_headers": {},
+          "request_body": null,
+          "status_code": 200,
+          "expected_status_code": 200,
+          "latency_ms": 993,
+          "response_headers": {
+            "Date": "Sat, 25 Apr 2026 06:51:34 GMT",
+            "Content-Type": "application/json",
+            "Content-Length": "429",
+            "Connection": "keep-alive",
+            "Server": "gunicorn/19.9.0",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true"
+          },
+          "response_summary": "Wake up to WonderWidgets!",
+          "output_preview": "{\n  \"slideshow\": {\n    \"author\": \"Yours Truly\", \n    \"date\": \"date of publication\", \n    \"slides\": [\n      {\n        \"title\": \"Wake up to WonderWidgets!\", \n        \"type\": \"all\"\n      }, \n      {\n        \"items\": [\n          \"Why <em>WonderWidgets</em> are great\", \n          \"Who <em>buys</em> WonderWidgets\"\n        ], \n        \"title\": \"Overview\", \n        \"type\": \"all\"\n      }\n    ], \n    \"title\": \"Sample Slide Show\"\n  }\n}\n",
+          "output_full": "{\n  \"slideshow\": {\n    \"author\": \"Yours Truly\", \n    \"date\": \"date of publication\", \n    \"slides\": [\n      {\n        \"title\": \"Wake up to WonderWidgets!\", \n        \"type\": \"all\"\n      }, \n      {\n        \"items\": [\n          \"Why <em>WonderWidgets</em> are great\", \n          \"Who <em>buys</em> WonderWidgets\"\n        ], \n        \"title\": \"Overview\", \n        \"type\": \"all\"\n      }\n    ], \n    \"title\": \"Sample Slide Show\"\n  }\n}\n",
+          "ok": true,
+          "failures": [],
+          "error_message": null
+        },
+        {
+          "step": "step_2_post",
+          "status": "PASS",
+          "method": "POST",
+          "url": "https://httpbin.org/post",
+          "request_headers": {},
+          "request_body": {},
+          "status_code": 200,
+          "expected_status_code": 200,
+          "latency_ms": 948,
+          "response_headers": {
+            "Date": "Sat, 25 Apr 2026 06:51:35 GMT",
+            "Content-Type": "application/json",
+            "Content-Length": "439",
+            "Connection": "keep-alive",
+            "Server": "gunicorn/19.9.0",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true"
+          },
+          "response_summary": "python-requests/2.33.1",
+          "output_preview": "{\n  \"args\": {}, \n  \"data\": \"{}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"2\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-requests/2.33.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69ec6477-616b279459e1cda87eaae0d1\"\n  }, \n  \"json\": {}, \n  \"origin\": \"24.64.148.53\", \n  \"url\": \"https://httpbin.org/post\"\n}\n",
+          "output_full": "{\n  \"args\": {}, \n  \"data\": \"{}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"2\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-requests/2.33.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69ec6477-616b279459e1cda87eaae0d1\"\n  }, \n  \"json\": {}, \n  \"origin\": \"24.64.148.53\", \n  \"url\": \"https://httpbin.org/post\"\n}\n",
+          "ok": true,
+          "failures": [],
+          "error_message": null
+        }
+      ],
+      "step_results": [
+        {
+          "step": "step_1_get",
+          "status": "PASS",
+          "method": "GET",
+          "url": "https://httpbin.org/json",
+          "request_headers": {},
+          "request_body": null,
+          "status_code": 200,
+          "expected_status_code": 200,
+          "latency_ms": 993,
+          "response_headers": {
+            "Date": "Sat, 25 Apr 2026 06:51:34 GMT",
+            "Content-Type": "application/json",
+            "Content-Length": "429",
+            "Connection": "keep-alive",
+            "Server": "gunicorn/19.9.0",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true"
+          },
+          "response_summary": "Wake up to WonderWidgets!",
+          "output_preview": "{\n  \"slideshow\": {\n    \"author\": \"Yours Truly\", \n    \"date\": \"date of publication\", \n    \"slides\": [\n      {\n        \"title\": \"Wake up to WonderWidgets!\", \n        \"type\": \"all\"\n      }, \n      {\n        \"items\": [\n          \"Why <em>WonderWidgets</em> are great\", \n          \"Who <em>buys</em> WonderWidgets\"\n        ], \n        \"title\": \"Overview\", \n        \"type\": \"all\"\n      }\n    ], \n    \"title\": \"Sample Slide Show\"\n  }\n}\n",
+          "output_full": "{\n  \"slideshow\": {\n    \"author\": \"Yours Truly\", \n    \"date\": \"date of publication\", \n    \"slides\": [\n      {\n        \"title\": \"Wake up to WonderWidgets!\", \n        \"type\": \"all\"\n      }, \n      {\n        \"items\": [\n          \"Why <em>WonderWidgets</em> are great\", \n          \"Who <em>buys</em> WonderWidgets\"\n        ], \n        \"title\": \"Overview\", \n        \"type\": \"all\"\n      }\n    ], \n    \"title\": \"Sample Slide Show\"\n  }\n}\n",
+          "ok": true,
+          "failures": [],
+          "error_message": null
+        },
+        {
+          "step": "step_2_post",
+          "status": "PASS",
+          "method": "POST",
+          "url": "https://httpbin.org/post",
+          "request_headers": {},
+          "request_body": {},
+          "status_code": 200,
+          "expected_status_code": 200,
+          "latency_ms": 948,
+          "response_headers": {
+            "Date": "Sat, 25 Apr 2026 06:51:35 GMT",
+            "Content-Type": "application/json",
+            "Content-Length": "439",
+            "Connection": "keep-alive",
+            "Server": "gunicorn/19.9.0",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true"
+          },
+          "response_summary": "python-requests/2.33.1",
+          "output_preview": "{\n  \"args\": {}, \n  \"data\": \"{}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"2\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-requests/2.33.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69ec6477-616b279459e1cda87eaae0d1\"\n  }, \n  \"json\": {}, \n  \"origin\": \"24.64.148.53\", \n  \"url\": \"https://httpbin.org/post\"\n}\n",
+          "output_full": "{\n  \"args\": {}, \n  \"data\": \"{}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"2\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-requests/2.33.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69ec6477-616b279459e1cda87eaae0d1\"\n  }, \n  \"json\": {}, \n  \"origin\": \"24.64.148.53\", \n  \"url\": \"https://httpbin.org/post\"\n}\n",
+          "ok": true,
+          "failures": [],
+          "error_message": null
+        }
+      ],
+      "ran_at_utc": "2026-04-25T06:51:34.609119+00:00"
+    }
+  ]
+}

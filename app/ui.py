@@ -825,22 +825,10 @@ def _tool1_prepare_single_request(
     query_params, q_err = _tool1_parse_query_params_json(query_params_text)
     if q_err:
         return None, q_err
-    final_url = _tool1_merge_url_with_query_params(url, query_params) if query_params else url
     method_u = (method or "GET").upper()
     headers, hdr_err = _tool1_parse_custom_headers_json(headers_text)
     if hdr_err:
         return None, hdr_err
-    headers, auth_err = _tool1_merge_custom_headers_with_auth(
-        headers,
-        auth_mode=auth_mode,
-        bearer_token=bearer_token,
-        basic_username=basic_username,
-        basic_password=basic_password,
-        api_key_header_name=api_key_header_name,
-        api_key_value=api_key_value,
-    )
-    if auth_err:
-        return None, auth_err
     payload: dict = {}
     if method_u in ("POST", "PUT", "PATCH"):
         raw = (body_text or "").strip()
@@ -852,6 +840,26 @@ def _tool1_prepare_single_request(
             if not isinstance(parsed, dict):
                 return None, "JSON body must be a JSON object (e.g. {\"id\": 1})."
             payload = parsed
+    url, query_params, headers, payload, sub_err = system_eval.apply_env_placeholders_single_request(
+        url=url,
+        query_params=query_params,
+        headers=headers,
+        payload=payload,
+    )
+    if sub_err:
+        return None, sub_err
+    final_url = _tool1_merge_url_with_query_params(url, query_params) if query_params else url
+    headers, auth_err = _tool1_merge_custom_headers_with_auth(
+        headers,
+        auth_mode=auth_mode,
+        bearer_token=bearer_token,
+        basic_username=basic_username,
+        basic_password=basic_password,
+        api_key_header_name=api_key_header_name,
+        api_key_value=api_key_value,
+    )
+    if auth_err:
+        return None, auth_err
     suite_dict = {
         "suite_name": "single-request",
         "target_name": "operator",
@@ -1289,7 +1297,10 @@ def render_tool1_panel():
         key="tool1_output_dir",
     )
     st.markdown("##### Single request (no suite file)")
-    st.caption("Same operator/eval path as suite runs; writes `single_request` artifacts.")
+    st.caption(
+        "Same operator/eval path as suite runs; writes timestamped artifacts "
+        "``single_request_<YYYY-MM-DD>_<HHMMSS>.{json,md}`` (UTC) under the output directory."
+    )
     st.number_input("HTTP timeout (seconds)", min_value=1, max_value=300, key="tool1_timeout")
     st.selectbox("Method", ["GET", "POST", "PUT", "PATCH", "DELETE"], key="tool1_single_method")
     st.text_input("URL", key="tool1_single_url", placeholder="https://api.example.com/v1/resource")
