@@ -4771,6 +4771,893 @@ def test_interaction015_plain_answer_override_routes_to_conversation_mode():
     assert "Use exactly these three sections in this order:\n\nKnown:" not in system_prompt
 
 
+def _runtime_context_sample_minimal():
+    return {
+        "source": "ui_streamlit",
+        "active_surface": "Tool 1",
+        "tool1": {
+            "single_request": {
+                "session": {
+                    "method": "PUT",
+                    "url": "https://httpbin.org/put",
+                    "query_params_json": '{"update":"true"}',
+                    "headers_json": '{"Content-Type":"application/json"}',
+                    "body_json": '{"update":"true","user":"jessy"}',
+                    "auth_mode_label": "None",
+                    "timeout_seconds": 20,
+                    "output_dir": "logs/system_eval",
+                }
+            },
+            "suite": {
+                "suite_path": "system_tests/suites/tool1_local_starter_suite.json",
+                "fail_fast": False,
+                "output_dir": "logs/system_eval",
+            },
+            "last_bundle": {
+                "ok": True,
+                "artifact_paths": {
+                    "json_path": "logs/system_eval/single_request_2026-04-25_085732.json",
+                    "markdown_path": "logs/system_eval/single_request_2026-04-25_085732.md",
+                },
+                "latest_case": {
+                    "status_code": 200,
+                    "latency_ms": 1053,
+                    "failures": [],
+                    "method": "PUT",
+                    "url": "https://httpbin.org/put",
+                    "output_full": "VERBOSE_BODY_SENTINEL_SHOULD_NOT_APPEAR_IN_PROMPT",
+                },
+            },
+            "recent_runs": [
+                {
+                    "method": "PUT",
+                    "url": "https://httpbin.org/put",
+                    "status_code": 200,
+                    "failures": [],
+                },
+                {
+                    "method": "PATCH",
+                    "url": "https://httpbin.org/patch",
+                    "status_code": 405,
+                    "failures": ["method_not_allowed"],
+                },
+            ],
+        },
+        "tool2": {
+            "suite": {
+                "suite_path": "system_tests/suites/tool2_prompt_demo/tool2_prompt_response_smoke.json",
+                "fail_fast": False,
+                "output_dir": "logs/system_eval",
+            },
+            "last_bundle": {
+                "ok": False,
+                "artifact_paths": {
+                    "json_path": "logs/system_eval/tool2_prompt_response_smoke_2026-04-25_090000.json",
+                    "markdown_path": "logs/system_eval/tool2_prompt_response_smoke_2026-04-25_090000.md",
+                },
+                "latest_case": {
+                    "status_code": 200,
+                    "failures": ["expected_response_missing_substring: token"],
+                },
+            },
+        },
+    }
+
+
+def test_runtime_context01_prompt_builder_no_context_does_not_inject_api_runner_block():
+    reset_agent_state()
+    system_prompt, _ = playground.build_messages("Help me continue the API testing workflow.")
+    assert "API RUNNER CONTEXT:" not in system_prompt
+    assert "Continue the current API runner workflow" not in system_prompt
+    assert "Help fill Tool 1/Tool 2 fields" not in system_prompt
+    assert "Interpret the latest API runner results" not in system_prompt
+    assert "Suggest exactly one next API test" not in system_prompt
+    assert "Do not ask generic reset questions" not in system_prompt
+
+
+def test_runtime_context02_prompt_builder_injects_api_runner_context_block_when_provided():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Help me continue from the current API runner state.",
+        runtime_context=runtime_context,
+    )
+    assert "API RUNNER CONTEXT:" in system_prompt
+    assert "Tool 1" in system_prompt
+    assert "Tool 2" in system_prompt
+    assert "put" in system_prompt.lower()
+    assert "httpbin.org/put" in system_prompt.lower()
+    assert "system_tests/suites/tool1_local_starter_suite.json" in system_prompt
+
+
+def test_runtime_context03_prompt_builder_includes_runner_workflow_instructions_when_context_present():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "What should I run next in the API runner?",
+        runtime_context=runtime_context,
+    )
+    assert "Continue the current API runner workflow" in system_prompt
+    assert "Help fill Tool 1/Tool 2 fields" in system_prompt
+    assert "Interpret the latest API runner results" in system_prompt
+    assert "Suggest exactly one next API test" in system_prompt
+    assert "Do not ask generic reset questions" in system_prompt
+    assert "what would you like to do" not in system_prompt.lower()
+
+
+def test_runtime_context04_prompt_builder_includes_summary_fields_only_and_excludes_output_full():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Continue API testing from current state.",
+        runtime_context=runtime_context,
+    )
+
+    assert "put" in system_prompt.lower()
+    assert "httpbin.org/put" in system_prompt.lower()
+    assert "system_tests/suites/tool1_local_starter_suite.json" in system_prompt
+    assert "status_code" in system_prompt or "Status code" in system_prompt
+    assert "200" in system_prompt
+    assert "failures" in system_prompt or "Failures" in system_prompt
+    assert "logs/system_eval/single_request_2026-04-25_085732.json" in system_prompt
+    assert "logs/system_eval/single_request_2026-04-25_085732.md" in system_prompt
+
+    assert "output_full" not in system_prompt
+    assert "VERBOSE_BODY_SENTINEL_SHOULD_NOT_APPEAR_IN_PROMPT" not in system_prompt
+
+
+def test_runtime_context05_playground_signatures_accept_optional_runtime_context_none():
+    reset_agent_state()
+
+    sp1, msgs1 = playground.build_messages("What is an API?")
+    assert isinstance(sp1, str) and sp1.strip()
+    assert isinstance(msgs1, list) and msgs1
+
+    sp2, msgs2 = playground.build_messages("What is an API?", runtime_context=None)
+    assert isinstance(sp2, str) and sp2.strip()
+    assert isinstance(msgs2, list) and msgs2
+
+    original = playground.ask_ai
+    try:
+        playground.ask_ai = lambda messages, system_prompt=None: (
+            "Answer:\nOK.\n\nCurrent state:\nFocus: ai-agent project\n"
+            "Stage: Phase 4 action-layer refinement\nAction type: research\n\n"
+            "Next step:\nContinue."
+        )
+
+        out1 = playground.handle_user_input("Hello")
+        assert isinstance(out1, str) and out1.strip()
+
+        out2 = playground.handle_user_input("Hello", runtime_context=None)
+        assert isinstance(out2, str) and out2.strip()
+    finally:
+        playground.ask_ai = original
+
+
+def test_runtime_context06_prompt_builder_instructs_latest_case_specific_details_and_one_next_test():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Use the latest API runner case and tell me what to run next.",
+        runtime_context=runtime_context,
+    )
+    assert "If latest_case is available, explicitly mention HTTP method, URL, status_code, pass/fail with failures, and latency_ms when present." in system_prompt
+    assert "The reply must end with exactly one concrete next API test." in system_prompt
+
+
+def test_runtime_context07_prompt_builder_prioritizes_latest_case_method_and_url_over_session_values():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["single_request"]["session"]["method"] = "GET"
+    runtime_context["tool1"]["single_request"]["session"]["url"] = "https://httpbin.org/get"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["method"] = "PATCH"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["url"] = "https://httpbin.org/patch"
+    system_prompt, _ = playground.build_messages(
+        "Use latest API case details.",
+        runtime_context=runtime_context,
+    )
+    assert "Tool 1 latest method: PATCH" in system_prompt
+    assert "Tool 1 latest URL: https://httpbin.org/patch" in system_prompt
+
+
+def test_runtime_context08_prompt_builder_includes_api_diagnosis_mode_and_allow_header():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["response_headers"] = {
+        "Allow": "PATCH, OPTIONS"
+    }
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["error_message"] = "method_not_allowed"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["response_summary"] = "method mismatch"
+    system_prompt, _ = playground.build_messages(
+        "Diagnose this latest API runner result.",
+        runtime_context=runtime_context,
+    )
+    assert "API DIAGNOSIS MODE:" in system_prompt
+    assert "Tool 1 latest response_headers.Allow: PATCH, OPTIONS" in system_prompt
+    assert "The reply must end with exactly one concrete next API test." in system_prompt
+    assert "output_full" not in system_prompt
+    assert "VERBOSE_BODY_SENTINEL_SHOULD_NOT_APPEAR_IN_PROMPT" not in system_prompt
+
+
+def test_runtime_context09_prompt_builder_requires_allow_header_reasoning_for_405_mismatch():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["status_code"] = 405
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["method"] = "PATCH"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["url"] = "https://httpbin.org/put"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["response_headers"] = {
+        "Allow": "PUT, OPTIONS"
+    }
+    system_prompt, _ = playground.build_messages(
+        "Diagnose this 405 result.",
+        runtime_context=runtime_context,
+    )
+    assert "For HTTP 405 with response_headers.Allow present: explicitly cite the allowed methods from Allow." in system_prompt
+    assert 'Must include this form: "This endpoint allows <METHODS>".' in system_prompt
+    assert 'Must include this mismatch form: "<USED METHOD> was used, but <ALLOWED METHOD> is required".' in system_prompt
+    assert "allowed methods" in system_prompt
+    assert "The reply must end with exactly one concrete next API test." in system_prompt
+    low = system_prompt.lower()
+    assert "verify" not in low
+    assert "check supported methods" not in low
+    assert "output_full" not in system_prompt
+    assert "VERBOSE_BODY_SENTINEL_SHOULD_NOT_APPEAR_IN_PROMPT" not in system_prompt
+
+
+def test_runtime_context10_prompt_builder_includes_recent_test_pattern_and_pattern_instruction():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["recent_runs"] = [
+        {
+            "method": "PATCH",
+            "url": "https://httpbin.org/put",
+            "status_code": 405,
+            "failures": ["method not allowed"],
+        },
+        {
+            "method": "PATCH",
+            "url": "https://httpbin.org/put",
+            "status_code": 405,
+            "failures": ["method not allowed"],
+        },
+        {
+            "method": "PATCH",
+            "url": "https://httpbin.org/put",
+            "status_code": 405,
+            "failures": ["method not allowed"],
+        },
+    ]
+    system_prompt, _ = playground.build_messages(
+        "Diagnose repeated failures in recent runs.",
+        runtime_context=runtime_context,
+    )
+    assert "RECENT TEST PATTERN:" in system_prompt
+    assert "Case 1:" in system_prompt and "Case 2:" in system_prompt
+    assert "repeated issue" in system_prompt or "pattern exists" in system_prompt
+    assert "output_full" not in system_prompt
+    assert "VERBOSE_BODY_SENTINEL_SHOULD_NOT_APPEAR_IN_PROMPT" not in system_prompt
+
+
+def test_runtime_context13_prompt_builder_recent_runs_shows_mixed_405_and_200():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["recent_runs"] = [
+        {
+            "method": "PATCH",
+            "url": "https://httpbin.org/put",
+            "status_code": 405,
+            "failures": ["method not allowed"],
+        },
+        {
+            "method": "PATCH",
+            "url": "https://httpbin.org/patch",
+            "status_code": 200,
+            "failures": [],
+        },
+    ]
+    system_prompt, _ = playground.build_messages(
+        "Summarize recent API run pattern.",
+        runtime_context=runtime_context,
+    )
+    assert "RECENT TEST PATTERN:" in system_prompt
+    assert "PATCH https://httpbin.org/put -> 405" in system_prompt
+    assert "PATCH https://httpbin.org/patch -> 200" in system_prompt
+    assert "repeated issue" in system_prompt or "pattern exists" in system_prompt
+
+
+def test_runtime_context14_prompt_builder_disallows_missing_and_vague_and_enforces_single_concrete_next_test():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["recent_runs"] = [
+        {
+            "method": "PATCH",
+            "url": "https://httpbin.org/put",
+            "status_code": 405,
+            "failures": ["method not allowed"],
+        },
+        {
+            "method": "PATCH",
+            "url": "https://httpbin.org/patch",
+            "status_code": 200,
+            "failures": [],
+        },
+    ]
+    system_prompt, _ = playground.build_messages(
+        "Diagnose these mixed API runs and give one next test.",
+        runtime_context=runtime_context,
+    )
+    assert "Do not output Missing:, Additional context needed, or speculative gap sections." in system_prompt
+    assert system_prompt.count("Next test: <METHOD> <URL> -> expect <STATUS>.") == 1
+    low = system_prompt.lower()
+    assert "consider testing" not in low
+    assert "you might want to" not in low
+    assert "explore" not in low
+    assert "evaluate" not in low
+
+
+def test_runtime_context15_prompt_builder_enables_api_diagnosis_mode_for_last_run_analysis_request():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Analyze my last run.",
+        runtime_context=runtime_context,
+    )
+    assert "API DIAGNOSIS MODE:" in system_prompt
+
+
+def test_runtime_context16_prompt_builder_does_not_enable_api_diagnosis_mode_for_greeting():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "hello",
+        runtime_context=runtime_context,
+    )
+    assert "API RUNNER CONTEXT:" in system_prompt
+    assert "API DIAGNOSIS MODE:" not in system_prompt
+
+
+def test_runtime_context17_prompt_builder_does_not_enable_api_diagnosis_mode_for_general_unrelated_question():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Can you explain the project architecture at a high level?",
+        runtime_context=runtime_context,
+    )
+    assert "API RUNNER CONTEXT:" in system_prompt
+    assert "API DIAGNOSIS MODE:" not in system_prompt
+
+
+def test_runtime_context18_prompt_builder_requires_expected_status_in_next_test_rules():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["status_code"] = 405
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["method"] = "PATCH"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["url"] = "https://httpbin.org/put"
+    system_prompt, _ = playground.build_messages(
+        "Analyze my last run and suggest the next test.",
+        runtime_context=runtime_context,
+    )
+    assert "Use this exact next-test format once: Next test: <METHOD> <URL> -> expect <STATUS>." in system_prompt
+    assert "The next test must always include expected status using '-> expect <STATUS>'." in system_prompt
+    assert "If the next test is correcting a method/endpoint mismatch, set expected status to 200." in system_prompt
+    assert "If the next test is intentionally testing a failure path, set expected status to 4xx." in system_prompt
+    assert system_prompt.count("Next test: <METHOD> <URL> -> expect <STATUS>.") == 1
+
+
+def test_runtime_context19_prompt_builder_success_case_requires_negative_next_test_generator_rule():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["status_code"] = 200
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["failures"] = []
+    system_prompt, _ = playground.build_messages(
+        "Analyze my last run and suggest next test.",
+        runtime_context=runtime_context,
+    )
+    assert "NEXT TEST GENERATOR: for successful 2xx with no failures, propose a negative-path test next (expected 4xx)." in system_prompt
+
+
+def test_runtime_context20_prompt_builder_405_case_requires_correct_method_next_test_generator_rule():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["status_code"] = 405
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["response_headers"] = {"Allow": "PUT, OPTIONS"}
+    system_prompt, _ = playground.build_messages(
+        "Analyze my last run and diagnose this 405 mismatch.",
+        runtime_context=runtime_context,
+    )
+    assert "NEXT TEST GENERATOR: for 405 method mismatch, propose the correct allowed method on the same URL next (expected 200)." in system_prompt
+
+
+def test_runtime_context21_prompt_builder_enforces_exactly_one_next_test_with_expect_format():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Analyze my last run and suggest one next test.",
+        runtime_context=runtime_context,
+    )
+    assert system_prompt.count("Next test: <METHOD> <URL> -> expect <STATUS>.") == 1
+    assert "-> expect <STATUS>" in system_prompt
+
+
+def test_runtime_context22_end_to_end_api_runner_interaction_smoke():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["method"] = "PATCH"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["url"] = "https://httpbin.org/put"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["status_code"] = 405
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["response_headers"] = {
+        "Allow": "PUT, OPTIONS"
+    }
+
+    system_prompt, _ = playground.build_messages(
+        "Analyze my last run.",
+        runtime_context=runtime_context,
+    )
+    assert "API DIAGNOSIS MODE:" in system_prompt
+    assert "PATCH" in system_prompt
+    assert "https://httpbin.org/put" in system_prompt
+    assert "405" in system_prompt
+    assert "Allow" in system_prompt
+    assert "PUT, OPTIONS" in system_prompt
+    assert "Next test: <METHOD> <URL> -> expect <STATUS>." in system_prompt
+    assert "output_full" not in system_prompt
+    assert "VERBOSE_BODY_SENTINEL_SHOULD_NOT_APPEAR_IN_PROMPT" not in system_prompt
+    assert "what are you referring to?" not in system_prompt.lower()
+
+    hello_prompt, _ = playground.build_messages(
+        "hello",
+        runtime_context=runtime_context,
+    )
+    assert "API DIAGNOSIS MODE:" not in hello_prompt
+
+
+def test_runtime_context23_prompt_builder_api_diagnosis_suppresses_runtime_template_for_successful_delete():
+    """API DIAGNOSIS MODE must override RUNTIME-03 / REASONING-05 tails (no Progress/Risks template)."""
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["method"] = "DELETE"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["url"] = "https://httpbin.org/delete"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["status_code"] = 200
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["latency_ms"] = 500
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["failures"] = []
+
+    system_prompt, _ = playground.build_messages(
+        "Analyze my last successful API runner run.",
+        runtime_context=runtime_context,
+    )
+    assert "API DIAGNOSIS MODE:" in system_prompt
+    assert "DELETE" in system_prompt
+    assert "https://httpbin.org/delete" in system_prompt
+    assert "API diagnosis output dominance (API-DIAG-DC):" in system_prompt
+    assert "Your output must contain exactly these sections" not in system_prompt
+    assert "Begin your reply with the first section header line: Progress:" not in system_prompt
+    assert "Reasoning structure mandate (REASONING-05):" not in system_prompt
+    assert "Structural output (RUNTIME-03):" not in system_prompt
+
+
+def test_runtime_context24_prompt_builder_enables_api_diagnosis_for_analyse_only_my_last_run():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "analyse only my last run",
+        runtime_context=runtime_context,
+    )
+    assert "API DIAGNOSIS MODE:" in system_prompt
+    assert "Reasoning-structure control gate (REASONING-06):" not in system_prompt
+    assert "Use exactly these three sections in this order:\n\nKnown:" not in system_prompt
+    assert "Next test: <METHOD> <URL> -> expect <STATUS>." in system_prompt
+
+
+def test_runtime_context25_prompt_builder_enables_api_diagnosis_for_analyse_my_last_two_run_please():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "analyse my last two run please",
+        runtime_context=runtime_context,
+    )
+    assert "API DIAGNOSIS MODE:" in system_prompt
+    assert "Reasoning-structure control gate (REASONING-06):" not in system_prompt
+    assert "Use exactly these three sections in this order:\n\nKnown:" not in system_prompt
+    assert "Next test: <METHOD> <URL> -> expect <STATUS>." in system_prompt
+
+
+def test_runtime_context26_prompt_builder_enables_suite_run_help_mode_for_exact_prompt():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    user_input = (
+        "help me run a Suite run (JSON file) in my suite. "
+        "Tell me everything I need from the customer, and how to write the script, and run the test."
+    )
+    system_prompt, _ = playground.build_messages(
+        user_input,
+        runtime_context=runtime_context,
+    )
+    assert "SUITE RUN HELP MODE:" in system_prompt
+    assert "Suite run help output dominance (SUITE-HELP-DC):" in system_prompt
+    assert "Reasoning-structure control gate (REASONING-06):" not in system_prompt
+    assert "Use exactly these three sections in this order:\n\nKnown:" not in system_prompt
+    assert "platform/tool missing" not in system_prompt.lower()
+    assert "provide more details" not in system_prompt.lower()
+    assert "base URL" in system_prompt
+    assert "endpoint paths" in system_prompt
+    assert "methods" in system_prompt
+    assert "auth/API key requirements" in system_prompt
+    assert "required headers" in system_prompt
+    assert "request body examples" in system_prompt
+    assert "expected status codes" in system_prompt
+    assert "expected JSON fields" in system_prompt
+    assert "minimal suite JSON example" in system_prompt
+    assert "Tool 1 suite path" in system_prompt
+    assert "run steps" in system_prompt or "run the suite test" in system_prompt
+
+
+def test_runtime_context27_prompt_builder_injects_api_testing_knowledge_lane_for_relevant_prompt():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Explain GET POST PUT PATCH DELETE for API testing",
+        runtime_context=runtime_context,
+    )
+    assert "API testing reference (condensed):" in system_prompt
+
+
+def test_runtime_context28_prompt_builder_does_not_inject_api_testing_knowledge_lane_for_irrelevant_prompt():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "hello",
+        runtime_context=runtime_context,
+    )
+    assert "API testing reference (condensed):" not in system_prompt
+
+
+def test_runtime_context29_prompt_builder_knowledge_lane_does_not_require_or_modify_extracted_memory_file():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    with isolated_runtime_files() as (temp_memory_path, _, _, _):
+        assert not temp_memory_path.exists()
+        system_prompt, _ = playground.build_messages(
+            "Explain GET POST PUT PATCH DELETE for API testing",
+            runtime_context=runtime_context,
+        )
+        assert isinstance(system_prompt, str) and system_prompt.strip()
+        assert not temp_memory_path.exists()
+
+
+def test_runtime_context30_prompt_builder_api_testing_knowledge_lane_is_compact_when_injected():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Explain GET POST PUT PATCH DELETE for API testing",
+        runtime_context=runtime_context,
+    )
+    marker = "API testing reference (condensed):"
+    assert marker in system_prompt
+    block = system_prompt.split(marker, 1)[1]
+    block_until_tail = block.split("Execution enforcement (RUNTIME-01):", 1)[0]
+    assert len(block_until_tail) <= 1800
+    assert len([ln for ln in block_until_tail.splitlines() if ln.strip()]) <= 30
+
+
+def test_runtime_context31_prompt_builder_knowledge_lane_absent_for_normal_conversation():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "hello there",
+        runtime_context=runtime_context,
+    )
+    assert "API testing reference (condensed):" not in system_prompt
+
+
+def test_runtime_context32_prompt_builder_knowledge_lane_absent_for_unrelated_technical_prompt():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Explain Python list comprehensions and generators",
+        runtime_context=runtime_context,
+    )
+    assert "API testing reference (condensed):" not in system_prompt
+
+
+def test_runtime_context33_prompt_builder_knowledge_lane_present_for_simple_api_education_prompt():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "How do I test an API?",
+        runtime_context=runtime_context,
+    )
+    assert "API testing reference (condensed):" in system_prompt
+
+
+def test_runtime_context34_prompt_builder_knowledge_lane_preserves_key_api_sections():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Explain GET POST PUT PATCH DELETE for API testing",
+        runtime_context=runtime_context,
+    )
+    marker = "API testing reference (condensed):"
+    assert marker in system_prompt
+    block = system_prompt.split(marker, 1)[1]
+    block_until_tail = block.split("Execution enforcement (RUNTIME-01):", 1)[0].lower()
+    assert "http methods" in block_until_tail
+    assert "status codes" in block_until_tail
+    assert "headers" in block_until_tail
+    assert "testing strategies" in block_until_tail
+
+
+def test_runtime_context35_prompt_builder_knowledge_lane_includes_practical_api_testing_guidance():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Teach me practical API testing basics for beginners",
+        runtime_context=runtime_context,
+    )
+    marker = "API testing reference (condensed):"
+    assert marker in system_prompt
+    block = system_prompt.split(marker, 1)[1]
+    block_until_tail = block.split("Execution enforcement (RUNTIME-01):", 1)[0].lower()
+    assert "positive testing" in block_until_tail
+    assert "negative testing" in block_until_tail
+    assert ("content-type" in block_until_tail) or ("authorization" in block_until_tail)
+    assert ("put" in block_until_tail and "patch" in block_until_tail) or (
+        "get" in block_until_tail and "usually no request body" in block_until_tail
+    )
+
+
+def test_runtime_context36_prompt_builder_knowledge_lane_covers_recent_sections_with_keywords():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Teach me API testing fundamentals and practical guidance",
+        runtime_context=runtime_context,
+    )
+    marker = "API testing reference (condensed):"
+    assert marker in system_prompt
+    block = system_prompt.split(marker, 1)[1]
+    block_until_tail = block.split("Execution enforcement (RUNTIME-01):", 1)[0].lower()
+
+    # Customer Intake Questions
+    assert "endpoint" in block_until_tail
+    assert "method" in block_until_tail
+    assert "authentication" in block_until_tail
+
+    # Authentication Testing
+    assert "401" in block_until_tail
+    assert "403" in block_until_tail
+    assert "authorization" in block_until_tail
+
+    # Request Body Basics
+    assert "post" in block_until_tail
+    assert "content-type" in block_until_tail
+    assert "json" in block_until_tail
+
+    # Error Case Testing
+    for code in ("400", "405", "415", "429"):
+        assert code in block_until_tail
+
+    # Proof and Client Reporting
+    assert ("expected vs actual" in block_until_tail) or ("expected status vs actual status" in block_until_tail)
+    assert "latency" in block_until_tail
+    assert "report" in block_until_tail
+
+
+def test_runtime_context37_prompt_builder_knowledge_lane_covers_rate_limit_and_test_case_design_signals():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Give me practical API testing education guidance",
+        runtime_context=runtime_context,
+    )
+    marker = "API testing reference (condensed):"
+    assert marker in system_prompt
+    block = system_prompt.split(marker, 1)[1]
+    block_until_tail = block.split("Execution enforcement (RUNTIME-01):", 1)[0].lower()
+    assert ("429" in block_until_tail) or ("rate limit" in block_until_tail)
+    assert (
+        ("test case" in block_until_tail)
+        or ("expected status" in block_until_tail)
+        or ("positive" in block_until_tail and "negative" in block_until_tail)
+    )
+
+
+def test_runtime_context38_prompt_builder_knowledge_lane_covers_query_and_path_param_signals():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Explain practical API testing for query params and path params",
+        runtime_context=runtime_context,
+    )
+    marker = "API testing reference (condensed):"
+    assert marker in system_prompt
+    block = system_prompt.split(marker, 1)[1]
+    block_until_tail = block.split("Execution enforcement (RUNTIME-01):", 1)[0].lower()
+    assert ("query" in block_until_tail) or ("path" in block_until_tail)
+    assert ("limit" in block_until_tail) or ("page" in block_until_tail)
+    assert ("filtering" in block_until_tail) or ("pagination" in block_until_tail)
+
+
+def test_runtime_context39_prompt_builder_knowledge_lane_covers_api_test_plan_response_style_signals():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Give me a practical API testing plan and what to run next",
+        runtime_context=runtime_context,
+    )
+    marker = "API testing reference (condensed):"
+    assert marker in system_prompt
+    block = system_prompt.split(marker, 1)[1]
+    block_until_tail = block.split("Execution enforcement (RUNTIME-01):", 1)[0].lower()
+    assert "baseline" in block_until_tail
+    assert "expected status" in block_until_tail
+    assert ("next test" in block_until_tail) or ("next step" in block_until_tail)
+    assert ("keep answers focused" in block_until_tail) or ("focused" in block_until_tail)
+
+
+def test_runtime_context40_prompt_builder_enforces_api_test_plan_runner_style_for_what_tests_should_i_run():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "I have an API endpoint GET /users. What tests should I run?",
+        runtime_context=runtime_context,
+    )
+    low = system_prompt.lower()
+    assert "API TEST PLAN RESPONSE STYLE:" in system_prompt
+    assert "baseline test" in low
+    assert "expected status" in low
+    assert ("exactly one next test" in low) or (
+        "exactly one additional follow-up test only" in low
+    )
+    assert "do not dump long category" in low
+    assert "API DIAGNOSIS MODE:" not in system_prompt
+    assert "SUITE RUN HELP MODE:" not in system_prompt
+
+
+def test_runtime_context41_prompt_builder_knowledge_lane_covers_pagination_testing_signals():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Explain practical API testing for pagination",
+        runtime_context=runtime_context,
+    )
+    marker = "API testing reference (condensed):"
+    assert marker in system_prompt
+    block = system_prompt.split(marker, 1)[1]
+    block_until_tail = block.split("Execution enforcement (RUNTIME-01):", 1)[0].lower()
+    assert "pagination" in block_until_tail
+    assert ("page" in block_until_tail) or ("limit" in block_until_tail)
+    assert ("cursor" in block_until_tail) or ("offset" in block_until_tail)
+
+
+def test_runtime_context42_prompt_builder_knowledge_lane_covers_single_vs_multi_request_signals():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Explain API testing using single requests and suites",
+        runtime_context=runtime_context,
+    )
+    marker = "API testing reference (condensed):"
+    assert marker in system_prompt
+    block = system_prompt.split(marker, 1)[1]
+    block_until_tail = block.split("Execution enforcement (RUNTIME-01):", 1)[0].lower()
+    assert "single request" in block_until_tail
+    assert ("multi-request" in block_until_tail) or ("suite" in block_until_tail)
+    assert ("json suite" in block_until_tail) or ("suite" in block_until_tail and "json" in block_until_tail)
+    assert "method" in block_until_tail
+    assert "url" in block_until_tail
+    assert "expected status" in block_until_tail
+
+
+def test_runtime_context43_prompt_builder_vague_real_usage_scaffold_for_build_test_plan():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Here\u2019s my API, build me a test plan",
+        runtime_context=runtime_context,
+    )
+    low = system_prompt.lower()
+    assert "API VAGUE REAL-USAGE SCAFFOLD MODE:" in system_prompt
+    assert "starter structure" in low
+    assert "do not stop at 'need more info'" in low
+    assert "method" in low
+    assert "endpoint" in low or "url" in low
+    assert "expected status" in low
+    assert "auth requirement" in low
+    assert "one line max" in low
+    assert "usable starter structure immediately" in low
+    assert "ask only minimal follow-up fields" in low
+
+
+def test_runtime_context44_prompt_builder_vague_real_usage_scaffold_for_failed_response_diagnosis():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Here\u2019s a failed response, diagnose it",
+        runtime_context=runtime_context,
+    )
+    low = system_prompt.lower()
+    assert "API VAGUE REAL-USAGE SCAFFOLD MODE:" in system_prompt
+    assert "starter structure (failed response diagnosis)" in low
+    assert "status code" in low
+    assert "headers" in low
+    assert "body" in low
+    assert "auth" in low
+    assert "compare expected vs actual" in low
+
+
+def test_runtime_context45_prompt_builder_vague_real_usage_scaffold_for_json_suite():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "Help me build a JSON suite",
+        runtime_context=runtime_context,
+    )
+    low = system_prompt.lower()
+    assert "API VAGUE REAL-USAGE SCAFFOLD MODE:" in system_prompt
+    assert "starter structure (json suite)" in low
+    assert "method" in low
+    assert "url" in low
+    assert "expected status" in low
+    assert "checks" in low
+
+
+def test_runtime_context46_prompt_builder_vague_real_usage_scaffold_for_client_message():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    system_prompt, _ = playground.build_messages(
+        "What do I send to this client?",
+        runtime_context=runtime_context,
+    )
+    low = system_prompt.lower()
+    assert "API VAGUE REAL-USAGE SCAFFOLD MODE:" in system_prompt
+    assert "starter structure (client message)" in low
+    assert "checklist" in low
+    assert "expected vs actual" in low
+    assert "next action" in low
+    assert "ask only minimal follow-up fields" in low
+
+
+def test_runtime_context11_prompt_builder_enforces_direct_405_mismatch_wording():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["status_code"] = 405
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["method"] = "PATCH"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["url"] = "https://httpbin.org/put"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["response_headers"] = {
+        "Allow": "PUT"
+    }
+    system_prompt, _ = playground.build_messages(
+        "Analyze my last run and diagnose this 405 mismatch directly.",
+        runtime_context=runtime_context,
+    )
+    assert 'Use direct mismatch wording: "You used [METHOD] on [URL] -> mismatch."' in system_prompt
+    assert 'Immediately follow with: "This endpoint allows [ALLOWED METHODS]."' in system_prompt
+    assert "allowed methods" in system_prompt
+    assert "The reply must end with exactly one concrete next API test." in system_prompt
+    assert "output_full" not in system_prompt
+    assert "VERBOSE_BODY_SENTINEL_SHOULD_NOT_APPEAR_IN_PROMPT" not in system_prompt
+
+
+def test_runtime_context12_prompt_builder_enforces_confident_success_phrase_for_2xx_no_failures():
+    reset_agent_state()
+    runtime_context = _runtime_context_sample_minimal()
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["status_code"] = 200
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["method"] = "PATCH"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["url"] = "https://httpbin.org/patch"
+    runtime_context["tool1"]["last_bundle"]["latest_case"]["failures"] = []
+    system_prompt, _ = playground.build_messages(
+        "Analyze my last run and diagnose this successful request.",
+        runtime_context=runtime_context,
+    )
+    assert 'include this exact sentence: "This request is correct."' in system_prompt
+    assert "appears correct" in system_prompt
+    assert "looks good" in system_prompt
+    assert "seems fine" in system_prompt
+    assert "The reply must end with exactly one concrete next API test." in system_prompt
+    assert "output_full" not in system_prompt
+    assert "VERBOSE_BODY_SENTINEL_SHOULD_NOT_APPEAR_IN_PROMPT" not in system_prompt
+
+
 def test_optiona_simple_factual_routes_to_direct_answer_mode():
     reset_agent_state()
     q = "What is the capital of France?"
@@ -16829,6 +17716,54 @@ def test_detect_recent_answer_followup_type_elaborate_on_those_points_is_continu
         "starting with number 1. Only include number 1."
     )
     assert playground.detect_recent_answer_followup_type(q, matched) == "continuation"
+
+
+def test_pronoun_reference_tracking01_all_of_them_followup_guidance():
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    prior = (
+        "- Open APIs\n"
+        "- Partner APIs\n"
+        "- Internal APIs\n"
+        "- Composite APIs"
+    )
+    playground.append_recent_answer_history(prior)
+    prompt, _ = playground.build_messages("Do all of them need testing?")
+    assert "Recent-answer follow-up type: continuation" in prompt
+    assert "resolve pronouns from the immediately previous assistant output" in prompt.lower()
+    assert "what are you referring to?" not in prompt.lower()
+
+
+def test_pronoun_reference_tracking02_those_followup_guidance():
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    prior = (
+        "- Open APIs\n"
+        "- Partner APIs\n"
+        "- Internal APIs\n"
+        "- Composite APIs"
+    )
+    playground.append_recent_answer_history(prior)
+    prompt, _ = playground.build_messages("Do those need testing?")
+    assert "Recent-answer follow-up type: continuation" in prompt
+    assert "resolve pronouns from the immediately previous assistant output" in prompt.lower()
+    assert "what are you referring to?" not in prompt.lower()
+
+
+def test_pronoun_reference_tracking03_they_all_followup_guidance():
+    reset_agent_state()
+    playground.clear_recent_answer_session()
+    prior = (
+        "- Open APIs\n"
+        "- Partner APIs\n"
+        "- Internal APIs\n"
+        "- Composite APIs"
+    )
+    playground.append_recent_answer_history(prior)
+    prompt, _ = playground.build_messages("Do they all need testing?")
+    assert "Recent-answer follow-up type: continuation" in prompt
+    assert "resolve pronouns from the immediately previous assistant output" in prompt.lower()
+    assert "what are you referring to?" not in prompt.lower()
 
 
 def test_sequence_discipline_twelve_line_separated_steps_live_failure():

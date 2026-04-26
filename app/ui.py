@@ -102,6 +102,7 @@ def init_session_state():
     st.session_state.setdefault("tool1_file_stem", "")
     st.session_state.setdefault("tool1_fail_fast", False)
     st.session_state.setdefault("tool1_timeout", 20)
+    st.session_state.setdefault("tool1_run_history", [])
     st.session_state.setdefault("ui_surface", "Agent")
     st.session_state.setdefault("voice_draft_text", "")
     st.session_state.setdefault("voice_draft_clear_pending", False)
@@ -247,6 +248,137 @@ def _agent_try_clipboard_paste_send(paste_result) -> None:
     run_query(cap, vision_images=[{"mime": "image/png", "b64": b64}])
 
 
+def _build_runtime_context_from_session_state() -> dict:
+    def _redact_secret(_value):
+        return "[REDACTED]"
+
+    def _summarize_bundle(bundle):
+        if not isinstance(bundle, dict):
+            return None
+        result = bundle.get("result") if isinstance(bundle.get("result"), dict) else {}
+        artifact_paths = bundle.get("artifact_paths") if isinstance(bundle.get("artifact_paths"), dict) else {}
+        cases = result.get("cases") if isinstance(result.get("cases"), list) else []
+        latest_case = cases[-1] if cases and isinstance(cases[-1], dict) else {}
+        out = {
+            "ok": bundle.get("ok"),
+            "error": bundle.get("error"),
+            "artifact_paths": {
+                "json_path": artifact_paths.get("json_path"),
+                "markdown_path": artifact_paths.get("markdown_path"),
+            },
+            "latest_case": {
+                "status_code": latest_case.get("status_code"),
+                "latency_ms": latest_case.get("latency_ms"),
+                "failures": list(latest_case.get("failures") or [])
+                if isinstance(latest_case.get("failures"), list)
+                else [],
+                "method": latest_case.get("method"),
+                "url": latest_case.get("url"),
+            },
+        }
+        return out
+
+    def _recent_runs_from_history() -> list[dict]:
+        raw = st.session_state.get("tool1_run_history")
+        if not isinstance(raw, list):
+            return []
+        out: list[dict] = []
+        for row in raw[-3:]:
+            if not isinstance(row, dict):
+                continue
+            out.append(
+                {
+                    "method": row.get("method"),
+                    "url": row.get("url"),
+                    "status_code": row.get("status_code"),
+                    "failures": list(row.get("failures") or [])
+                    if isinstance(row.get("failures"), list)
+                    else [],
+                }
+            )
+        return out
+
+    t1 = {
+        "single_request": {
+            "session": {
+                "method": str(st.session_state.get("tool1_single_method") or "GET"),
+                "url": str(st.session_state.get("tool1_single_url") or ""),
+                "query_params_json": str(st.session_state.get("tool1_single_query_params") or ""),
+                "headers_json": str(st.session_state.get("tool1_single_headers") or ""),
+                "body_json": str(st.session_state.get("tool1_single_body") or ""),
+                "auth_mode_label": str(st.session_state.get("tool1_single_auth_mode") or "None"),
+                "bearer_token": _redact_secret(st.session_state.get("tool1_single_bearer_token")),
+                "basic_user": str(st.session_state.get("tool1_single_basic_user") or ""),
+                "basic_password": _redact_secret(st.session_state.get("tool1_single_basic_password")),
+                "api_key_header": str(st.session_state.get("tool1_single_api_key_header") or ""),
+                "api_key_value": _redact_secret(st.session_state.get("tool1_single_api_key_value")),
+                "timeout_seconds": int(st.session_state.get("tool1_timeout", 20)),
+                "output_dir": str(st.session_state.get("tool1_output_dir") or "logs/system_eval"),
+            }
+        },
+        "suite": {
+            "suite_path": str(st.session_state.get("tool1_suite_path") or ""),
+            "file_stem": str(st.session_state.get("tool1_file_stem") or ""),
+            "fail_fast": bool(st.session_state.get("tool1_fail_fast")),
+            "timeout_seconds": int(st.session_state.get("tool1_timeout", 20)),
+            "output_dir": str(st.session_state.get("tool1_output_dir") or "logs/system_eval"),
+        },
+        "last_bundle": _summarize_bundle(st.session_state.get("tool1_last_bundle")),
+        "recent_runs": _recent_runs_from_history(),
+    }
+
+    t2 = {
+        "suite": {
+            "suite_path": str(st.session_state.get("tool2_suite_path") or ""),
+            "file_stem": str(st.session_state.get("tool2_file_stem") or ""),
+            "fail_fast": bool(st.session_state.get("tool2_fail_fast")),
+            "timeout_seconds": int(st.session_state.get("tool1_timeout", 20)),
+            "output_dir": str(st.session_state.get("tool2_output_dir") or "logs/system_eval"),
+        },
+        "last_bundle": _summarize_bundle(st.session_state.get("tool2_last_bundle")),
+    }
+
+    return {
+        "source": "ui_streamlit",
+        "active_surface": str(st.session_state.get("ui_surface") or ""),
+        "tool1": t1,
+        "tool2": t2,
+    }
+
+
+def _tool1_history_entry_from_bundle(bundle: dict) -> dict | None:
+    if not isinstance(bundle, dict):
+        return None
+    result = bundle.get("result")
+    if not isinstance(result, dict):
+        return None
+    cases = result.get("cases")
+    if not isinstance(cases, list) or not cases:
+        return None
+    latest_case = cases[-1] if isinstance(cases[-1], dict) else None
+    if not isinstance(latest_case, dict):
+        return None
+    return {
+        "method": latest_case.get("method"),
+        "url": latest_case.get("url"),
+        "status_code": latest_case.get("status_code"),
+        "failures": list(latest_case.get("failures") or [])
+        if isinstance(latest_case.get("failures"), list)
+        else [],
+    }
+
+
+def _tool1_push_run_history(bundle: dict) -> None:
+    entry = _tool1_history_entry_from_bundle(bundle)
+    if not entry:
+        return
+    hist = st.session_state.get("tool1_run_history")
+    if not isinstance(hist, list):
+        hist = []
+    hist.append(entry)
+    st.session_state["tool1_run_history"] = hist[-3:]
+
+
 def _process_agent_reply_pending_in_chat() -> None:
     """If a reply was queued, show an assistant placeholder immediately, then fill when ready."""
     pending = st.session_state.get("_agent_reply_pending")
@@ -256,13 +388,17 @@ def _process_agent_reply_pending_in_chat() -> None:
         ph = st.empty()
         ph.caption("Thinking…")
         try:
+            runtime_context = _build_runtime_context_from_session_state()
             if isinstance(pending, dict):
                 response = playground.handle_user_input(
                     pending.get("text", ""),
                     vision_images=pending.get("images"),
+                    runtime_context=runtime_context,
                 )
             else:
-                response = playground.handle_user_input(pending)
+                response = playground.handle_user_input(
+                    pending, runtime_context=runtime_context
+                )
         except Exception as exc:
             st.session_state.status = "Ready"
             st.session_state.pop("_agent_reply_pending", None)
@@ -1355,6 +1491,7 @@ def render_tool1_panel():
                 st.warning(f"Run log could not be written (details still shown above): {le}")
         elif bundle:
             st.session_state.tool1_last_bundle = bundle
+            _tool1_push_run_history(bundle)
 
     _snap = st.session_state.get("tool1_last_single_request_snapshot")
     if st.button(
@@ -1374,6 +1511,7 @@ def render_tool1_panel():
                 st.warning(f"Run log could not be written (details still shown above): {le}")
         elif bundle:
             st.session_state.tool1_last_bundle = bundle
+            _tool1_push_run_history(bundle)
 
     if st.session_state.get("tool1_last_single_request_plain"):
         with st.expander("Last single request — copyable summary", expanded=False):
@@ -1402,6 +1540,7 @@ def render_tool1_panel():
                 default_timeout_seconds=int(st.session_state.tool1_timeout),
             )
         st.session_state.tool1_last_bundle = bundle
+        _tool1_push_run_history(bundle)
         le = bundle.get("run_log_error") if isinstance(bundle, dict) else None
         if le:
             st.warning(f"Run log could not be written (suite result still shown): {le}")

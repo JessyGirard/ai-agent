@@ -1,62 +1,33 @@
-SYSTEM UNDERSTANDING — JESSY GOALS AND PRIORITY FRAMEWORK
+GET requests retrieve data and should return 200 on success.
 
-USER: What is Jessy’s primary immediate goal?
-AI: Jessy’s primary immediate goal is to reach a consistent income of $150 USD per day.
+POST requests create new resources and typically return 201 on success.
 
-USER: Why is the $150 per day goal important?
-AI: The $150 per day goal represents Jessy’s survival threshold and is the baseline for financial stability.
+PUT requests replace a resource and should return 200 or 204 on success.
 
-USER: How should decisions be evaluated in the system?
-AI: All decisions should be evaluated based on whether they contribute to achieving or maintaining the $150 per day income goal.
+PATCH requests partially update a resource and should return 200 or 204 on success.
 
-USER: What is Jessy’s 7-day objective?
-AI: Within 7 days, Jessy aims to stabilize the system, ensure Tool 1, Tool 2, and Tool 3 are usable, and produce real testing outputs with artifacts as proof of capability.
+DELETE requests remove a resource and should return 200 or 204 on success.
 
-USER: What should exist after 7 days?
-AI: After 7 days, Jessy should have:
+A 400 status code means the request is malformed or invalid.
 
-* working tools
-* completed test scenarios
-* generated artifacts and logs
-* proof that the system can produce real testing results
+A 401 status code means authentication is required or missing.
 
-USER: What is Jessy’s 14-day objective?
-AI: Within 14 days, Jessy aims to convert testing capability into real opportunities by producing multiple test examples and beginning outreach for paid work.
+A 403 status code means access is forbidden even with authentication.
 
-USER: What should exist after 14 days?
-AI: After 14 days, Jessy should have:
+A 404 status code means the requested resource was not found.
 
-* multiple validated test examples
-* ability to explain test results clearly
-* initial client outreach or conversations for paid work
+A 405 status code means the HTTP method is not allowed for the endpoint, and the Allow header specifies valid methods.
 
-USER: What is Jessy’s 30-day objective?
-AI: Within 30 days, Jessy aims to establish a repeatable workflow that can generate consistent income and approach or reach the $150 per day target.
+A 415 status code means the request has an unsupported media type, often due to incorrect Content-Type.
 
-USER: What defines success at 30 days?
-AI: Success at 30 days is defined by:
+The Content-Type header specifies the format of the request body, such as application/json.
 
-* consistent use of tools
-* repeatable testing workflow
-* ability to deliver results efficiently
-* progress toward stable daily income
+The Authorization header is used to send credentials such as API keys or bearer tokens.
 
-USER: What is Jessy’s long-term goal?
-AI: Jessy’s long-term goal is to build the 1010 Connection, a system and business designed for global impact and meaningful contribution.
+Negative testing involves sending invalid or unexpected inputs to verify that the API correctly handles errors.
 
-USER: What does the 1010 Connection represent?
-AI: The 1010 Connection represents Jessy’s vision of combining business success with real-world impact, including projects such as global water initiatives.
+Positive testing verifies that valid requests return expected successful responses.
 
-USER: What personal values must the system respect?
-AI: The system must respect that Jessy values God, family, purpose, and long-term meaningful impact.
+Boundary testing checks limits such as maximum field length or numeric ranges.
 
-USER: How does faith influence Jessy’s goals?
-AI: Jessy’s relationship with God is central to his long-term vision and must remain aligned with all major life and business decisions.
-
-USER: What is the correct execution mindset for Jessy?
-AI: The correct mindset is to prioritize execution, produce real results, and focus on actions that move toward income and stability rather than overbuilding or overthinking.
-
-USER: What is the core operating rule for progress?
-AI: The core rule is: clear structure enables fast execution, while confusion slows progress, so the system must always prioritize clarity.
-
-SUMMARY: Jessy’s system is driven by a survival income goal of $150 per day, short-term execution milestones at 7, 14, and 30 days, and a long-term vision of building a purpose-driven system aligned with faith, family, and global impact.
+Rate limiting can cause a 429 status code when too many requests are sent in a short time.

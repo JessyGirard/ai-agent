@@ -144,3 +144,60 @@ Optional: note behavior in docs/handoffs/!JESSY_CONNECTION.md (user did not requ
 The task you described for forced URL + fetch fail + logging is implemented and the targeted tests pass. If you want the same strict "Fetch failed" rule on the TOOL:fetch path or always second-pass LLM after a forced fetch, say which and we can wire it next.
 
 
+Inspecting how fetch_page signals failure so we can implement a strict "Fetch failed" path with no LLM fallback.
+
+Implementing hard failure (no LLM) when a forced URL fetch returns a failure tag, adding structured journal logging (started + completed with preview and SHA-256), and importing hashlib.
+
+
+## Layered Architecture Diagram
+
+```mermaid
+flowchart TB
+  U[User / UI Surface]
+
+  subgraph L1[Layer 1 - Interaction & Orchestration]
+    H[playground.handle_user_input]
+    PB[prompt_builder.build_messages]
+    AI[ask_ai]
+  end
+
+  subgraph L2[Layer 2 - Routing & Execution Policy]
+    ROUTE[Mode routing\nconversation / continuation / reasoning / API diagnosis]
+    ENF[Runtime enforcement tails\nRUNTIME / REASONING / INTERACTION / API-DIAG-DC]
+    CMD[parse_tool_command]
+    SUP[user_message_suppresses_tool_fetch]
+    URL[_extract_first_fetchable_url]
+  end
+
+  subgraph L3[Layer 3 - Tooling & External IO]
+    FETCH[fetch_page]
+    WEB[HTTP / Web target]
+    ART[Runtime artifacts\nlogs/system_eval/*.json|*.md]
+  end
+
+  subgraph L4[Layer 4 - Memory & Audit]
+    JR[append_project_journal]
+    RH[append_recent_answer_history]
+    MEM[Memory blocks / recent answer context]
+  end
+
+  U --> H
+  H --> PB
+  PB --> ROUTE
+  ROUTE --> ENF
+  H --> URL
+  H --> CMD
+  H --> SUP
+
+  URL --> FETCH
+  CMD --> FETCH
+  SUP -.gates.-> FETCH
+  FETCH --> WEB
+  FETCH --> ART
+
+  H --> AI
+  FETCH --> AI
+  AI --> JR
+  AI --> RH
+  MEM --> PB
+```

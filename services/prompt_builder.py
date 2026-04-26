@@ -1,12 +1,14 @@
 import os
 import re
 import sys
+from pathlib import Path
 
 from services import journal_service
 from tools.fetch_page import fetch_failure_tag
 
 # LATENCY-03: cache invariant system text; cap oversized append-only context.
 _cached_static_prompt = None
+_cached_api_testing_reference_condensed = None
 
 LATENCY_JOURNAL_ENTRY_CAP = 3
 LATENCY_MEMORY_BLOCK_MAX_CHARS = 12000
@@ -373,6 +375,61 @@ Conclusion:
 
 The REASONING-01 through REASONING-05 block below remains authoritative for Known/Missing/Conclusion behavior.""".strip()
 
+API_DIAGNOSIS_MODE_DOMINANCE_BLOCK = """API diagnosis output dominance (API-DIAG-DC):
+
+API DIAGNOSIS MODE is active for this reply (see API RUNNER CONTEXT above).
+
+Active assistant format for this reply only:
+- Use exactly these section headers in this order, each followed by content on the same or following lines (include the colon, spelling as shown):
+  Ran:
+  Result:
+  Why:
+- If the diagnosis context indicates a successful 2xx with no failures, add one line exactly (after Why:): This request is correct.
+- End with exactly one next API test line using the Next test: form required by API DIAGNOSIS MODE above.
+
+Hard rules:
+- Begin the reply with the line Ran: (no text before it).
+- Do not output Progress:, Risks:, Decisions:, or Next Steps: as section headers or use the legacy four-section RUNTIME-03 template.
+- Do not use Known:, Missing:, and Conclusion: as the primary structure in this reply.
+- Do not use Answer:, Current state:, or Next step: as the primary structure in this reply.
+- Do not combine this reply with unrelated multi-section templates.
+
+Suppression rule:
+- Structural output (RUNTIME-03) through Strict omission (RUNTIME-06) and Reasoning structure mandate (REASONING-05) in the default enforcement bundle are inactive for this reply when they conflict with API DIAGNOSIS MODE; API DIAGNOSIS MODE wins.
+
+Invalidity rule:
+- A reply that includes Progress:, Risks:, Decisions:, or Next Steps: headers, or that substitutes another primary template for Ran:/Result:/Why:/Next test:, is incorrect.""".strip()
+
+SUITE_RUN_HELP_MODE_DOMINANCE_BLOCK = """Suite run help output dominance (SUITE-HELP-DC):
+
+Suite Run Help mode is active for this reply (see API RUNNER CONTEXT above).
+
+Active assistant output requirements for this reply:
+- Answer directly for Jessy's API runner suite workflow; do not ask for platform/tool identification.
+- Include exactly these four parts in this order:
+  1) What to ask customer for
+  2) Minimal suite JSON example
+  3) Where to put the file/path in the UI
+  4) How to run it
+
+Customer input checklist (must be covered):
+- base URL
+- endpoint paths
+- methods
+- auth/API key requirements
+- required headers
+- request body examples
+- expected status codes
+- expected JSON fields
+
+Hard suppression rules:
+- Do not output Known:, Missing:, Conclusion:, Progress:, Risks:, Decisions:, Next Steps:, Answer:, Current state:, or Next step: template headers.
+- Do not claim the execution environment is unspecified or unavailable.
+- Do not respond with generic clarification-only requests as the main response.
+- Do not route this reply to uncertainty-analysis templates.
+
+Use concise, actionable instructions with one minimal JSON suite example and concrete run steps.""".strip()
+
 
 def user_input_needs_reasoning_structure_mode(user_input: str) -> bool:
     """REASONING-06 + REASONING-06.1 + REASONING-06.2: narrow heuristic — routes ambiguous/diagnostic / planning-under-uncertainty prompts away from legacy templates."""
@@ -540,6 +597,18 @@ def _extract_requested_step_number(ul_norm: str) -> int | None:
         return None
 
 
+def _user_input_has_generic_pronoun_followup(ul_norm: str) -> bool:
+    if not isinstance(ul_norm, str) or not ul_norm.strip():
+        return False
+    patterns = (
+        r"\ball of them\b",
+        r"\bthem\b",
+        r"\bthose\b",
+        r"\bthey\b",
+    )
+    return any(re.search(p, ul_norm) for p in patterns)
+
+
 def user_input_needs_sequence_discipline_mode(
     user_input: str,
     *,
@@ -650,6 +719,70 @@ def user_input_is_external_api_testing_education(ul_norm: str) -> bool:
     ):
         return True
     if "proper steps" in ul_norm or "professional manner" in ul_norm:
+        return True
+    return False
+
+
+def _user_requests_api_test_plan_runner_style(ul_norm: str) -> bool:
+    """Detect API endpoint test-planning asks that should be baseline+one-next-test."""
+    if not ul_norm:
+        return False
+    if not user_input_is_external_api_testing_education(ul_norm):
+        return False
+    intent_markers = (
+        "what tests should i run",
+        "which tests should i run",
+        "what test should i run",
+        "how should i test this endpoint",
+        "how should i test this api",
+        "how do i test this endpoint",
+        "how do i test this api",
+        "test plan",
+        "what to run next",
+        "what should i run next",
+    )
+    return any(m in ul_norm for m in intent_markers)
+
+
+def _user_requests_vague_real_usage_api_scaffold(
+    ul_norm: str, *, runtime_context_present: bool
+) -> bool:
+    """Detect high-level API real-usage asks that need starter scaffolding."""
+    if not ul_norm:
+        return False
+    markers = (
+        "build me a test plan",
+        "build a test plan",
+        "diagnose this failed response",
+        "failed response",
+        "response failed",
+        "failed api response",
+        "help me build a json suite",
+        "build a json suite",
+        "what do i send to this client",
+    )
+    interpretation_markers = (
+        "is that an error",
+        "is this an error",
+        "is this expected",
+        "why is this empty",
+        "why did this fail",
+        "why is this failing",
+    )
+    if any(m in ul_norm for m in markers):
+        return True
+    if any(m in ul_norm for m in interpretation_markers):
+        return True
+    if "diagnose it" in ul_norm and (
+        "failed response" in ul_norm
+        or "response failed" in ul_norm
+        or "failed api response" in ul_norm
+    ):
+        return True
+    if runtime_context_present and (
+        "what do i send to this client" in ul_norm
+        or "message to client" in ul_norm
+    ):
         return True
     return False
 
@@ -1054,8 +1187,18 @@ def build_runtime_01_execution_enforcement_block(
     continuation_mode: bool | None = None,
     sequence_discipline_mode: bool | None = None,
     explanatory_template_isolation: bool | None = None,
+    api_diagnosis_mode: bool | None = None,
+    suite_run_help_mode: bool | None = None,
 ) -> str:
     """REASONING-06 / INTERACTION-01–04: choose enforcement tail by routing mode."""
+    if suite_run_help_mode:
+        return (
+            _RUNTIME_ENFORCEMENT_LEAD + "\n\n" + SUITE_RUN_HELP_MODE_DOMINANCE_BLOCK
+        ).strip()
+    if api_diagnosis_mode:
+        return (
+            _RUNTIME_ENFORCEMENT_LEAD + "\n\n" + API_DIAGNOSIS_MODE_DOMINANCE_BLOCK
+        ).strip()
     if sequence_discipline_mode:
         return (
             _RUNTIME_ENFORCEMENT_LEAD
@@ -1239,6 +1382,509 @@ def build_dynamic_prompt(
         + f"- {action_guidance}\n"
         + answer_and_step_rules
     ).strip()
+
+
+def _user_requests_api_runner_diagnosis(user_input: str) -> bool:
+    if not isinstance(user_input, str):
+        return False
+    text = re.sub(r"\s+", " ", user_input.strip().lower())
+    if not text:
+        return False
+
+    # Require both API-runner/test context and result-analysis intent to avoid
+    # leaking diagnosis-mode instructions into casual/general conversation.
+    strong_runner_signals = (
+        "api runner",
+        "tool 1",
+        "tool1",
+        "tool 2",
+        "tool2",
+        "last run",
+        "latest run",
+        "run result",
+        "test result",
+        "latest result",
+        "recent run",
+        "api test",
+        "test run",
+    )
+    diagnosis_signals = (
+        "analyze",
+        "analyse",
+        "diagnose",
+        "analysis",
+        "what happened",
+        "why failed",
+        "why did",
+        "interpret",
+        "explain",
+        "summarize",
+        "next test",
+        "what should i run next",
+        "what to run next",
+    )
+
+    diagnosis_requested = any(sig in text for sig in diagnosis_signals)
+    if not diagnosis_requested:
+        return False
+
+    if any(sig in text for sig in strong_runner_signals):
+        return True
+
+    explicit_run_analysis_scopes = (
+        "last run",
+        "latest run",
+        "last api run",
+        "latest api run",
+        "last two runs",
+        "last two run",
+        "last 2 runs",
+        "last 2 run",
+        "recent runs",
+        "previous runs",
+    )
+    if any(scope in text for scope in explicit_run_analysis_scopes):
+        return True
+
+    # Allow concise run-result prompts like "Diagnose this 405 result."
+    # while still excluding generic unrelated conversation.
+    lightweight_runner_cues = ("run", "result", "results", "test", "tests")
+    evidence_cues = ("latest", "last", "status", "status_code", "405", "api")
+    has_lightweight_runner_cue = any(sig in text for sig in lightweight_runner_cues)
+    has_evidence_cue = any(sig in text for sig in evidence_cues)
+    return has_lightweight_runner_cue and has_evidence_cue
+
+
+def _user_requests_suite_run_help(user_input: str) -> bool:
+    if not isinstance(user_input, str):
+        return False
+    text = re.sub(r"\s+", " ", user_input.strip().lower())
+    if not text:
+        return False
+    suite_markers = (
+        "suite run",
+        "json file",
+        "writing a suite",
+        "write a suite",
+        "running the suite test",
+        "run the suite test",
+    )
+    help_markers = (
+        "help",
+        "how to",
+        "how do i",
+        "tell me everything i need",
+        "what i need",
+    )
+    has_suite_scope = any(m in text for m in suite_markers)
+    has_help_intent = any(m in text for m in help_markers)
+    return has_suite_scope and has_help_intent
+
+
+def _get_api_testing_reference_condensed() -> str:
+    """Load compact API-testing knowledge lane text from knowledge file (cached)."""
+    global _cached_api_testing_reference_condensed
+    if _cached_api_testing_reference_condensed is not None:
+        return _cached_api_testing_reference_condensed
+
+    knowledge_path = Path(__file__).resolve().parents[1] / "knowledge" / "api_testing_basics.md"
+    try:
+        raw = knowledge_path.read_text(encoding="utf-8")
+    except OSError:
+        _cached_api_testing_reference_condensed = ""
+        return ""
+
+    wanted_sections = (
+        "## 1. HTTP Methods",
+        "## 2. Status Codes",
+        "## 3. Headers",
+        "## 4. Testing Strategies",
+        "## 5. Customer Intake Questions",
+        "## 6. Authentication Testing",
+        "## 7. Request Body Basics",
+        "## 8. Error Case Testing",
+        "## 9. Proof and Client Reporting",
+        "## 10. Rate Limit Testing",
+        "## 11. Test Case Design",
+        "## 12. Query Params and Path Params",
+        "## 15. Single vs Multi-Request Testing",
+        "## 13. API Test Plan Response Style",
+        "## 14. Pagination Testing",
+    )
+    per_section_line_cap = {
+        # Keep compact: section header + one high-value line.
+        "## 1. HTTP Methods": 2,
+        "## 2. Status Codes": 2,
+        "## 3. Headers": 2,
+        "## 4. Testing Strategies": 2,
+        "## 5. Customer Intake Questions": 2,
+        "## 6. Authentication Testing": 2,
+        "## 7. Request Body Basics": 2,
+        "## 8. Error Case Testing": 2,
+        "## 9. Proof and Client Reporting": 2,
+        "## 10. Rate Limit Testing": 2,
+        "## 11. Test Case Design": 2,
+        "## 12. Query Params and Path Params": 2,
+        "## 13. API Test Plan Response Style": 2,
+        "## 14. Pagination Testing": 2,
+        "## 15. Single vs Multi-Request Testing": 2,
+    }
+    section_keyword_priority = {
+        "## 1. HTTP Methods": ("get", "post", "put", "patch"),
+        "## 2. Status Codes": ("200", "400", "401", "403", "404", "405", "415", "429"),
+        "## 3. Headers": ("content-type", "authorization"),
+        "## 4. Testing Strategies": ("positive", "negative", "boundary"),
+        "## 5. Customer Intake Questions": ("endpoint", "method", "authentication"),
+        "## 6. Authentication Testing": ("401", "403", "authorization"),
+        "## 7. Request Body Basics": ("post", "content-type", "json"),
+        "## 8. Error Case Testing": ("400", "405", "415", "429"),
+        "## 9. Proof and Client Reporting": ("expected vs actual", "latency", "report"),
+        "## 10. Rate Limit Testing": ("429", "rate limit"),
+        "## 11. Test Case Design": ("test case", "expected status", "positive", "negative"),
+        "## 12. Query Params and Path Params": (
+            "query",
+            "path",
+            "limit",
+            "page",
+            "filtering",
+            "pagination",
+        ),
+        "## 13. API Test Plan Response Style": (
+            "baseline",
+            "expected status",
+            "next test",
+            "next step",
+            "focused",
+        ),
+        "## 14. Pagination Testing": (
+            "pagination",
+            "page",
+            "limit",
+            "cursor",
+            "offset",
+            "duplicate",
+            "missing",
+        ),
+        "## 15. Single vs Multi-Request Testing": (
+            "single request",
+            "multi-request",
+            "suite",
+            "json suite",
+            "method",
+            "url",
+            "expected status",
+        ),
+    }
+    section_fixed_bullets = {
+        "## 4. Testing Strategies": "- include positive testing and negative testing per endpoint.",
+        "## 5. Customer Intake Questions": "- capture endpoint, method, and authentication requirements.",
+        "## 6. Authentication Testing": "- auth checks: 401 missing/invalid, 403 forbidden, verify Authorization bearer token.",
+        "## 7. Request Body Basics": "- body basics: POST/PUT/PATCH use JSON; Content-Type should match.",
+        "## 8. Error Case Testing": "- common negative-code checks: 400, 405, 415, 429.",
+        "## 9. Proof and Client Reporting": "- report essentials: expected vs actual status, latency, pass/fail report.",
+        "## 10. Rate Limit Testing": "- rate limit checks: rapid requests may return 429; verify retry.",
+        "## 11. Test Case Design": "- test case basics: define input and expected status.",
+        "## 12. Query Params and Path Params": "- params basics: path identifies resource; query supports filtering/pagination (limit/page).",
+        "## 13. API Test Plan Response Style": "- response style: baseline test + expected status + one next test; keep answers focused.",
+        "## 14. Pagination Testing": "- pagination checks: page/limit/cursor/offset and no duplicate/missing records.",
+        "## 15. Single vs Multi-Request Testing": "- single request = quick check; multi-request JSON suite = method/URL/expected status checks.",
+    }
+
+    section_bullets = {k: [] for k in wanted_sections}
+    current_section = None
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s or s.startswith("# "):
+            continue
+        if s in wanted_sections:
+            current_section = s
+            continue
+        if current_section and s.startswith("- "):
+            section_bullets[current_section].append(s)
+
+    compact_lines = []
+    for sec in wanted_sections:
+        compact_lines.append(sec)
+        cap = max(1, per_section_line_cap.get(sec, 2) - 1)
+        fixed = section_fixed_bullets.get(sec)
+        if fixed:
+            compact_lines.append(fixed)
+            cap = max(0, cap - 1)
+        bullets = section_bullets.get(sec, [])
+        priority_tokens = section_keyword_priority.get(sec, ())
+        ranked = sorted(
+            bullets,
+            key=lambda b: (
+                0
+                if any(tok in b.lower() for tok in priority_tokens)
+                else 1
+            ),
+        )
+        if cap > 0:
+            compact_lines.extend(ranked[:cap])
+
+    if not compact_lines:
+        _cached_api_testing_reference_condensed = ""
+        return ""
+
+    # Keep compact but preserve all core section headers + representative bullets.
+    compact = "\n".join(compact_lines).strip()
+    compact = _latency_trim_block(compact, 1750)
+    _cached_api_testing_reference_condensed = compact
+    return compact
+
+
+def _build_api_testing_knowledge_lane_block(runtime_context, user_input: str) -> str:
+    if not isinstance(runtime_context, dict):
+        return ""
+    ul_norm = re.sub(r"\s+", " ", str(user_input or "").strip().lower())
+    if not user_input_is_external_api_testing_education(ul_norm):
+        return ""
+    reference = _get_api_testing_reference_condensed()
+    if not reference:
+        return ""
+    return "API testing reference (condensed):\n" + reference
+
+
+def _build_api_test_plan_response_style_block(ul_norm: str) -> str:
+    if not _user_requests_api_test_plan_runner_style(ul_norm):
+        return ""
+    return (
+        "API TEST PLAN RESPONSE STYLE:\n"
+        "- When the user asks what tests to run for an API endpoint, do NOT dump long category lists.\n"
+        "- Output exactly two compact parts in order:\n"
+        "  1) Baseline test: method + endpoint, expected status code, and what to verify in the response.\n"
+        "  2) Next test: exactly one additional follow-up test only.\n"
+        "- Do not list multiple follow-up tests.\n"
+        "- Keep the response short, actionable, and execution-focused.\n"
+        "- Mention broader categories only after the first test is complete or if the user explicitly asks for more.\n"
+        "- Ask only necessary missing-info questions (for example auth required, expected response fields, pagination support).\n"
+    )
+
+
+def _build_api_vague_real_usage_scaffold_block(
+    ul_norm: str, *, runtime_context_present: bool
+) -> str:
+    if not _user_requests_vague_real_usage_api_scaffold(
+        ul_norm, runtime_context_present=runtime_context_present
+    ):
+        return ""
+    failed_response_prompt = (
+        "diagnose this failed response" in ul_norm
+        or "failed response" in ul_norm
+        or "response failed" in ul_norm
+        or "failed api response" in ul_norm
+    )
+    if failed_response_prompt:
+        starter = (
+            "- Starter structure (failed response diagnosis):\n"
+            "  - Check: status code, key headers, response body, and auth/token usage.\n"
+            "  - Compare expected vs actual for each of those fields.\n"
+        )
+    elif "json suite" in ul_norm:
+        starter = (
+            "- Starter structure (JSON suite):\n"
+            "  - One simple case template: method | URL | expected status | checks.\n"
+            "  - Keep checks short and directly tied to response status/body fields.\n"
+        )
+    elif "client" in ul_norm:
+        starter = (
+            "- Starter structure (client message):\n"
+            "  - Short checklist: what was tested, expected vs actual status, and next action.\n"
+            "  - Keep wording simple and decision-ready for the client.\n"
+        )
+    else:
+        starter = (
+            "- Starter structure (test plan):\n"
+            "  - Baseline test format: method + endpoint + expected status + response verification.\n"
+            "  - Next test placeholder: exactly one follow-up test.\n"
+        )
+    return (
+        "API VAGUE REAL-USAGE SCAFFOLD MODE:\n"
+        "- If key details are missing, acknowledge that briefly in one line max.\n"
+        "- Do not stop at 'need more info'; provide a usable starter structure immediately.\n"
+        f"{starter}"
+        "- Ask only minimal follow-up fields: endpoint, method, expected status, auth requirement.\n"
+        "- Do not fabricate endpoint details.\n"
+        "- Keep the reply short, actionable, and execution-focused.\n"
+    )
+
+
+def _format_api_runner_context(runtime_context, *, user_input: str = "") -> str:
+    if not isinstance(runtime_context, dict):
+        return ""
+
+    def _g(d, *path):
+        cur = d
+        for p in path:
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(p)
+        return cur
+
+    lines = ["API RUNNER CONTEXT:"]
+    active_surface = _g(runtime_context, "active_surface")
+    if active_surface:
+        lines.append(f"- active_surface: {active_surface}")
+
+    t1_method = _g(runtime_context, "tool1", "single_request", "session", "method")
+    t1_url = _g(runtime_context, "tool1", "single_request", "session", "url")
+    t1_suite_path = _g(runtime_context, "tool1", "suite", "suite_path")
+    t1_latest_method = _g(runtime_context, "tool1", "last_bundle", "latest_case", "method")
+    t1_latest_url = _g(runtime_context, "tool1", "last_bundle", "latest_case", "url")
+    t1_status = _g(runtime_context, "tool1", "last_bundle", "latest_case", "status_code")
+    t1_latency_ms = _g(runtime_context, "tool1", "last_bundle", "latest_case", "latency_ms")
+    t1_failures = _g(runtime_context, "tool1", "last_bundle", "latest_case", "failures")
+    t1_error_message = _g(runtime_context, "tool1", "last_bundle", "latest_case", "error_message")
+    t1_response_summary = _g(runtime_context, "tool1", "last_bundle", "latest_case", "response_summary")
+    t1_response_headers = _g(runtime_context, "tool1", "last_bundle", "latest_case", "response_headers")
+    t1_artifacts = _g(runtime_context, "tool1", "last_bundle", "artifact_paths")
+    t1_recent_runs = _g(runtime_context, "tool1", "recent_runs")
+
+    if t1_latest_method:
+        lines.append(f"- Tool 1 latest method: {t1_latest_method}")
+    elif t1_method:
+        lines.append(f"- Tool 1 method: {t1_method}")
+    if t1_latest_url:
+        lines.append(f"- Tool 1 latest URL: {t1_latest_url}")
+    elif t1_url:
+        lines.append(f"- Tool 1 URL: {t1_url}")
+    if t1_suite_path:
+        lines.append(f"- Tool 1 suite path: {t1_suite_path}")
+    if t1_status is not None:
+        lines.append(f"- Tool 1 latest status_code: {t1_status}")
+    if t1_latency_ms is not None:
+        lines.append(f"- Tool 1 latest latency_ms: {t1_latency_ms}")
+    if isinstance(t1_failures, list):
+        lines.append(f"- Tool 1 latest failures: {t1_failures}")
+    elif t1_failures is not None:
+        lines.append(f"- Tool 1 latest failures: {t1_failures}")
+    if t1_error_message is not None and str(t1_error_message).strip():
+        lines.append(f"- Tool 1 latest error_message: {t1_error_message}")
+    if t1_response_summary is not None and str(t1_response_summary).strip():
+        lines.append(f"- Tool 1 latest response_summary: {t1_response_summary}")
+    if isinstance(t1_response_headers, dict):
+        allow_value = t1_response_headers.get("Allow")
+        if allow_value is None:
+            allow_value = t1_response_headers.get("allow")
+        if allow_value is not None and str(allow_value).strip():
+            lines.append(f"- Tool 1 latest response_headers.Allow: {allow_value}")
+    else:
+        allow_value = None
+    if isinstance(t1_artifacts, dict):
+        jp = t1_artifacts.get("json_path")
+        mp = t1_artifacts.get("markdown_path")
+        if jp or mp:
+            lines.append(f"- Tool 1 artifact paths: json={jp or ''}; markdown={mp or ''}")
+    if isinstance(t1_recent_runs, list) and t1_recent_runs:
+        recent_rows = [c for c in t1_recent_runs if isinstance(c, dict)][-3:]
+        if recent_rows:
+            lines.append("RECENT TEST PATTERN:")
+            for i, row in enumerate(recent_rows, start=1):
+                method = str(row.get("method") or "METHOD")
+                url = str(row.get("url") or "URL")
+                status = row.get("status_code")
+                status_text = str(status) if status is not None else "no_status"
+                lines.append(f"- Case {i}: {method} {url} -> {status_text}")
+
+    t2_suite_path = _g(runtime_context, "tool2", "suite", "suite_path")
+    t2_failures = _g(runtime_context, "tool2", "last_bundle", "latest_case", "failures")
+    t2_artifacts = _g(runtime_context, "tool2", "last_bundle", "artifact_paths")
+    if t2_suite_path:
+        lines.append(f"- Tool 2 suite path: {t2_suite_path}")
+    if isinstance(t2_failures, list):
+        lines.append(f"- Tool 2 latest failures: {t2_failures}")
+    elif t2_failures is not None:
+        lines.append(f"- Tool 2 latest failures: {t2_failures}")
+    if isinstance(t2_artifacts, dict):
+        jp = t2_artifacts.get("json_path")
+        mp = t2_artifacts.get("markdown_path")
+        if jp or mp:
+            lines.append(f"- Tool 2 artifact paths: json={jp or ''}; markdown={mp or ''}")
+
+    lines.extend(
+        [
+            "- Continue the current API runner workflow",
+            "- Help fill Tool 1/Tool 2 fields",
+            "- Interpret the latest API runner results",
+            "- Suggest exactly one next API test",
+            "- Do not ask generic reset questions",
+        ]
+    )
+    diagnosis_requested = _user_requests_api_runner_diagnosis(user_input)
+    suite_run_help_requested = _user_requests_suite_run_help(user_input)
+    if suite_run_help_requested:
+        lines.extend(
+            [
+                "SUITE RUN HELP MODE:",
+                "1. Answer directly for the existing Tool 1 API runner suite workflow (no platform/tool discovery questions).",
+                "2. Include what to ask customer for: base URL, endpoint paths, methods, auth/API key requirements, required headers, request body examples, expected status codes, expected JSON fields.",
+                "3. Include one minimal suite JSON example.",
+                "4. Include where to put the suite file/path in the UI (Tool 1 suite path).",
+                "5. Include exact run steps to execute the suite test.",
+                "6. Do not output Known:, Missing:, Conclusion:, or generic uncertainty-analysis sections.",
+                "7. Do not claim the environment/tooling is unavailable and do not ask generic clarification-only questions as the main response.",
+            ]
+        )
+    if diagnosis_requested and any(
+        x is not None and str(x).strip() != ""
+        for x in (t1_latest_method, t1_latest_url, t1_status, t1_latency_ms, t1_failures)
+    ):
+        next_test_rules = [
+            "7. Use this exact next-test format once: Next test: <METHOD> <URL> -> expect <STATUS>.",
+            "8. The next test must always include expected status using '-> expect <STATUS>'.",
+            "9. If the next test is correcting a method/endpoint mismatch, set expected status to 200.",
+            "10. If the next test is intentionally testing a failure path, set expected status to 4xx.",
+            "11. NEXT TEST GENERATOR: for successful 2xx with no failures, propose a negative-path test next (expected 4xx).",
+            "12. NEXT TEST GENERATOR: for 405 method mismatch, propose the correct allowed method on the same URL next (expected 200).",
+        ]
+        api_diagnosis_rules = [
+            "API DIAGNOSIS MODE:",
+            "1. Ran: one line — HTTP method + URL.",
+            "2. Result: one line — status_code + latency_ms + pass/fail.",
+            "3. Why: explain using failures, error_message, response headers such as Allow, and response summary.",
+            "4. Next test: end with exactly one concrete next API test using the required format below.",
+            "5. Do not output Missing:, Additional context needed, or speculative gap sections.",
+            "6. Use only Ran:, Result:, Why:, optional success line (when applicable), and Next test: — no other section headers.",
+            *next_test_rules,
+            "13. Keep wording decisive and direct (no hedging or exploratory phrasing).",
+            "- If latest_case is available, explicitly mention HTTP method, URL, status_code, pass/fail with failures, and latency_ms when present.",
+            "- The reply must end with exactly one concrete next API test.",
+        ]
+        lines.extend(api_diagnosis_rules)
+        if isinstance(t1_recent_runs, list) and len(t1_recent_runs) >= 2:
+            lines.append("- If a clear pattern exists (for example a repeated issue), summarize it briefly in ONE sentence.")
+        if (
+            t1_status is not None
+            and int(t1_status) == 405
+            and allow_value is not None
+            and str(allow_value).strip()
+        ):
+            http_405_rules = [
+                "- For HTTP 405 with response_headers.Allow present: explicitly cite the allowed methods from Allow.",
+                '- Must include this form: "This endpoint allows <METHODS>".',
+                '- Must include this mismatch form: "<USED METHOD> was used, but <ALLOWED METHOD> is required".',
+                '- Use direct mismatch wording: "You used [METHOD] on [URL] -> mismatch."',
+                '- Immediately follow with: "This endpoint allows [ALLOWED METHODS]."',
+                "- Do not use vague language such as 'might be incorrect' or 'confirm pairing'.",
+                "- Do not use tentative wording about method support.",
+            ]
+            lines.extend(http_405_rules)
+        t1_failures_empty = (
+            isinstance(t1_failures, list) and len(t1_failures) == 0
+        ) or t1_failures in (None, "")
+        if (
+            t1_status is not None
+            and 200 <= int(t1_status) <= 299
+            and t1_failures_empty
+        ):
+            lines.extend(
+                [
+                    '- For successful 2xx responses with no failures, include this exact sentence: "This request is correct."',
+                    "- Do not use softer alternatives such as 'appears correct', 'looks good', or 'seems fine'.",
+                ]
+            )
+    return "\n".join(lines)
 
 
 def choose_post_fetch_next_step(fetched_content):
@@ -1599,6 +2245,7 @@ def build_answer_line(
 def build_messages(
     user_input,
     *,
+    runtime_context=None,
     is_agent_meta_question,
     is_agent_tools_question,
     retrieve_relevant_memory,
@@ -1646,6 +2293,11 @@ def build_messages(
         recent_followup_type = detect_recent_answer_followup_type(
             user_input, best_recent_match["matched_text"]
         )
+        if (
+            recent_followup_type is None
+            and _user_input_has_generic_pronoun_followup(ul_norm)
+        ):
+            recent_followup_type = "continuation"
     sequence_discipline_mode = user_input_needs_sequence_discipline_mode(
         user_input,
         best_recent_match=best_recent_match,
@@ -1740,6 +2392,18 @@ def build_messages(
     action_guidance = build_action_guidance(action_type)
     subtarget = detect_subtarget(user_input, focus, stage)
     reasoning_mode_candidate = user_input_needs_reasoning_structure_mode(user_input)
+    scaffold_mode_candidate = _user_requests_vague_real_usage_api_scaffold(
+        ul_norm, runtime_context_present=isinstance(runtime_context, dict)
+    )
+    scaffold_mode_allowed = (
+        scaffold_mode_candidate
+        and not _user_requests_api_runner_diagnosis(user_input)
+        and not _user_requests_suite_run_help(user_input)
+    )
+    if scaffold_mode_allowed:
+        # Intent-first guard: when vague API scaffold mode is active, do not allow
+        # context/focus/stage signals to route this turn into reasoning templates.
+        reasoning_mode_candidate = False
     clarification_override_mode = user_input_is_simple_clarification(user_input)
     plain_answer_override_mode = user_input_needs_plain_answer_override(user_input)
     conversation_signals = (
@@ -1750,6 +2414,7 @@ def build_messages(
         reasoning_mode_candidate
         and not sequence_discipline_mode
         and not continuation_mode
+        and not scaffold_mode_allowed
         and not clarification_override_mode
         and not plain_answer_override_mode
         and subtarget != "system risk"
@@ -2149,6 +2814,17 @@ ORDERED STEPS OUTPUT PREFERENCE (full multi-step list — this turn):
         answer_and_step_rules,
         context_surfacing_block=context_surfacing_block,
     )
+    api_runner_context_block = _format_api_runner_context(
+        runtime_context, user_input=user_input
+    )
+    if api_runner_context_block:
+        system_prompt += "\n\n" + api_runner_context_block
+    api_diagnosis_mode_active = bool(
+        api_runner_context_block and "API DIAGNOSIS MODE:" in api_runner_context_block
+    )
+    suite_run_help_mode_active = bool(
+        api_runner_context_block and "SUITE RUN HELP MODE:" in api_runner_context_block
+    )
 
     memory_block = _latency_trim_block(
         format_memory_block(memories), LATENCY_MEMORY_BLOCK_MAX_CHARS
@@ -2333,6 +3009,7 @@ ORDERED STEPS OUTPUT PREFERENCE (full multi-step list — this turn):
                     "\n\nRecent-answer follow-up type: continuation\n"
                     "- The user may be continuing a recent thread.\n"
                     "- Build on the relevant recent answer if useful.\n"
+                    "- Resolve pronouns from the immediately previous assistant output.\n"
                     "- Avoid restarting from zero.\n"
                     "- If the recent answer contains a structured list/steps and the user asks to continue (for example start with a number, next, or continue), continue the sequence directly.\n"
                     "- Do not ask for clarification in that case unless no prior structured list exists or the reference is ambiguous.\n"
@@ -2469,6 +3146,28 @@ ORDERED STEPS OUTPUT PREFERENCE (full multi-step list — this turn):
         )
     ):
         system_prompt += "\n\n" + build_output_language_directive(requested_output_lang)
+    api_testing_knowledge_block = _build_api_testing_knowledge_lane_block(
+        runtime_context, user_input
+    )
+    if api_testing_knowledge_block:
+        system_prompt += "\n\n" + api_testing_knowledge_block
+    api_test_plan_style_block = ""
+    if not api_diagnosis_mode_active and not suite_run_help_mode_active:
+        api_test_plan_style_block = _build_api_test_plan_response_style_block(ul_norm)
+    if api_test_plan_style_block:
+        system_prompt += "\n\n" + api_test_plan_style_block
+    api_vague_scaffold_block = ""
+    if (
+        not api_diagnosis_mode_active
+        and not suite_run_help_mode_active
+        and not api_test_plan_style_block
+        and scaffold_mode_allowed
+    ):
+        api_vague_scaffold_block = _build_api_vague_real_usage_scaffold_block(
+            ul_norm, runtime_context_present=isinstance(runtime_context, dict)
+        )
+    if api_vague_scaffold_block:
+        system_prompt += "\n\n" + api_vague_scaffold_block
     interaction_tail_waive = (
         conversation_mode or light_task_mode or clarify_first_undefined_implement_build
     )
@@ -2491,6 +3190,8 @@ ORDERED STEPS OUTPUT PREFERENCE (full multi-step list — this turn):
         continuation_mode=continuation_mode,
         sequence_discipline_mode=sequence_discipline_mode,
         explanatory_template_isolation=explanatory_template_isolation,
+        api_diagnosis_mode=api_diagnosis_mode_active,
+        suite_run_help_mode=suite_run_help_mode_active,
     )
 
     if _sequence_debug_enabled():

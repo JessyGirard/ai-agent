@@ -1,0 +1,71 @@
+AI AGENT VIABILITY REPORT (PLAIN READABLE VERSION)
+
+Executive snapshot
+- Estimated success probability: 72%
+- Estimated failure probability: 28%
+- Forecast confidence: 61%
+
+Bottom line
+The project is technically strong and currently stable.
+Main risk is not architecture collapse.
+Main risk is response-quality drift from too many layered prompt/routing rules,
+plus uncertainty about long-term day-to-day product fit.
+
+Why this score was given
+1) Architecture and modularity
+- Weight: 20%
+- Score: 78
+- Contribution: 15.6
+- Reason: the project is split across core/services/ui with playground.py as orchestrator.
+
+2) Testing and reliability discipline
+- Weight: 25%
+- Score: 82
+- Contribution: 20.5
+- Reason: strong regression harness, soak workflow, and CI/nightly checks.
+
+3) Operational maintainability
+- Weight: 15%
+- Score: 67
+- Contribution: 10.1
+- Reason: prompt/routing policy surface is growing and can become hard to manage.
+
+4) Product behavior consistency
+- Weight: 20%
+- Score: 58
+- Contribution: 11.6
+- Reason: occasional format/routing mismatch on conversational prompts.
+
+5) Execution momentum and delivery readiness
+- Weight: 20%
+- Score: 71
+- Contribution: 14.2
+- Reason: good runbooks, handoffs, and steady incremental shipping cadence.
+
+Total weighted score
+- 72.0 / 100
+- Interpreted as ~72% success probability
+
+What is helping
+- Service-oriented architecture
+- Regression-first quality gate
+- Clear orchestration path
+- Strong operational documentation
+
+What can hurt if not managed
+- Prompt enforcement collisions
+- Routing edge-case misses
+- Documentation drifting from runtime reality
+- Product-fit uncertainty
+
+Failure scenario split (28% total)
+- Behavior quality drift persists: 10%
+- Operational complexity slows iteration: 7%
+- Delivery consistency drops: 6%
+- External/adoption mismatch: 5%
+
+Practical conclusion
+The system is viable and not in immediate structural danger.
+Best next move: run a consolidation pass to reduce overlapping prompt/routing rules
+before adding more policy layers.
+

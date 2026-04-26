@@ -1,27 +1,58 @@
-{
-  "meta": {
-    "schema_version": "2.0",
-    "extractor_version": "AI-V2-filter-merge",
-    "source": "runtime+imported",
-    "message_limit": null,
-    "memory_count": 1
+"memory_items": [
+  {
+    "memory_id": "mem_0000",
+    "category": "goal",
+    "value": "Use this AI agent to reliably test APIs and reach $150 per day",
+    "confidence": 0.6,
+    "importance": 0.95,
+    "status": "active",
+    "memory_kind": "emerging",
+    "evidence_count": 2,
+    "first_seen": "msg_0",
+    "last_seen": "msg_0",
+    "trend": "reinforced",
+    "source_refs": ["msg_0"]
   },
-  "memory_items": [
-    {
-      "memory_id": "mem_0001",
-      "category": "identity",
-      "value": "I'm testing the UI",
-      "confidence": 0.4,
-      "importance": 0.85,
-      "status": "active",
-      "memory_kind": "tentative",
-      "evidence_count": 1,
-      "first_seen": "runtime",
-      "last_seen": "runtime",
-      "trend": "new",
-      "source_refs": [
-        "runtime"
-      ]
-    }
-  ]
-}
+  {
+    "memory_id": "mem_0001",
+    "category": "preference",
+    "value": "Prefer clear, direct answers with no vague explanations",
+    "confidence": 0.6,
+    "importance": 0.75,
+    "status": "active",
+    "memory_kind": "emerging",
+    "evidence_count": 2,
+    "first_seen": "msg_2",
+    "last_seen": "msg_4",
+    "trend": "reinforced",
+    "source_refs": ["msg_2", "msg_4"]
+  },
+  {
+    "memory_id": "mem_0002",
+    "category": "project",
+    "value": "Building an AI agent for API testing",
+    "confidence": 0.6,
+    "importance": 1.0,
+    "status": "active",
+    "memory_kind": "emerging",
+    "evidence_count": 2,
+    "first_seen": "msg_2",
+    "last_seen": "msg_0",
+    "trend": "reinforced",
+    "source_refs": ["msg_2", "msg_0"]
+  },
+  {
+    "memory_id": "mem_0003",
+    "category": "project",
+    "value": "API run analysis must include exactly one precise next API test with expected status",
+    "confidence": 0.6,
+    "importance": 0.95,
+    "status": "active",
+    "memory_kind": "emerging",
+    "evidence_count": 2,
+    "first_seen": "msg_2",
+    "last_seen": "msg_6",
+    "trend": "reinforced",
+    "source_refs": ["msg_6", "msg_2"]
+  }
+]

@@ -1,0 +1,48 @@
+AI-AGENT SYSTEM ARCHITECTURE (copy/paste safe)
+==============================================
+
+Jessy / Operator
+    |
+    v
+Streamlit UI (app/ui.py)
+    |
+    +--> Tool 1: API / System Eval
+    |       |
+    |       v
+    |   core/system_eval.py
+    |       |
+    |       +--> HttpTargetAdapter / requests
+    |       +--> logs/system_eval/*.json + *.md artifacts
+    |       +--> app/tool1_run_log.py -> logs/tool1_runs.jsonl
+    |
+    +--> Tool 2: Prompt/Response lane
+    |
+    +--> Tool 3: Regression lane
+    |
+    v
+Runtime orchestrator (playground.py)
+    |
+    +--> services/routing_service.py
+    +--> services/prompt_builder.py
+    |       |
+    |       v
+    |   core/llm.py (OpenAI path)
+    |
+    +--> services/memory_service.py
+    |       |
+    |       v
+    |   memory/extracted_memory.json
+    |
+    +--> services/journal_service.py
+    |       |
+    |       v
+    |   memory/project_journal*.jsonl
+    |
+    +--> tools/fetch_page.py facade
+            |
+            +--> tools/fetch_http.py
+            +--> tools/fetch_browser.py
+
+Regression release gate:
+    tests/run_regression.py validates playground + prompt_builder + system_eval + UI
+

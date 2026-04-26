@@ -155,3 +155,51 @@ There is **no separate “ChatGPT” participant** in this thread. When people s
 ---
 
 *End of session log for 2026-04-23 (Cursor).*
+
+---
+
+## 9. Addendum: 2026-04-25 work log
+
+### API runner behavior/routing increments
+- **Step 24:** API DIAGNOSIS MODE dominance enforced over legacy templates when active.
+- **Step 25:** Diagnosis trigger broadened for run-analysis phrasing (including `analyse` and last/latest/recent run patterns).
+- **Step 26:** Added **Suite Run Help mode** routing/instructions for Tool 1 suite workflow prompts.
+
+### Knowledge lane architecture and safety
+- Added conditional **API testing knowledge lane** injection from `knowledge/api_testing_basics.md` (runtime-context + API-education relevance).
+- Added compact, section-aware condensation logic in `prompt_builder` with keyword-priority/fixed-line preservation.
+- Expanded compact coverage incrementally to preserve signals across sections 1–15 (including params, pagination, runner-style, and single-vs-suite topics).
+- Added minimal **API test-plan response style** constraint block for “what tests should I run?” prompts (baseline test + exactly one next test), isolated from API diagnosis and suite-help modes.
+
+### Knowledge file expansion (`knowledge/api_testing_basics.md`)
+- Added and refined sections:
+  - Customer Intake Questions
+  - Authentication Testing
+  - Request Body Basics
+  - Error Case Testing
+  - Proof and Client Reporting
+  - Rate Limit Testing
+  - Test Case Design
+  - Query Params and Path Params
+  - API Test Plan Response Style (later strengthened wording)
+  - Pagination Testing
+  - Single vs Multi-Request Testing
+
+### Regression coverage added
+- Added focused runtime-context regression tests for:
+  - knowledge lane on/off behavior (relevant vs irrelevant prompts),
+  - compactness/size discipline,
+  - no dependence on `memory/extracted_memory.json`,
+  - preservation of key section signals (auth/body/error/reporting/rate-limit/test-plan/params/pagination/suite-vs-single),
+  - API test-plan runner-style prompt constraints.
+
+### Runtime verification snapshots
+- Repeated full runs of:
+  - `python -m pytest tests/run_regression.py -q`
+- Final recorded progression in this phase reached full green runs (latest observed: **767 passed**).
+
+### User-support/documentation tasks
+- Added layered architecture diagram to `docs/handoffs/!JESSY_CONNECTION.md`.
+- Helped locate latest run artifacts in `logs/system_eval` and clarified where to open them in Explorer.
+- Verified memory schema assumptions (roles belong to import stream, not durable `memory_items` rows).
+

@@ -2246,9 +2246,10 @@ def build_post_fetch_messages(user_input, fetched_content, focus, stage, fetch_u
 
 # ---------- BUILD ----------
 
-def build_messages(user_input):
+def build_messages(user_input, runtime_context=None):
     return prompt_builder.build_messages(
         user_input,
+        runtime_context=runtime_context,
         is_agent_meta_question=is_agent_meta_question,
         is_agent_tools_question=is_agent_tools_question,
         retrieve_relevant_memory=retrieve_relevant_memory,
@@ -2293,7 +2294,9 @@ def build_messages(user_input):
 
 # ---------- CORE AGENT FUNCTION ----------
 
-def handle_user_input(user_input: str, vision_images: list | None = None) -> str:
+def handle_user_input(
+    user_input: str, vision_images: list | None = None, runtime_context=None
+) -> str:
     global current_state
 
     if not current_state:
@@ -2448,7 +2451,9 @@ def handle_user_input(user_input: str, vision_images: list | None = None) -> str
         append_recent_answer_history(response, user_input=user_input)
         return response
 
-    system_prompt, messages = build_messages(user_input)
+    system_prompt, messages = build_messages(
+        user_input, runtime_context=runtime_context
+    )
     if vision_images:
         _merge_vision_into_messages(messages, user_input, vision_images)
     messages = _latency_limit_message_list(messages, max_turns=10)

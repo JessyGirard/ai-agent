@@ -2630,3 +2630,686 @@ Return:
 `	ext
 can you please put all we did that is not in Dates and Dates_User... in those files now please? We put some earlier, so what ever is not there please?
 `
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+## Request 86
+
+`text
+Step 24: enforce API DIAGNOSIS MODE dominance; suppress Progress/Risks/Decisions/Next Steps; strict Ran/Result/Why/(optional correctness)/Next test output; add successful DELETE regression; run pytest.
+`
+
+## Request 87
+
+`text
+Briefly inform the user about task result and perform follow-up actions.
+`
+
+## Request 88
+
+`text
+Add a layered architecture diagram at the end of docs/handoffs/!JESSY_CONNECTION.md.
+`
+
+## Request 89
+
+`text
+Step 25: broaden API diagnosis trigger for run-analysis phrasing (analyse/analyze last run/last two runs/etc.) with runtime_context; add regressions; run pytest.
+`
+
+## Request 90
+
+`text
+Find the result of my last run (Sweet Johnson usage).
+`
+
+## Request 91
+
+`text
+Can you find it for me please?
+`
+
+## Request 92
+
+`text
+Can you find it for me please?
+`
+
+## Request 93
+
+`text
+Tell me where to see that in my Explorer window.
+`
+
+## Request 94
+
+`text
+Step 26: add Suite Run Help mode with direct suite workflow response (customer inputs, minimal JSON, file placement, run steps); suppress platform-missing and Known/Missing/Conclusion; add exact-prompt regression; run pytest; return PASS/FAIL.
+`
+
+## Request 95
+
+`text
+Verify memory format requirements before editing: confirm extracted_memory.json schema expectations and whether JessyAI/userAI labels belong.
+`
+
+## Request 96
+
+`text
+Memory cleanup request: merge duplicate mem_0003/mem_0004 concept in memory/extracted_memory.json into one canonical project entry; keep mem_0000/1/2 unchanged.
+`
+
+## Request 97
+
+`text
+Create knowledge/api_testing_basics.md with concise API testing fundamentals (methods, status codes, headers, strategies), no code or memory changes.
+`
+
+## Request 98
+
+`text
+Step 27: inspect where/how to load knowledge/api_testing_basics.md into prompts conditionally and compactly; report plan only, no code changes.
+`
+
+## Request 99
+
+`text
+Step 28: add regression tests for API knowledge lane injection behavior only (relevant/irrelevant/memory non-pollution/compactness); no production changes.
+`
+
+## Request 100
+
+`text
+Implement Step 28 in prompt_builder only: conditional compact API knowledge injection with exact marker "API testing reference (condensed):"; run full regressions and report.
+`
+
+## Request 101
+
+`text
+Give your opinion on the new knowledge lane behavior.
+`
+
+## Request 102
+
+`text
+Step 29: add focused validation tests only for knowledge-lane activation boundaries, marker presence, compactness, and core content retention.
+`
+
+## Request 103
+
+`text
+Step 29B: fix compact knowledge-lane section preservation in prompt_builder to retain Methods/Status/Headers/Testing Strategies under compact cap.
+`
+
+## Request 104
+
+`text
+Step 30: improve knowledge/api_testing_basics.md (HTTP Methods, Status Codes, Headers, Testing Strategies) only; run pytest.
+`
+
+## Request 105
+
+`text
+Step 31: add one focused regression test ensuring practical injected guidance (positive/negative, Content-Type/Authorization, PUT vs PATCH/GET no body).
+`
+
+## Request 106
+
+`text
+Step 32: add "## 5. Customer Intake Questions" section to knowledge file only; run pytest.
+`
+
+## Request 107
+
+`text
+Step 33: add "## 6. Authentication Testing" section to knowledge file only; run pytest.
+`
+
+## Request 108
+
+`text
+Step 34: add "## 7. Request Body Basics" section to knowledge file only; run pytest.
+`
+
+## Request 109
+
+`text
+Step 35: add "## 8. Error Case Testing" section to knowledge file only; run pytest.
+`
+
+## Request 110
+
+`text
+Step 36: add "## 9. Proof and Client Reporting" section to knowledge file only; run pytest.
+`
+
+## Request 111
+
+`text
+Step 37: tests only — validate knowledge-lane coverage signals for sections 5-9.
+`
+
+## Request 112
+
+`text
+Step 37B: prompt_builder fix — preserve compact signals across core sections including newly added sections 5-9.
+`
+
+## Request 113
+
+`text
+Step 38: add "## 10. Rate Limit Testing" section to knowledge file only.
+`
+
+## Request 114
+
+`text
+Step 39: add "## 11. Test Case Design" section to knowledge file only.
+`
+
+## Request 115
+
+`text
+Step 40: tests only — validate compact knowledge-lane coverage for rate limit + test case design signals.
+`
+
+## Request 116
+
+`text
+Step 41: add "## 12. Query Params and Path Params" section to knowledge file only.
+`
+
+## Request 117
+
+`text
+Step 42: tests only — validate knowledge-lane query/path param signals.
+`
+
+## Request 118
+
+`text
+Step 42B: prompt_builder fix — preserve query/path (including limit/page/filtering/pagination) signals in compact lane.
+`
+
+## Request 119
+
+`text
+Step 43: add "## 13. API Test Plan Response Style" section to knowledge file only.
+`
+
+## Request 120
+
+`text
+Step 44: tests only — validate compact lane signals for API Test Plan Response Style.
+`
+
+## Request 121
+
+`text
+Step 44B: prompt_builder fix — preserve baseline/expected-status/next-test/focused-answer signals for section 13 in compact lane.
+`
+
+## Request 122
+
+`text
+Step 45: strengthen wording in section 13 to enforce focused runner-style responses.
+`
+
+## Request 123
+
+`text
+Step 46: add minimal behavior rule enforcing baseline + exactly one next test for API test-plan prompts.
+`
+
+## Request 124
+
+`text
+Step 47: add regression test for Step 46 runner-style behavior and ensure no unintended diagnosis/suite activation.
+`
+
+## Request 125
+
+`text
+Step 48: add "## 14. Pagination Testing" section to knowledge file only.
+`
+
+## Request 126
+
+`text
+Step 49: tests only — validate pagination signals (pagination, page/limit, cursor/offset) in compact lane.
+`
+
+## Request 127
+
+`text
+Step 50: add "## 15. Single vs Multi-Request Testing" section to knowledge file only.
+`
+
+## Request 128
+
+`text
+Step 51: tests only — validate section 15 signals (single request, multi/suite, JSON suite, method/URL/expected status).
+`
+
+## Request 129
+
+`text
+Append everything done today into DATES files (Dates_user_requests_appendix and Dates).
+`
+
+## Request 130
+
+`text
+Step 51B: prompt_builder fix — preserve section 15 compact signals while keeping block compact and stable.
+`
+
+## Request 131
+
+`text
+Step 52: add minimal vague real-usage API scaffolding behavior for test plan / failed response diagnosis / JSON suite / client message prompts; keep short and non-conflicting.
+`
+
+## Request 132
+
+`text
+Step 53: add failing regressions for vague real-usage scaffold activation across four prompts; tests only.
+`
+
+## Request 133
+
+`text
+Step 53B: fix failed-response scaffold activation for "Here’s a failed response, diagnose it".
+`
+
+## Request 134
+
+`text
+Step 54: ensure scaffold mode overrides Known/Missing/Conclusion reasoning template for vague API prompts; run pytest.
+`
+
+## Request 135
+
+`text
+Step 55: allow scaffold mode without runtime_context for failed-response prompts; run pytest.
+`
+
+## Request 136
+
+`text
+Step 56: ensure user intent overrides global context so scaffold mode wins for detected vague API prompts; run pytest.
+`
+
+## Request 137
+
+`text
+Step 58: expand scaffold detector for interpretation-style prompts ("is that an error", "is this expected", "why did this fail", empty/pagination edge-style phrasing) with API-context combination; run pytest.
+`
+
+## Request 138
+
+`text
+Step 59: simplify interpretation scaffold detection so interpretation marker alone triggers scaffold intent; run pytest.
+`
+
+## Request 139
+
+`text
+Update Dates_user_requests_appendix with everything missing, run any needed tests, and push everything to git.
+`
+
+## Request 86
+
+`text
+Step 24: enforce API DIAGNOSIS MODE dominance.
+`
+
+## Request 87
+
+`text
+Briefly inform the user about the task result and perform any follow-up actions (if needed).
+`
+
+## Request 88
+
+`text
+Add a layered architecture diagram at the end of !JESSY_CONNECTION.md.
+`
+
+## Request 89
+
+`text
+Step 25: broaden API diagnosis trigger for run-analysis phrasing.
+`
+
+## Request 90
+
+`text
+I can't find the result of my last run. Can you find that for me?
+`
+
+## Request 91
+
+`text
+Can you find it for me please?
+`
+
+## Request 92
+
+`text
+Can you find it for me please?
+`
+
+## Request 93
+
+`text
+Where am I supposed to see that in Explorer?
+`
+
+## Request 94
+
+`text
+Step 26: add Suite Run Help mode.
+`
+
+## Request 95
+
+`text
+Verify memory format assumptions before editing anything.
+`
+
+## Request 96
+
+`text
+Memory cleanup: merge duplicate mem_0003/mem_0004 into one canonical row.
+`
+
+## Request 97
+
+`text
+Create knowledge/api_testing_basics.md with concise API testing reference.
+`
+
+## Request 98
+
+`text
+Step 27: inspect how to load knowledge/api_testing_basics.md into Joshua prompts (no code changes).
+`
+
+## Request 99
+
+`text
+Step 28: add tests for API knowledge lane injection.
+`
+
+## Request 100
+
+`text
+What is your opinion on what we just made?
+`
+
+## Request 101
+
+`text
+Step 29: add focused validation tests only for knowledge lane safety/coverage.
+`
+
+## Request 102
+
+`text
+Step 29B: fix compact knowledge lane section preservation only.
+`
+
+## Request 103
+
+`text
+Step 30: review knowledge/api_testing_basics.md only and improve content.
+`
+
+## Request 104
+
+`text
+Step 31: add one focused regression test only for practical guidance injection.
+`
+
+## Request 105
+
+`text
+Step 32: add Customer Intake Questions section (knowledge only).
+`
+
+## Request 106
+
+`text
+Step 33: add Authentication Testing section (knowledge only).
+`
+
+## Request 107
+
+`text
+Step 34: add Request Body Basics section (knowledge only).
+`
+
+## Request 108
+
+`text
+Step 35: add Error Case Testing section (knowledge only).
+`
+
+## Request 109
+
+`text
+Step 36: add Proof and Client Reporting section (knowledge only).
+`
+
+## Request 110
+
+`text
+Step 37: validate compact knowledge lane coverage for newly added sections (tests only).
+`
+
+## Request 111
+
+`text
+Step 37B: fix compact knowledge lane coverage for new sections only.
+`
+
+## Request 112
+
+`text
+Step 38: add Rate Limit Testing section (knowledge only).
+`
+
+## Request 113
+
+`text
+Step 39: add Test Case Design section (knowledge only).
+`
+
+## Request 114
+
+`text
+Step 40: validate coverage for new sections (tests only).
+`
+
+## Request 115
+
+`text
+Step 40B: preserve Query/Path Params signals in compact knowledge lane.
+`
+
+## Request 116
+
+`text
+Step 41: add Query Params and Path Params section (knowledge only).
+`
+
+## Request 117
+
+`text
+Step 42: validate coverage for Query Params and Path Params (tests only).
+`
+
+## Request 118
+
+`text
+Step 42B: preserve Query/Path params in compact knowledge lane.
+`
+
+## Request 119
+
+`text
+Step 43: add API Test Plan Response Style section (knowledge only).
+`
+
+## Request 120
+
+`text
+Step 44: validate coverage for API Test Plan Response Style (tests only).
+`
+
+## Request 121
+
+`text
+Step 44B: preserve API Test Plan Response Style in compact knowledge lane.
+`
+
+## Request 122
+
+`text
+Step 45: strengthen API Test Plan Response Style wording (knowledge only).
+`
+
+## Request 123
+
+`text
+Step 46: add minimal behavior rule for API test-plan responses.
+`
+
+## Request 124
+
+`text
+Step 47: add regression test for API test-plan runner style.
+`
+
+## Request 125
+
+`text
+Step 48: add Pagination Testing section (knowledge only).
+`
+
+## Request 126
+
+`text
+Step 49: validate coverage for Pagination Testing (tests only).
+`
+
+## Request 127
+
+`text
+Step 49B: preserve cursor/offset pagination signals in compact knowledge lane.
+`
+
+## Request 128
+
+`text
+Step 50: add Single vs Multi-Request Testing section (knowledge only).
+`
+
+## Request 129
+
+`text
+Step 51: validate coverage for Single vs Multi-Request Testing (tests only).
+`
+
+## Request 130
+
+`text
+Append everything done today that is not in Dates / Dates_user_requests_appendix yet.
+`
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+## Request 75
+
+`text
+Generate a full chronological "what changed and why" report from project evidence (git/changelog/handoffs/logs), assess structural risk, and provide a detailed health report.
+`
+
+## Request 76
+
+`text
+Move the report into normal File Explorer-visible repo files; user requested direct access and copy/paste support.
+`
+
+## Request 77
+
+`text
+Fix canvas compile/render issue (JSX ">" parsing error) and verify compatibility with current canvas SDK usage.
+`
+
+## Request 78
+
+`text
+Restore report readability/presentation after canvas access confusion; provide diagram and viable copyable versions.
+`
+
+## Request 79
+
+`text
+Add a system architecture diagram to docs/reports/change-history-report.md.
+`
+
+## Request 80
+
+`text
+Recover/restore both "beautiful" reports (viability + change history) after user could not open canvas views; provide stable fallback files.
+`
+
+## Request 81
+
+`text
+Step 17: Gate API DIAGNOSIS MODE to API-runner-result questions only.
+Scope: services/prompt_builder.py + tests/run_regression.py.
+Add regressions for:
+1) runtime_context + "Analyze my last run" -> diagnosis mode appears
+2) runtime_context + "hello" -> diagnosis mode does NOT appear
+3) runtime_context + unrelated general question -> diagnosis mode does NOT appear
+Run: python -m pytest "tests/run_regression.py" -k "runtime_context0" -q
+`
+
+## Request 82
+
+`text
+Step 18: Add expected_status suggestion to next test format.
+Required next-test format: Next test: <METHOD> <URL> -> expect <STATUS>
+Rules:
+- correcting mismatch -> expect 200
+- failure-path test -> expect 4xx
+Add regression coverage and run:
+python -m pytest "tests/run_regression.py" -k "runtime_context0" -q
+`
+
+## Request 83
+
+`text
+Run full regression suite now.
+Command:
+python -m pytest tests/run_regression.py -q
+Return PASS/FAIL, total passed/failed, and first failure only.
+`
+
+## Request 84
+
+`text
+Fix only failing runtime_context11 assertion mismatch with smallest change, prefer test-side adjustment over runtime behavior change, then rerun full:
+python -m pytest tests/run_regression.py -q
+`
+
+## Request 85
+
+`text
+Append everything done today into DATES file at end (starting around line 2636).
+`
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
