@@ -3311,5 +3311,96 @@ python -m pytest tests/run_regression.py -q
 Append everything done today into DATES file at end (starting around line 2636).
 `
 
+## Request 86
+
+`text
+Archive label: JOSHUA_STRATEGIC_CHECKPOINT_RAG
+Search tags: joshua, strategic-checkpoint, embeddings, rag, proto-rag, architecture
+
+Joshua Project - Strategic Direction Checkpoint (Embeddings & RAG)
+
+Recommendation:
+Choose B: begin a minimal isolated RAG prototype (not integrated into core runtime yet).
+This preserves the 762/762 stability baseline while generating measurable evidence.
+
+Direct answers:
+1) Yes, introducing full RAG now can risk determinism, prompt variance, and regression drift.
+2) Yes, the current controlled knowledge-injection lane qualifies as proto-RAG.
+3) Safest first step: build a shadow retrieval pipeline in isolation:
+   - chunk api_testing_basics.md
+   - generate embeddings
+   - retrieve top-k for representative queries
+   - compare retrieval output vs current manual injection
+   - log relevance/consistency metrics
+   (no behavior, memory, Tool 1, or prompt_builder runtime changes)
+4) Clean insertion point for future integration:
+   User Input -> knowledge_selector (manual/retrieval/hybrid) -> Prompt Builder -> LLM -> Tool 1
+   Keep manual mode as default behind feature flags.
+5) Final choice: B (isolated prototype), not A forever and not C (direct integration now, high risk).
+
+Rationale:
+RAG should improve context selection, not destabilize the architecture.
+Use acceptance gates before any integration:
+- relevance threshold
+- manual-mode regression parity
+- bounded prompt-size variance
+- reproducible retrieval with fixed corpus/settings
+`
+
+## Request 87
+
+`text
+Archive label: TOOL1_MULTI_REQUEST_SPEC
+Search tags: tool1, multi-request, suite-run, single-request, tool2, tool3, system-eval
+
+Tool 1 + Multi-Request Spec (shareable with ChatGPT)
+
+Definition in this project:
+- "Multi-request" is suite execution (multiple cases in cases[]), not a separate unrelated engine.
+- Tool 1 single request = ad-hoc one-call execution from UI.
+- Tool 1 multi-request = suite JSON execution from UI.
+
+Tool 1 exact paths:
+- Suite (multi-request) operator: app/system_eval_operator.py -> run_tool1_system_eval_http(...)
+- Single request execution path: app/ui.py -> _tool1_execute_single_request(...)
+- Core engine: core/system_eval.py -> load_suite_file(...), validate_suite(...), execute_suite(...), write_result_artifacts(...)
+
+Tool 1 suite (multi-request) input contract:
+run_tool1_system_eval_http(
+  suite_path,
+  output_dir,
+  file_stem="",
+  *,
+  project_root=None,
+  adapter=None,
+  fail_fast=False,
+  default_timeout_seconds=20
+)
+
+Tool 1 output bundle shape (single + multi):
+- ok
+- result
+- artifact_paths
+- json_preview
+- markdown_preview
+- error
+- run_log_error
+
+Logging and evidence:
+- Append-only Tool 1 run log: logs/tool1_runs.jsonl
+- Artifacts: JSON + Markdown written to configured output directory
+
+Lane behavior and validation:
+- Core supports lane-specific behavior and validation (including prompt_response, stability, consistency, and default correctness/smoke behavior).
+- Invalid lane or lane-field mismatch produces validation failure bundle.
+- Fail fast controls stop-on-first-failure in suite execution.
+
+Tool boundaries:
+- Tool 1: HTTP/API execution + assertions
+- Tool 2: prompt/response suites only (all cases lane='prompt_response')
+- Tool 3: regression suites only (all cases lane='regression')
+- Tool 3 note: one call runs one suite + one command; no dedicated multi-suite batch API in operator
+`
+
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 

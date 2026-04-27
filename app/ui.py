@@ -306,6 +306,7 @@ def _build_runtime_context_from_session_state() -> dict:
                 "query_params_json": str(st.session_state.get("tool1_single_query_params") or ""),
                 "headers_json": str(st.session_state.get("tool1_single_headers") or ""),
                 "body_json": str(st.session_state.get("tool1_single_body") or ""),
+                "body_mode": str(st.session_state.get("tool1_single_body_mode") or "JSON"),
                 "auth_mode_label": str(st.session_state.get("tool1_single_auth_mode") or "None"),
                 "bearer_token": _redact_secret(st.session_state.get("tool1_single_bearer_token")),
                 "basic_user": str(st.session_state.get("tool1_single_basic_user") or ""),
@@ -881,6 +882,7 @@ _TOOL1_SINGLE_SNAPSHOT_KEYS = (
     "tool1_single_query_params",
     "tool1_single_headers",
     "tool1_single_body",
+    "tool1_single_body_mode",
     "tool1_single_auth_mode",
     "tool1_single_bearer_token",
     "tool1_single_basic_user",
@@ -916,6 +918,7 @@ def _tool1_execute_kwargs_from_snapshot(snap: dict) -> dict:
     auth_label = str(snap.get("tool1_single_auth_mode") or "None")
     auth_mode = _TOOL1_AUTH_LABEL_TO_MODE.get(auth_label, "none")
     method = str(snap.get("tool1_single_method") or "GET")
+    body_mode = str(snap.get("tool1_single_body_mode") or "JSON")
     body_text = ""
     if method.upper() in ("POST", "PUT", "PATCH"):
         body_text = str(snap.get("tool1_single_body") or "")
@@ -923,6 +926,7 @@ def _tool1_execute_kwargs_from_snapshot(snap: dict) -> dict:
         "url": str(snap.get("tool1_single_url") or ""),
         "method": method,
         "body_text": body_text,
+        "body_mode": body_mode,
         "headers_text": str(snap.get("tool1_single_headers") or ""),
         "query_params_text": str(snap.get("tool1_single_query_params") or ""),
         "timeout_sec": int(snap.get("tool1_timeout", 20)),
@@ -943,6 +947,7 @@ def _tool1_prepare_single_request(
     body_text: str,
     headers_text: str,
     query_params_text: str,
+    body_mode: str = "JSON",
     auth_mode: str = "none",
     bearer_token: str = "",
     basic_username: str = "",
@@ -953,7 +958,7 @@ def _tool1_prepare_single_request(
     """
     Validate and merge URL/headers/body for a single-request case (no I/O).
     Returns ``(plan_dict, None)`` or ``(None, error_message)``.
-    ``plan_dict`` keys: ``method_u``, ``final_url``, ``headers``, ``payload``, ``suite_dict``.
+    ``plan_dict`` keys: ``method_u``, ``final_url``, ``headers``, ``payload``, ``body``, ``suite_dict``.
     """
     url = (url or "").strip()
     if not url:
@@ -965,17 +970,26 @@ def _tool1_prepare_single_request(
     headers, hdr_err = _tool1_parse_custom_headers_json(headers_text)
     if hdr_err:
         return None, hdr_err
+    mode = str(body_mode or "JSON").strip()
+    if mode not in ("JSON", "Raw/form"):
+        return None, "Invalid body mode; expected JSON or Raw/form."
     payload: dict = {}
+    raw_body: str | None = None
     if method_u in ("POST", "PUT", "PATCH"):
-        raw = (body_text or "").strip()
-        if raw:
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                return None, f"Invalid JSON body: {exc}"
-            if not isinstance(parsed, dict):
-                return None, "JSON body must be a JSON object (e.g. {\"id\": 1})."
-            payload = parsed
+        if mode == "Raw/form":
+            if not isinstance(body_text, str):
+                return None, "Raw/form body must be a string."
+            raw_body = body_text
+        else:
+            raw = (body_text or "").strip()
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    return None, f"Invalid JSON body: {exc}"
+                if not isinstance(parsed, dict):
+                    return None, "JSON body must be a JSON object (e.g. {\"id\": 1})."
+                payload = parsed
     url, query_params, headers, payload, sub_err = system_eval.apply_env_placeholders_single_request(
         url=url,
         query_params=query_params,
@@ -1010,11 +1024,15 @@ def _tool1_prepare_single_request(
             }
         ],
     }
+    if raw_body is not None:
+        suite_dict["cases"][0]["body"] = raw_body
     return {
         "method_u": method_u,
         "final_url": final_url,
         "headers": headers,
         "payload": payload,
+        "body": raw_body,
+        "body_mode": mode,
         "suite_dict": suite_dict,
     }, None
 
@@ -1102,9 +1120,13 @@ def _tool1_format_single_request_plain(prep: dict) -> str:
         for name in sorted(hdrs.keys()):
             lines.append(f"  {name}: {hdrs[name]}")
     payload = prep.get("payload") or {}
+    raw_body = prep.get("body")
     if prep["method_u"] in ("POST", "PUT", "PATCH"):
         lines.append("")
-        if payload:
+        if isinstance(raw_body, str):
+            lines.append("Raw/form body:")
+            lines.append(raw_body)
+        elif payload:
             lines.append("JSON body:")
             lines.append(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
@@ -1118,17 +1140,21 @@ def _tool1_format_single_request_curl(prep: dict) -> str:
     final_url = _tool1_redact_sensitive_url_query(prep["final_url"])
     hdrs = dict(prep.get("headers") or {})
     payload = prep.get("payload") or {}
+    raw_body = prep.get("body")
     parts = ["curl", "-sS", "-X", method_u, shlex.quote(final_url)]
     for name in sorted(hdrs.keys()):
         value = "[REDACTED]" if _tool1_is_sensitive_header_name(name) else hdrs[name]
         hv = f"{name}: {value}"
         parts.append("-H")
         parts.append(shlex.quote(hv))
-    if method_u in ("POST", "PUT", "PATCH") and payload:
-        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-        if not any(str(k).lower() == "content-type" for k in hdrs):
-            parts.extend(["-H", shlex.quote("Content-Type: application/json")])
-        parts.extend(["--data-binary", shlex.quote(body)])
+    if method_u in ("POST", "PUT", "PATCH"):
+        if isinstance(raw_body, str):
+            parts.extend(["--data-binary", shlex.quote(raw_body)])
+        elif payload:
+            body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+            if not any(str(k).lower() == "content-type" for k in hdrs):
+                parts.extend(["-H", shlex.quote("Content-Type: application/json")])
+            parts.extend(["--data-binary", shlex.quote(body)])
     return " ".join(parts)
 
 
@@ -1137,6 +1163,7 @@ def _tool1_execute_single_request(
     url: str,
     method: str,
     body_text: str,
+    body_mode: str,
     headers_text: str,
     query_params_text: str,
     timeout_sec: int,
@@ -1169,6 +1196,7 @@ def _tool1_execute_single_request(
         url=url,
         method=method,
         body_text=body_text,
+        body_mode=body_mode,
         headers_text=headers_text,
         query_params_text=query_params_text,
         auth_mode=auth_mode,
@@ -1421,6 +1449,7 @@ def render_tool1_panel():
     st.session_state.setdefault("tool1_single_query_params", "")
     st.session_state.setdefault("tool1_single_headers", "")
     st.session_state.setdefault("tool1_single_body", "")
+    st.session_state.setdefault("tool1_single_body_mode", "JSON")
     st.session_state.setdefault("tool1_single_auth_mode", "None")
     st.session_state.setdefault("tool1_single_bearer_token", "")
     st.session_state.setdefault("tool1_single_basic_user", "")
@@ -1472,11 +1501,20 @@ def render_tool1_panel():
         placeholder='{"Accept": "application/json"}',
     )
     if st.session_state.get("tool1_single_method") in ("POST", "PUT", "PATCH"):
+        st.selectbox(
+            "Body mode",
+            ["JSON", "Raw/form"],
+            key="tool1_single_body_mode",
+        )
         st.text_area(
-            "JSON body (optional)",
+            "JSON body (optional)"
+            if st.session_state.get("tool1_single_body_mode") == "JSON"
+            else "Raw/form body (optional)",
             key="tool1_single_body",
             height=120,
-            placeholder='{"key": "value"}',
+            placeholder='{"key": "value"}'
+            if st.session_state.get("tool1_single_body_mode") == "JSON"
+            else "email=test@example.com&name=Jessy%20Test",
         )
 
     if st.button("Send Request", type="secondary", key="tool1_single_send"):

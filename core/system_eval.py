@@ -61,9 +61,9 @@ def _validate_template_step_shape(raw: dict, case_name: str, tmpl_key: str) -> N
     url = str(raw.get("url", "")).strip()
     if not url:
         raise ValueError(f"Case '{case_name}' step_templates[{tmpl_key!r}] is missing a non-empty 'url'.")
-    if "body" in raw and raw["body"] is not None:
+    if "body" in raw and raw["body"] is not None and not isinstance(raw["body"], str):
         raise ValueError(
-            f"Case '{case_name}' step_templates[{tmpl_key!r}]: 'body' must be JSON null or omitted; "
+            f"Case '{case_name}' step_templates[{tmpl_key!r}]: 'body' must be a string, JSON null, or omitted; "
             f"use 'payload' for JSON object body on POST/PUT/PATCH."
         )
     headers = raw.get("headers", {})
@@ -573,9 +573,9 @@ def _normalize_suite_step(raw: object, case_name: str, idx: int, default_timeout
     url = str(raw.get("url", "")).strip()
     if not url:
         raise ValueError(f"Case '{case_name}' step {step_name!r} is missing a non-empty 'url'.")
-    if "body" in raw and raw["body"] is not None:
+    if "body" in raw and raw["body"] is not None and not isinstance(raw["body"], str):
         raise ValueError(
-            f"Case '{case_name}' step {step_name!r}: 'body' must be JSON null or omitted; "
+            f"Case '{case_name}' step {step_name!r}: 'body' must be a string, JSON null, or omitted; "
             f"use 'payload' for JSON object body on POST/PUT/PATCH."
         )
     assertions: dict = {}
@@ -643,8 +643,8 @@ def _normalize_suite_step(raw: object, case_name: str, idx: int, default_timeout
         out["timeout_seconds"] = int(raw["timeout_seconds"])
     else:
         out["timeout_seconds"] = default_timeout
-    if "body" in raw and raw["body"] is None:
-        out["body"] = None
+    if "body" in raw:
+        out["body"] = raw["body"]
     if raw.get("send_json_body") is True:
         out["send_json_body"] = True
     return out
@@ -794,7 +794,9 @@ def _mask_request_body_for_output(body):
 def _request_body_for_output(request_case: dict):
     method = str(request_case.get("method", "POST")).upper()
     payload = request_case.get("payload", {})
-    body = _json_body_for_http_request(method, request_case, payload)
+    body = _raw_body_for_http_request(request_case)
+    if body is None:
+        body = _json_body_for_http_request(method, request_case, payload)
     return _mask_request_body_for_output(body)
 
 
@@ -849,12 +851,26 @@ def _json_body_for_http_request(method: str, case: dict, payload):
     """
     if "body" in case and case["body"] is None:
         return None
+    if isinstance(case.get("body"), str):
+        return None
     if case.get("send_json_body") is True:
         return payload
     method_u = str(method).upper()
     if method_u in _METHODS_DEFAULT_JSON_BODY:
         return payload
     # GET / HEAD / DELETE / OPTIONS / … — omit ``json=`` unless handled above.
+    return None
+
+
+def _raw_body_for_http_request(case: dict):
+    """
+    Return the string to pass as requests' ``data=`` argument, or None.
+
+    Raw ``body`` takes precedence over JSON ``payload`` when present.
+    """
+    body = case.get("body")
+    if isinstance(body, str):
+        return body
     return None
 
 
@@ -876,9 +892,13 @@ class HttpTargetAdapter:
                 "headers": headers,
                 "timeout": timeout_seconds,
             }
-            json_body = _json_body_for_http_request(method, case, payload)
-            if json_body is not None:
-                req_kwargs["json"] = json_body
+            raw_body = _raw_body_for_http_request(case)
+            if raw_body is not None:
+                req_kwargs["data"] = raw_body
+            else:
+                json_body = _json_body_for_http_request(method, case, payload)
+                if json_body is not None:
+                    req_kwargs["json"] = json_body
             response = requests.request(**req_kwargs)
             latency_ms = int((time.perf_counter() - started) * 1000)
             text = response.text or ""
@@ -1499,9 +1519,9 @@ def validate_suite(suite):
             )
 
         if "body" in case:
-            if case["body"] is not None:
+            if case["body"] is not None and not isinstance(case["body"], str):
                 raise ValueError(
-                    f"Case '{name}': 'body' must be JSON null (no HTTP JSON body) or omitted; "
+                    f"Case '{name}': 'body' must be a string, JSON null, or omitted; "
                     f"use 'payload' for JSON object body on POST/PUT/PATCH."
                 )
 
@@ -1532,8 +1552,8 @@ def validate_suite(suite):
                 "assertions": assertions,
                 "steps": norm_steps,
             }
-            if "body" in case and case["body"] is None:
-                norm["body"] = None
+            if "body" in case:
+                norm["body"] = case["body"]
             if case.get("send_json_body") is True:
                 norm["send_json_body"] = True
         else:
@@ -1547,8 +1567,8 @@ def validate_suite(suite):
                 "timeout_seconds": default_timeout,
                 "assertions": assertions,
             }
-            if "body" in case and case["body"] is None:
-                norm["body"] = None
+            if "body" in case:
+                norm["body"] = case["body"]
             if case.get("send_json_body") is True:
                 norm["send_json_body"] = True
         if lane == "consistency":

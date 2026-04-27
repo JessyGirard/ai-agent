@@ -10666,6 +10666,37 @@ def test_http_target_adapter_get_send_json_body_passes_json():
     assert p_req.call_args.kwargs.get("json") == {"q": 1}
 
 
+def test_http_target_adapter_post_body_string_passes_data_not_json():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "post-raw-body",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "form-post",
+                    "method": "POST",
+                    "url": "http://example.test/form",
+                    "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+                    "body": "email=test@example.com&name=Jessy%20Test",
+                    "payload": {"ignored": True},
+                    "assertions": {"status_code": 200},
+                }
+            ],
+        }
+    )
+    case = suite["cases"][0]
+    adapter = system_eval_core.HttpTargetAdapter(default_timeout_seconds=5)
+    mock_resp = Mock()
+    mock_resp.text = "{}"
+    mock_resp.status_code = 200
+    with patch("core.system_eval.requests.request", return_value=mock_resp) as p_req:
+        result = adapter.run_case(case)
+    assert result.ok is True
+    kwargs = p_req.call_args.kwargs
+    assert kwargs.get("data") == "email=test@example.com&name=Jessy%20Test", kwargs
+    assert "json" not in kwargs, kwargs
+
+
 def test_http_target_adapter_populates_response_headers_from_requests():
     adapter = system_eval_core.HttpTargetAdapter(default_timeout_seconds=5)
     case = {
@@ -10880,6 +10911,106 @@ def test_system_eval_validate_suite_rejects_body_non_null():
         assert "body" in str(exc).lower()
     else:
         raise AssertionError("expected ValueError for non-null body")
+
+
+def test_system_eval_validate_suite_accepts_body_string():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "raw-body-valid",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "c",
+                    "method": "POST",
+                    "url": "http://x",
+                    "body": "email=test@example.com&name=Jessy",
+                    "assertions": {"status_code": 200},
+                }
+            ],
+        }
+    )
+    case0 = suite["cases"][0]
+    assert case0.get("body") == "email=test@example.com&name=Jessy", case0
+
+
+def test_system_eval_validate_suite_steps_accept_body_string():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "raw-body-steps-valid",
+            "target_name": "t",
+            "cases": [
+                {
+                    "name": "c",
+                    "method": "POST",
+                    "url": "http://x",
+                    "steps": [
+                        {
+                            "name": "s1",
+                            "method": "POST",
+                            "url": "http://x/step",
+                            "body": "a=1&b=2",
+                            "status_code": 200,
+                        }
+                    ],
+                    "assertions": {},
+                }
+            ],
+        }
+    )
+    step0 = suite["cases"][0]["steps"][0]
+    assert step0.get("body") == "a=1&b=2", step0
+
+
+def test_system_eval_validate_suite_rejects_body_number():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "bad-body-num",
+                "target_name": "t",
+                "cases": [
+                    {
+                        "name": "c",
+                        "method": "POST",
+                        "url": "http://x",
+                        "body": 123,
+                        "assertions": {},
+                    }
+                ],
+            }
+        )
+    except ValueError as exc:
+        assert "body" in str(exc).lower()
+    else:
+        raise AssertionError("expected ValueError for numeric body")
+
+
+def test_system_eval_validate_suite_steps_reject_body_list():
+    try:
+        system_eval_core.validate_suite(
+            {
+                "suite_name": "bad-step-body-list",
+                "target_name": "t",
+                "cases": [
+                    {
+                        "name": "c",
+                        "steps": [
+                            {
+                                "name": "s1",
+                                "method": "POST",
+                                "url": "http://x/step",
+                                "body": ["a=1"],
+                                "status_code": 200,
+                            }
+                        ],
+                        "assertions": {},
+                    }
+                ],
+            }
+        )
+    except ValueError as exc:
+        assert "body" in str(exc).lower()
+    else:
+        raise AssertionError("expected ValueError for step list body")
 
 
 def test_system_eval_stability_runs_default_three_times():
@@ -13151,6 +13282,41 @@ def test_system_eval_steps_two_step_pass():
         "https://example.com/users/tok99",
     ], adapter.urls
     assert result["cases"][0].get("variables") == {"token": "tok99"}, result["cases"][0]
+
+
+def test_system_eval_steps_step_body_string_is_sent_as_data():
+    suite = system_eval_core.validate_suite(
+        {
+            "suite_name": "steps-raw-body",
+            "target_name": "fake",
+            "cases": [
+                {
+                    "name": "scenario_raw_body",
+                    "assertions": {},
+                    "steps": [
+                        {
+                            "name": "create_form",
+                            "method": "POST",
+                            "url": "https://example.com/form",
+                            "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+                            "body": "email=test@example.com&name=Jessy%20Test",
+                            "status_code": 200,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    adapter = system_eval_core.HttpTargetAdapter(default_timeout_seconds=5)
+    mock_resp = Mock()
+    mock_resp.text = '{"ok":true}'
+    mock_resp.status_code = 200
+    with patch("core.system_eval.requests.request", return_value=mock_resp) as p_req:
+        result = system_eval_core.execute_suite(suite, adapter=adapter)
+    assert result["ok"] is True, result
+    kwargs = p_req.call_args.kwargs
+    assert kwargs.get("data") == "email=test@example.com&name=Jessy%20Test", kwargs
+    assert "json" not in kwargs, kwargs
 
 
 def test_system_eval_steps_fail_step1_extract():
@@ -15668,6 +15834,97 @@ def test_tool1_ui_prepare_single_request_merges_query_and_headers():
     assert prep["headers"]["Authorization"] == "Bearer old", prep
     assert prep["headers"]["X-API-Key"] == "secret-123", prep
     assert prep["payload"] == {"ok": True}, prep
+
+
+def test_tool1_ui_prepare_single_request_json_mode_unchanged():
+    from app import ui as app_ui
+
+    prep, err = app_ui._tool1_prepare_single_request(
+        url="https://example.com/x",
+        method="POST",
+        body_text='{"ok":true}',
+        headers_text="{}",
+        query_params_text="{}",
+        body_mode="JSON",
+        auth_mode="none",
+        bearer_token="",
+        basic_username="",
+        basic_password="",
+        api_key_header_name="",
+        api_key_value="",
+    )
+    assert err is None, err
+    assert prep is not None
+    case0 = prep["suite_dict"]["cases"][0]
+    assert prep.get("body") is None, prep
+    assert case0.get("payload") == {"ok": True}, case0
+    assert "body" not in case0, case0
+
+
+def test_tool1_ui_prepare_single_request_raw_form_routes_to_body_string():
+    from app import ui as app_ui
+
+    raw = "email=test@example.com&name=Jessy%20Test"
+    prep, err = app_ui._tool1_prepare_single_request(
+        url="https://example.com/x",
+        method="POST",
+        body_text=raw,
+        headers_text='{"Content-Type":"application/x-www-form-urlencoded"}',
+        query_params_text="{}",
+        body_mode="Raw/form",
+        auth_mode="none",
+        bearer_token="",
+        basic_username="",
+        basic_password="",
+        api_key_header_name="",
+        api_key_value="",
+    )
+    assert err is None, err
+    assert prep is not None
+    case0 = prep["suite_dict"]["cases"][0]
+    assert prep.get("body") == raw, prep
+    assert case0.get("body") == raw, case0
+    assert case0.get("payload") == {}, case0
+
+
+def test_tool1_ui_prepare_single_request_raw_form_rejects_non_string_body():
+    from app import ui as app_ui
+
+    prep, err = app_ui._tool1_prepare_single_request(
+        url="https://example.com/x",
+        method="POST",
+        body_text={"bad": "type"},
+        headers_text="{}",
+        query_params_text="{}",
+        body_mode="Raw/form",
+        auth_mode="none",
+        bearer_token="",
+        basic_username="",
+        basic_password="",
+        api_key_header_name="",
+        api_key_value="",
+    )
+    assert prep is None, prep
+    assert err == "Raw/form body must be a string.", err
+
+
+def test_tool1_ui_snapshot_kwargs_include_body_mode():
+    from app import ui as app_ui
+
+    kwargs = app_ui._tool1_execute_kwargs_from_snapshot(
+        {
+            "tool1_single_method": "POST",
+            "tool1_single_url": "https://example.com/x",
+            "tool1_single_body": "email=a@b.com",
+            "tool1_single_body_mode": "Raw/form",
+            "tool1_single_headers": "{}",
+            "tool1_single_query_params": "{}",
+            "tool1_timeout": 20,
+            "tool1_output_dir": "logs/system_eval",
+            "tool1_single_auth_mode": "None",
+        }
+    )
+    assert kwargs.get("body_mode") == "Raw/form", kwargs
 
 
 def test_tool1_prepare_single_request_substitutes_env_placeholders_BRAVE_API_KEY():
@@ -19579,6 +19836,10 @@ def main():
         ("http_target_adapter_post_passes_json_payload", test_http_target_adapter_post_passes_json_payload),
         ("http_target_adapter_post_body_null_omits_json_keyword", test_http_target_adapter_post_body_null_omits_json_keyword),
         ("http_target_adapter_get_send_json_body_passes_json", test_http_target_adapter_get_send_json_body_passes_json),
+        (
+            "http_target_adapter_post_body_string_passes_data_not_json",
+            test_http_target_adapter_post_body_string_passes_data_not_json,
+        ),
         ("http_target_adapter_populates_response_headers_from_requests", test_http_target_adapter_populates_response_headers_from_requests),
         ("http_target_adapter_request_exception_has_empty_response_headers", test_http_target_adapter_request_exception_has_empty_response_headers),
         ("execute_suite_and_artifact_include_response_headers", test_execute_suite_and_artifact_include_response_headers),
@@ -19587,6 +19848,16 @@ def main():
         ("execute_suite_stores_output_full_for_short_body", test_execute_suite_stores_output_full_for_short_body),
         ("execute_suite_output_full_truncates_large_body", test_execute_suite_output_full_truncates_large_body),
         ("system_eval_validate_suite_rejects_body_non_null", test_system_eval_validate_suite_rejects_body_non_null),
+        ("system_eval_validate_suite_accepts_body_string", test_system_eval_validate_suite_accepts_body_string),
+        (
+            "system_eval_validate_suite_steps_accept_body_string",
+            test_system_eval_validate_suite_steps_accept_body_string,
+        ),
+        ("system_eval_validate_suite_rejects_body_number", test_system_eval_validate_suite_rejects_body_number),
+        (
+            "system_eval_validate_suite_steps_reject_body_list",
+            test_system_eval_validate_suite_steps_reject_body_list,
+        ),
         ("system_eval_validate_suite_requires_non_empty_cases", test_system_eval_validate_suite_requires_non_empty_cases),
         ("system_eval_validate_suite_rejects_invalid_lane", test_system_eval_validate_suite_rejects_invalid_lane),
         (
@@ -19737,6 +20008,10 @@ def main():
             test_system_eval_variable_substitution_payload_string_pass,
         ),
         ("system_eval_steps_two_step_pass", test_system_eval_steps_two_step_pass),
+        (
+            "system_eval_steps_step_body_string_is_sent_as_data",
+            test_system_eval_steps_step_body_string_is_sent_as_data,
+        ),
         ("system_eval_steps_fail_step1_extract", test_system_eval_steps_fail_step1_extract),
         ("system_eval_steps_fail_step2_assertion", test_system_eval_steps_fail_step2_assertion),
         ("system_eval_step_templates_use_pass", test_system_eval_step_templates_use_pass),
@@ -19879,6 +20154,22 @@ def main():
         (
             "tool1_ui_prepare_single_request_merges_query_and_headers",
             test_tool1_ui_prepare_single_request_merges_query_and_headers,
+        ),
+        (
+            "tool1_ui_prepare_single_request_json_mode_unchanged",
+            test_tool1_ui_prepare_single_request_json_mode_unchanged,
+        ),
+        (
+            "tool1_ui_prepare_single_request_raw_form_routes_to_body_string",
+            test_tool1_ui_prepare_single_request_raw_form_routes_to_body_string,
+        ),
+        (
+            "tool1_ui_prepare_single_request_raw_form_rejects_non_string_body",
+            test_tool1_ui_prepare_single_request_raw_form_rejects_non_string_body,
+        ),
+        (
+            "tool1_ui_snapshot_kwargs_include_body_mode",
+            test_tool1_ui_snapshot_kwargs_include_body_mode,
         ),
         (
             "tool1_prepare_single_request_substitutes_env_placeholders_BRAVE_API_KEY",
