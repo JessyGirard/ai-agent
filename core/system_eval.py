@@ -3206,11 +3206,14 @@ def write_result_artifacts(result, output_dir, file_stem):
     md_path = output_path / f"{stem}.md"
     latest_json_path = output_path / f"{file_stem}.json"
     latest_md_path = output_path / f"{file_stem}.md"
+    latest_universal_json_path = output_path / "LATEST_SYSTEM_EVAL.json"
+    latest_universal_md_path = output_path / "LATEST_SYSTEM_EVAL.md"
 
     json_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     # Keep a stable "latest" artifact alongside timestamped history for easy discovery in Explorer.
     json_path_text = json_path.read_text(encoding="utf-8")
     latest_json_path.write_text(json_path_text, encoding="utf-8")
+    latest_universal_json_path.write_text(json_path_text, encoding="utf-8")
 
     ran_at = result.get("ran_at_utc", "") if isinstance(result, dict) else ""
     lines = [
@@ -3286,4 +3289,5 @@ def write_result_artifacts(result, output_dir, file_stem):
     md_text = "\n".join(lines)
     md_path.write_text(md_text, encoding="utf-8")
     latest_md_path.write_text(md_text, encoding="utf-8")
+    latest_universal_md_path.write_text(md_text, encoding="utf-8")
     return {"json_path": str(json_path), "markdown_path": str(md_path)}
